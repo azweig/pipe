@@ -1,3 +1,5 @@
+<p align="center"><img src=".github/banner.svg" alt="pipe" width="100%"></p>
+
 # Pipe
 
 **Every conversation you have, in one place — with an AI that actually reads them.**
