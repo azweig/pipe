@@ -189,3 +189,11 @@ SMS reading is push-based: something forwards your texts to the hub, which files
    - **From a Mac (SMS + iMessage)** — run `HUB_URL=https://<your-hub> SMS_TOKEN=… node src/sms-imessage.mjs` on the Mac (needs Full Disk Access; reads `~/Library/Messages/chat.db`). iOS can't read SMS directly, so the Mac is the Apple path.
 
 iOS note: Apple sandboxes SMS, so there's no in-app iOS reader — use the Mac (`chat.db`) or an Android device.
+
+## Slack, Signal & voice recordings (optional)
+
+- **Slack** — create an app at api.slack.com with scopes `channels:history groups:history im:history mpim:history channels:read users:read chat:write`, install it, and set `SLACK_TOKEN` in `.env`. Reads your DMs + channels; you can reply from Pipe.
+- **Signal** — run [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api) (Docker), register/link your number, then set `SIGNAL_CLI_URL` + `SIGNAL_NUMBER`. Signal messages **merge by phone number** into the same thread as that contact's WhatsApp/SMS.
+- **Voice recordings** — drop any audio (Plaud exports, phone memos, meeting recordings) into `RECORDINGS_DIR` (default `data/recordings/`). Pipe transcribes it locally with whisper and files it as a note — which then flows through the Notes pipeline (category, detected actions, summary). Provider-agnostic: no recorder API needed.
+
+All three are inactive until configured; readers stay dormant with no config.

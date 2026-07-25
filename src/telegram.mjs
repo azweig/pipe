@@ -49,6 +49,15 @@ await client.start({
 })
 
 writeFileSync(sessionFile, String(client.session.save())) // sesión guardada → no re-login
+
+// MODO ENVÍO (para responder desde la app): `node src/telegram.mjs send <chatId> <texto…>` → manda y sale. NO entra al loop de lectura.
+if (process.argv.includes("send")) {
+  const i = process.argv.indexOf("send"); const peer = process.argv[i + 1] || ""; const msg = process.argv.slice(i + 2).join(" ")
+  try { await client.sendMessage(/^-?\d+$/.test(peer) ? BigInt(peer) : peer, { message: msg }); console.log("[telegram] enviado a " + peer) }
+  catch (e) { console.error("[telegram] send:", e.message); try { await client.disconnect() } catch {}; process.exit(1) }
+  try { await client.disconnect() } catch {}; process.exit(0)
+}
+
 console.log("\n✅ [telegram] CONECTADO — leyendo mensajes entrantes...\n")
 
 const SINCE = "./auth/telegram-since.json"

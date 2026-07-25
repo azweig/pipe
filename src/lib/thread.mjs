@@ -75,6 +75,7 @@ function n2c() { const now = Date.now(); if (!_n2c || now - _n2cMtime > 60000) {
 export function computeThread(e) {
   if ((e.jid || "") === "status@broadcast") return "spam:status"
   if (isSelfThread(e)) return "self" // de mí para mí (cualquier canal/combinación) → "Mis Notas". ANTES del container/dm.
+  if (e.channel === "recording") return "self" // grabaciones (Plaud/memos de voz) → tus notas propias (pasan por STT + el pipeline de Notas)
   // DM del bridge Matrix: la sala llega como "!room" (contenedor) pero es 1:1 → el lector estampa e.dm (la contraparte) → keyear por su NÚMERO, no por la sala.
   // OJO: si el mensaje trae `grp` (nombre de grupo), ES un grupo — nunca al DM, aunque el lector haya marcado e.dm por membresía incompleta.
   if (e.channel === "whatsapp" && e.dm && !e.grp) {
@@ -82,12 +83,12 @@ export function computeThread(e) {
     if (num && !MY_NUMBERS.has(num)) { const man = manualCanon(e); if (man) return man; return contactsMap()[num] || `whatsapp:${num}@s.whatsapp.net` }
   }
   if (isContainerJid(e.jid)) return `${e.channel}:${e.jid}` // grupos/canales quedan en el grupo, no en un hilo personal
-  // SMS: keyear por NÚMERO al MISMO hilo donde vive el WhatsApp 1:1 de ese teléfono (`whatsapp:<num>@s.whatsapp.net`) →
-  // SMS + WhatsApp del mismo número = UNA sola conversación. VA ANTES de manualCanon (que si no lo mandaría a un hilo por-nombre aparte).
-  if (e.channel === "sms") {
+  // SMS / Signal: keyear por NÚMERO al MISMO hilo donde vive el WhatsApp 1:1 de ese teléfono (`whatsapp:<num>@s.whatsapp.net`) →
+  // SMS + Signal + WhatsApp del mismo número = UNA sola conversación. VA ANTES de manualCanon (que si no los mandaría a un hilo por-nombre aparte).
+  if (e.channel === "sms" || e.channel === "signal") {
     const num = phoneOf(e.jid) || (digitsOf(e.jid).length >= 8 ? digitsOf(e.jid) : null)
     if (num && !MY_NUMBERS.has(num)) return `whatsapp:${num}@s.whatsapp.net`
-    return `sms:${e.jid || e.account}`
+    return `${e.channel}:${e.jid || e.account}`
   }
   const manual = manualCanon(e) // verdad del usuario (email/número/nombre → persona) — máxima prioridad
   if (manual) return manual

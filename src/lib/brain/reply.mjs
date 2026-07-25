@@ -13,6 +13,27 @@ import { ownerFirst } from "../hub.mjs"
 import { buildStyleProfile, buildStyleProfiles, styleExamples, categoryOf } from "../style.mjs"
 import { jf, contactName } from "./kernel/contacts.mjs"
 import { canonOfKey, stripWA } from "./kernel/keys.mjs"
+import { spawn } from "child_process"
+
+// ── envío por canales HTTP/proceso (Slack / Signal / Telegram) — cada uno gated por su config; error claro si no está montado ──
+async function slackSend(channel, text) {
+  if (!process.env.SLACK_TOKEN) return { error: "Slack no está configurado (SLACK_TOKEN)." }
+  try { const r = await fetch("https://slack.com/api/chat.postMessage", { method: "POST", headers: { Authorization: `Bearer ${process.env.SLACK_TOKEN}`, "Content-Type": "application/json" }, body: JSON.stringify({ channel: String(channel).replace(/^slack:/, ""), text }) }).then((x) => x.json()); return r.ok ? { ok: true } : { error: r.error || "slack" } } catch (e) { return { error: e.message } }
+}
+async function signalSend(peer, text) {
+  const url = (process.env.SIGNAL_CLI_URL || "").replace(/\/+$/, ""); const me = (process.env.SIGNAL_NUMBER || "").trim()
+  if (!url || !me) return { error: "Signal no está configurado (SIGNAL_CLI_URL/SIGNAL_NUMBER)." }
+  const num = String(peer).replace(/^signal:/, ""); const to = /^\+/.test(num) ? num : "+" + num.replace(/[^\d]/g, "")
+  try { const r = await fetch(`${url}/v2/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ number: me, recipients: [to], message: text }) }); return r.ok ? { ok: true } : { error: "signal " + r.status } } catch (e) { return { error: e.message } }
+}
+function telegramSend(chatId, text) {
+  return new Promise((resolve) => {
+    const p = spawn(process.execPath, ["src/telegram.mjs", "send", String(chatId).replace(/^telegram:/, ""), text], { stdio: "ignore" })
+    const to = setTimeout(() => { try { p.kill() } catch {}; resolve({ error: "timeout" }) }, 30000)
+    p.on("exit", (c) => { clearTimeout(to); resolve(c === 0 ? { ok: true } : { error: "no se pudo enviar por Telegram" }) })
+    p.on("error", (e) => { clearTimeout(to); resolve({ error: e.message }) })
+  })
+}
 import { cleanMsg } from "./kernel/convo.mjs"
 
 // error claro cuando el envío por el bridge falla: si el número dueño de la sala está deslogueado, decí cuál revincular.
@@ -62,6 +83,9 @@ export async function sendReply(key, text, { channel, target } = {}) {
     const r = await sendMatrix(target, text)
     return r.ok ? { ok: true, channel: "whatsapp", ...dbInsertSent(key, "whatsapp", text) } : await waSendError(target)
   }
+  if (channel === "slack" && target) { const r = await slackSend(target, text); return r.ok ? { ok: true, channel: "slack", ...dbInsertSent(key, "slack", text) } : r }
+  if (channel === "signal" && target) { const r = await signalSend(target, text); return r.ok ? { ok: true, channel: "signal", ...dbInsertSent(key, "signal", text) } : r }
+  if (channel === "telegram" && target) { const r = await telegramSend(target, text); return r.ok ? { ok: true, channel: "telegram", ...dbInsertSent(key, "telegram", text) } : r }
   // AUTO (sin destino): email si el key es email, si no la última sala de WhatsApp
   if (String(key).startsWith("email:")) {
     const last = lastEmailInThread(key)

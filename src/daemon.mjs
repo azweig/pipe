@@ -29,6 +29,8 @@ const READERS = [
   ["notion", NODE, ["src/notion.mjs"]],
   ["matrix", NODE, ["src/matrix.mjs"]], // lector de bridges Matrix (WhatsApp/Instagram/... del server) → messages.jsonl
   ["unipile", NODE, ["src/unipile.mjs"]], // WhatsApp de cuentas gestionadas por Unipile (híbrido: algunos números acá, otros por el bridge)
+  ["slack", NODE, ["src/slack.mjs"]],   // Slack DMs + canales (gated por SLACK_TOKEN)
+  ["signal", NODE, ["src/signal.mjs"]], // Signal vía signal-cli REST (gated por SIGNAL_CLI_URL/SIGNAL_NUMBER); se une por número a WhatsApp/SMS
   ["web", NODE, ["src/server.mjs"]], // servidor web + API (localhost:3000)
   // LinkedIn: mensajería no-oficial rota (redirect) → fuera del loop. Perfiles se usan on-demand vía research.mjs.
   // ["linkedin", PY, ["src/linkedin_reader.py"]],
@@ -192,6 +194,8 @@ function runNotesCategorize() { if (notesCatRunning) return; notesCatRunning = t
 // --- CLIPS: clasifica cada nota-a-vos-mismo (link/idea/pendiente/media), saca título del link y "para qué sirve" ---
 let clipsRunning = false
 function runClips() { if (clipsRunning) return; clipsRunning = true; const p = spawnLogged("clips", NODE, ["src/clips.mjs"]); p.on("exit", () => { clipsRunning = false }) }
+let recordingsRunning = false
+function runRecordings() { if (recordingsRunning) return; recordingsRunning = true; const p = spawnLogged("recordings", NODE, ["src/recordings-inbox.mjs"]); p.on("exit", () => { recordingsRunning = false }) }
 let maintainRunning = false
 function runMaintain() { if (maintainRunning) return; maintainRunning = true; const p = spawnLogged("maintain", NODE, ["src/maintain.mjs"]); p.on("exit", () => { maintainRunning = false }) }
 let casGcRunning = false
@@ -371,6 +375,7 @@ setTimeout(runNotesCategorize, 200000) // primera categorización de notas a los
 setInterval(runNotesCategorize, 5 * 60000) // categorizar notas nuevas cada 5 min
 setTimeout(runClips, 115000) // primer enriquecimiento de clips a los ~2 min
 setInterval(runClips, 4 * 60000) // clasifica + "para qué sirve" los clips nuevos cada 4 min (batch chico)
+setInterval(runRecordings, 60000) // buzón de grabaciones: transcribe (whisper) los audios nuevos de la carpeta cada 1 min
 setTimeout(runMaintain, 300000) // primera pasada de mantenimiento a los 5 min
 setInterval(runMaintain, 30 * 60000) // ensureStats + fixGroupLeaks cada 30 min — proceso APARTE, ya NO bloquea el event loop del server (freeze del arquitecto)
 setTimeout(runResolve, 120000) // primer resolve de identidades a los 2 min
