@@ -41,7 +41,13 @@ Don't want to run it yourself? There's a **managed version** — the whole stack
 
 ## Quick start
 
-**Easiest — guided installer.** Asks for your identity and keys (AI, Google, Microsoft…) over the terminal and writes `.env` + `data/hub-config.json`, generates your `SECRETS_KEY`, installs deps and runs the tests:
+**Let an AI agent install it for you.** Clone the repo, open it in [Claude Code](https://claude.com/claude-code) (or any coding agent), and just say:
+
+> *"Install Pipe here."* — or — *"Deploy Pipe to this server."*
+
+It reads [`CLAUDE.md`](CLAUDE.md) + [`docs/DEPLOY.md`](docs/DEPLOY.md), runs the preflight, sets everything up — locally on your machine or on a fresh Linux box (Hetzner, a droplet, wherever) — and **stops to ask you only for what it can't know**: your AI keys, your domain, your PIN. It never invents secrets.
+
+**Or the guided installer.** Asks for your identity and keys (AI, Google, Microsoft…) over the terminal and writes `.env` + `data/hub-config.json`, generates your `SECRETS_KEY`, installs deps and runs the tests:
 
 ```bash
 git clone https://github.com/azweig/pipe.git && cd pipe
