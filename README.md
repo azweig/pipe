@@ -1,5 +1,3 @@
-<p align="center"><img src=".github/banner.svg" alt="pipe" width="100%"></p>
-
 # Pipe
 
 **Every conversation you have, in one place — with an AI that actually reads them.**
@@ -88,6 +86,8 @@ First run over the tunnel/localhost lets you set the access **PIN** (required on
 - **Email** — IMAP (Gmail/Outlook via app password) or Microsoft Graph. Add from *Configuración → Correo*.
 - **WhatsApp / Telegram / Instagram / Messenger / Discord** — via [mautrix](https://docs.mau.fi/) bridges on a Matrix homeserver. Connect by QR/code from `/link`. See `deploy/PROVISIONING.md` for the Docker stack. WhatsApp/LinkedIn can alternatively run through [Unipile](docs/UNIPILE.md).
 - **Teams / Notion / Google Calendar & Drive** — via their APIs (keys in `.env`).
+
+> **Heads-up on WhatsApp:** bridging WhatsApp through an unofficial gateway (mautrix or Unipile) is against WhatsApp's Terms of Service and *can* get a number banned. Use a number you're comfortable putting at risk, not your primary line. Email, Telegram, Teams and the API-based channels don't carry this risk.
 
 ## Documentation
 
