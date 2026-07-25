@@ -1,0 +1,39 @@
+name: Bug report
+description: Something isn't working
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to '...'
+        2. Click '...'
+        3. See error
+    validations:
+      required: true
+  - type: dropdown
+    id: deploy
+    attributes:
+      label: How are you running Pipe?
+      options: [Docker, From source (npm), Managed (pipe.one), Other]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Node version & commit
+      placeholder: "Node 20.x · commit abc1234"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste any error output. Redact tokens/personal data first.
+      render: shell
