@@ -1,0 +1,13 @@
+[Unit]
+Description=pipe backup cifrado (DB + jsonl + auth/ + configs)
+
+[Service]
+Type=oneshot
+User=comms
+WorkingDirectory=/opt/pipe
+# BACKUP_RCLONE_REMOTE hace que el backup salga OFFSITE (si no, vive en el mismo disco = sin protección real).
+Environment=BACKUP_RCLONE_REMOTE=
+ExecStart=/usr/bin/env bash scripts/backup.sh
+# tras el backup, verifica que el MÁS RECIENTE restaura OK (integridad + integrity_check de la DB).
+# Así "el restore funciona" deja de ser hipótesis: se prueba a diario.
+ExecStartPost=/usr/bin/env bash scripts/restore.sh

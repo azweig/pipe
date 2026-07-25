@@ -1,0 +1,29 @@
+# Caddy — termina TLS y pone el hub y el homeserver Matrix detrás de HTTPS.
+# Cierra dos hallazgos: (1) Matrix hoy viaja por HTTP plano (token + TODO el contenido en texto claro por internet),
+# (2) el rate-limit del PIN necesita que Caddy anexe el IP real al X-Forwarded-For (trusted_proxies).
+
+# ── El hub (bandeja + API) ──
+hub.example.com {
+	encode zstd gzip
+	# Caddy ANEXA el IP real del cliente al final del XFF → server.mjs usa ese último valor para el rate-limit (no spoofeable).
+	reverse_proxy 127.0.0.1:3000 {
+		header_up X-Forwarded-For {remote_host}
+	}
+	# headers de seguridad (defensa en profundidad; el server no los emite):
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}
+
+# ── Homeserver Matrix (Synapse) sobre HTTPS ──
+# En el server, matrix.mjs debe apuntar acá:  MATRIX_HS=https://matrix.example.com
+# (en vez de http://TU_SERVER_IP:8008). Así el token Bearer y el contenido de los mensajes van cifrados.
+matrix.example.com {
+	reverse_proxy 127.0.0.1:8008
+}
+
+# Alternativa sin dominio para Matrix: túnel WireGuard entre el box del daemon y el Synapse,
+# y MATRIX_HS=http://10.x.x.x:8008 sobre la interfaz wg (cifrado a nivel red).

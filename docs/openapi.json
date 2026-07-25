@@ -1,0 +1,2140 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "pipe API",
+    "version": "1.0.0",
+    "description": "API interna del segundo cerebro / inbox unificado. Todos los endpoints requieren sesión (PIN) salvo desde el túnel local."
+  },
+  "servers": [
+    {
+      "url": "https://hub.example.com"
+    },
+    {
+      "url": "http://localhost:3000"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Auth"
+    },
+    {
+      "name": "Bandeja e hilos"
+    },
+    {
+      "name": "Contactos e identidad"
+    },
+    {
+      "name": "IA · Coach · Búsqueda"
+    },
+    {
+      "name": "Notificaciones push"
+    },
+    {
+      "name": "Voz y briefing"
+    },
+    {
+      "name": "Espacios · Objetivos · Empresas"
+    },
+    {
+      "name": "Reuniones (notetaker)"
+    },
+    {
+      "name": "Integraciones y vínculos"
+    }
+  ],
+  "paths": {
+    "/api/accounts": {
+      "get": {
+        "summary": "accounts",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/accounts/email": {
+      "post": {
+        "summary": "reconecta el reader",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/accounts/email/remove": {
+      "post": {
+        "summary": "remove",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/action/done": {
+      "post": {
+        "summary": "marca to-do/promesa hecho",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/add-email": {
+      "post": {
+        "tags": [
+          "Integraciones y vínculos"
+        ],
+        "summary": "Conecta una cuenta de email (IMAP/Graph).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agenda": {
+      "get": {
+        "tags": [
+          "Integraciones y vínculos"
+        ],
+        "summary": "Agenda: próximas reuniones (Google/Outlook).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/ask": {
+      "get": {
+        "tags": [
+          "IA · Coach · Búsqueda"
+        ],
+        "summary": "Chat global sobre TODA tu mensajería (RAG semántico + FTS sobre ~2M msgs). Param: q.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/auth": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Login con PIN → setea cookie de sesión (token aleatorio, no el PIN).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/change-pin": {
+      "post": {
+        "summary": "change pin",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Cierra sesión y borra la cookie.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/revoke-all": {
+      "post": {
+        "summary": "revoke all",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/auth/setup": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Crea el PIN la primera vez (solo desde localhost/túnel).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/status": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Estado del PIN y de la sesión (pinSet, authed, canSetup).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/briefing": {
+      "get": {
+        "tags": [
+          "Voz y briefing"
+        ],
+        "summary": "Briefing hablado del día (clima, agenda, pendientes). Params opc: lat, lon, city, tz.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/calendar": {
+      "get": {
+        "summary": "calendar",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/calendar/regen": {
+      "post": {
+        "summary": "regen",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/channels": {
+      "get": {
+        "summary": "heartbeat por canal (para el aviso \"reconectá\") + lag de ingesta",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/clip/archive": {
+      "post": {
+        "summary": "archive",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/clip/pin": {
+      "post": {
+        "summary": "pin",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/coach": {
+      "get": {
+        "tags": [
+          "IA · Coach · Búsqueda"
+        ],
+        "summary": "Brief del día + secciones proactivas (pendientes, promesas, preguntas, reconectar…).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/coach/action": {
+      "post": {
+        "tags": [
+          "IA · Coach · Búsqueda"
+        ],
+        "summary": "Cierra/pospone un nudge del coach.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/coach/linkedin": {
+      "get": {
+        "summary": "borradores LinkedIn (cacheados)",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/coach/social": {
+      "get": {
+        "summary": "resumen IG/FB/LinkedIn (cacheado 2h)",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/coach/social-highlights": {
+      "get": {
+        "summary": "oportunidades/notable de redes (barato, sin LLM)",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/coach/weekly": {
+      "get": {
+        "tags": [
+          "IA · Coach · Búsqueda"
+        ],
+        "summary": "Review semanal generado por IA (actividad de 7 días).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/companies": {
+      "get": {
+        "tags": [
+          "Espacios · Objetivos · Empresas"
+        ],
+        "summary": "Lista de empresas.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/company": {
+      "post": {
+        "tags": [
+          "Espacios · Objetivos · Empresas"
+        ],
+        "summary": "Crea/edita una empresa.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/company/delete": {
+      "post": {
+        "tags": [
+          "Espacios · Objetivos · Empresas"
+        ],
+        "summary": "Borra una empresa.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/compose/correct": {
+      "post": {
+        "summary": "3 opciones antes de enviar",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/config": {
+      "get": {
+        "tags": [
+          "Voz y briefing"
+        ],
+        "summary": "Lee la config (voz, ubicación…).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/contact/archive": {
+      "post": {
+        "tags": [
+          "Contactos e identidad"
+        ],
+        "summary": "Archiva/desarchiva un hilo.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/contact/category": {
+      "post": {
+        "tags": [
+          "Contactos e identidad"
+        ],
+        "summary": "Asigna categoría (familia/trabajo/grupo…).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/contact/info": {
+      "get": {
+        "tags": [
+          "Contactos e identidad"
+        ],
+        "summary": "Categoría y estado de pin de un contacto.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/contact/merge": {
+      "post": {
+        "tags": [
+          "Contactos e identidad"
+        ],
+        "summary": "Fusiona varios identificadores en un solo contacto (identidad manual).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/contact/photo": {
+      "post": {
+        "tags": [
+          "Contactos e identidad"
+        ],
+        "summary": "Setea una foto de perfil manual.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/contact/pin": {
+      "post": {
+        "tags": [
+          "Contactos e identidad"
+        ],
+        "summary": "Fija/desfija un contacto en la bandeja.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/contact/profile": {
+      "get": {
+        "tags": [
+          "Contactos e identidad"
+        ],
+        "summary": "Perfil rico de un contacto (categoría, empresa, foto, stats).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/contact/spam": {
+      "post": {
+        "tags": [
+          "Contactos e identidad"
+        ],
+        "summary": "Marca un remitente como spam y archiva.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/contact/suggestions": {
+      "get": {
+        "tags": [
+          "Contactos e identidad"
+        ],
+        "summary": "Sugerencias de posibles fusiones (mismo humano en varios canales).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/contact/unmerge": {
+      "post": {
+        "tags": [
+          "Contactos e identidad"
+        ],
+        "summary": "Deshace una fusión de contacto.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/daily-plan": {
+      "get": {
+        "tags": [
+          "Voz y briefing"
+        ],
+        "summary": "Plan del día generado por IA.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/directory": {
+      "get": {
+        "tags": [
+          "Contactos e identidad"
+        ],
+        "summary": "Directorio de todos los contactos conocidos.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/email/body": {
+      "get": {
+        "tags": [
+          "Integraciones y vínculos"
+        ],
+        "summary": "Cuerpo HTML completo de un email on-demand. Param: id.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/espacio": {
+      "post": {
+        "tags": [
+          "Espacios · Objetivos · Empresas"
+        ],
+        "summary": "Crea/edita un espacio.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/espacio/delete": {
+      "post": {
+        "tags": [
+          "Espacios · Objetivos · Empresas"
+        ],
+        "summary": "Borra un espacio.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/espacio/exception": {
+      "post": {
+        "summary": "exception",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/espacio/exception/delete": {
+      "post": {
+        "summary": "delete",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/espacio/rule": {
+      "post": {
+        "tags": [
+          "Espacios · Objetivos · Empresas"
+        ],
+        "summary": "Agrega una regla a un espacio (email/dominio/teléfono/nombre).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/espacio/rule/delete": {
+      "post": {
+        "tags": [
+          "Espacios · Objetivos · Empresas"
+        ],
+        "summary": "Quita una regla de un espacio.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/espacio/view": {
+      "get": {
+        "tags": [
+          "Espacios · Objetivos · Empresas"
+        ],
+        "summary": "Vista consolidada (rollup) de un espacio y sus hijos.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/espacios": {
+      "get": {
+        "tags": [
+          "Espacios · Objetivos · Empresas"
+        ],
+        "summary": "Lista de espacios (grupos de contactos por reglas).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/groups": {
+      "get": {
+        "summary": "groups",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/groups/assign": {
+      "post": {
+        "summary": "assign",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/groups/auto": {
+      "post": {
+        "summary": "auto",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/groups/delete": {
+      "post": {
+        "summary": "delete",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/groups/save": {
+      "post": {
+        "summary": "save",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "summary": "health",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/home": {
+      "get": {
+        "tags": [
+          "Espacios · Objetivos · Empresas"
+        ],
+        "summary": "Datos del home rediseñado (objetivos, empresas, espacios, resumen).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/home/audio": {
+      "get": {
+        "summary": "audio",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/home/regen": {
+      "post": {
+        "summary": "regen",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/hub-config": {
+      "get": {
+        "summary": "hub config",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/hub-config/save": {
+      "post": {
+        "summary": "save",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/integration/remove": {
+      "post": {
+        "summary": "remove",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/llm-config": {
+      "get": {
+        "summary": "llm config",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/llm-config/save": {
+      "post": {
+        "summary": "save",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/llm-config/test": {
+      "post": {
+        "summary": "probar una key (ping mínimo): {keyId} o {provider,token}",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/llm-usage": {
+      "get": {
+        "tags": [
+          "IA · Coach · Búsqueda"
+        ],
+        "summary": "Medidor de uso de LLM: tokens/llamadas nube vs local.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/mail/backfill": {
+      "post": {
+        "summary": "backfill",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/mail/backfill/status": {
+      "get": {
+        "summary": "status",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/matrix-link": {
+      "get": {
+        "tags": [
+          "Integraciones y vínculos"
+        ],
+        "summary": "Vincula una red vía el bridge Matrix (WA/IG/FB/Telegram/LinkedIn).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      },
+      "post": {
+        "summary": "POST: spawnea un proceso → NO debe ser alcanzable por un GET drive-by (<img src=…>)",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/matrix-link-token": {
+      "post": {
+        "summary": "vincular por token/cookie (Discord=token)",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/matrix-logins": {
+      "get": {
+        "tags": [
+          "Integraciones y vínculos"
+        ],
+        "summary": "Sesiones/logins activos en el bridge.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/matrix-qr": {
+      "get": {
+        "tags": [
+          "Integraciones y vínculos"
+        ],
+        "summary": "QR del bridge para vincular.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/matrix-status": {
+      "get": {
+        "tags": [
+          "Integraciones y vínculos"
+        ],
+        "summary": "Estado del bridge Matrix.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/media-policy": {
+      "get": {
+        "summary": "media policy",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/media/free": {
+      "post": {
+        "summary": "→ papelera (30 días para deshacer)",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/media/restore": {
+      "post": {
+        "summary": "DESHACER un borrado",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/media/trash": {
+      "get": {
+        "summary": "papelera: media borrada, recuperable hasta el purge",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/meeting": {
+      "get": {
+        "tags": [
+          "Reuniones (notetaker)"
+        ],
+        "summary": "Detalle de una reunión (transcripción, resumen, acciones).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/meeting-prep": {
+      "get": {
+        "tags": [
+          "IA · Coach · Búsqueda"
+        ],
+        "summary": "Prepara una reunión: contexto del contacto + puntos a tratar.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/meeting/ingest": {
+      "post": {
+        "tags": [
+          "Reuniones (notetaker)"
+        ],
+        "summary": "Sube el audio de una reunión grabada → transcripción + notas.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/meeting/reprocess": {
+      "post": {
+        "tags": [
+          "Reuniones (notetaker)"
+        ],
+        "summary": "Reprocesa una reunión (re-transcribe/re-resume).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notes/action": {
+      "post": {
+        "summary": "action",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/notes/categorize": {
+      "post": {
+        "summary": "categorize",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/notes/chat": {
+      "post": {
+        "summary": "chat",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "get": {
+        "summary": "chat",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/notes/clips": {
+      "get": {
+        "summary": "clips",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/notes/digest": {
+      "get": {
+        "summary": "digest",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/notes/list": {
+      "get": {
+        "summary": "list",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/notes/regen": {
+      "post": {
+        "summary": "regen",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/notif-prefs": {
+      "get": {
+        "summary": "notif prefs",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/notif-prefs/mute": {
+      "post": {
+        "summary": "mute",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/oauth/google/configured": {
+      "get": {
+        "summary": "configured",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/objetivo": {
+      "post": {
+        "tags": [
+          "Espacios · Objetivos · Empresas"
+        ],
+        "summary": "Crea/edita un objetivo.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/objetivo/delete": {
+      "post": {
+        "tags": [
+          "Espacios · Objetivos · Empresas"
+        ],
+        "summary": "Borra un objetivo.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/objetivos": {
+      "get": {
+        "tags": [
+          "Espacios · Objetivos · Empresas"
+        ],
+        "summary": "Lista de objetivos.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/objetivos/suggest": {
+      "get": {
+        "tags": [
+          "Espacios · Objetivos · Empresas"
+        ],
+        "summary": "Sugiere objetivos con IA a partir de tu actividad.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/person": {
+      "get": {
+        "tags": [
+          "Contactos e identidad"
+        ],
+        "summary": "Vista 360 de una persona (histórico, canales, señales).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/person/full": {
+      "get": {
+        "summary": "timeline completo (on-demand)",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/push/subscribe": {
+      "post": {
+        "tags": [
+          "Notificaciones push"
+        ],
+        "summary": "Registra una suscripción push del navegador.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/push/test": {
+      "post": {
+        "tags": [
+          "Notificaciones push"
+        ],
+        "summary": "Envía una notificación de prueba a los dispositivos suscritos.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/push/unsubscribe": {
+      "post": {
+        "tags": [
+          "Notificaciones push"
+        ],
+        "summary": "Elimina una suscripción push.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/push/vapid": {
+      "get": {
+        "tags": [
+          "Notificaciones push"
+        ],
+        "summary": "Llave pública VAPID + nº de dispositivos suscritos.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/reply": {
+      "get": {
+        "tags": [
+          "IA · Coach · Búsqueda"
+        ],
+        "summary": "Redacta una respuesta a alguien según una instrucción. Body: name, instruction.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/resync": {
+      "post": {
+        "summary": "resync",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/router-search": {
+      "get": {
+        "summary": "robotito: facetas (0 tokens) → fallback RAG",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/schedule/create": {
+      "post": {
+        "summary": "create",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/schedule/delete": {
+      "post": {
+        "summary": "delete",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/schedule/move": {
+      "post": {
+        "summary": "move",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/search": {
+      "get": {
+        "tags": [
+          "IA · Coach · Búsqueda"
+        ],
+        "summary": "Búsqueda full-text (FTS5) en todos los mensajes. Body/param: q.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/selftest": {
+      "get": {
+        "summary": "selftest",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "summary": "selftest",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/send": {
+      "post": {
+        "tags": [
+          "Bandeja e hilos"
+        ],
+        "summary": "Envía una respuesta por el canal correcto (WhatsApp vía bridge / email vía SMTP).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/send-audio": {
+      "post": {
+        "summary": "send audio",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/send-media": {
+      "post": {
+        "summary": "send media",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/social/ingest": {
+      "post": {
+        "summary": "capturas de feed → vision → bandeja",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/social/mystyle": {
+      "post": {
+        "summary": "tus posts propios → calibrar estilo",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/spam/unmark": {
+      "post": {
+        "summary": "#31: corregir falso positivo del clasificador",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/status": {
+      "get": {
+        "tags": [
+          "Integraciones y vínculos"
+        ],
+        "summary": "Estado global de integraciones.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/stt": {
+      "get": {
+        "tags": [
+          "Voz y briefing"
+        ],
+        "summary": "Audio → texto (transcripción).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/summary": {
+      "get": {
+        "tags": [
+          "Bandeja e hilos"
+        ],
+        "summary": "Contadores globales de la bandeja (totales por canal, sin leer).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/sync-status": {
+      "get": {
+        "summary": "canales bajando su carga inicial → sync bar",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/telegram/code": {
+      "post": {
+        "summary": "code",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/telegram/connected": {
+      "post": {
+        "summary": "login OK → arrancar el reader ya (sin esperar el backoff del daemon)",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/telegram/password": {
+      "post": {
+        "summary": "password",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/telegram/start": {
+      "post": {
+        "summary": "start",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/telegram/status": {
+      "get": {
+        "summary": "status",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/thread": {
+      "get": {
+        "tags": [
+          "Bandeja e hilos"
+        ],
+        "summary": "Timeline unificado de una conversación (fusiona canales). Params: key, before, limit.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/thread/catchup": {
+      "get": {
+        "tags": [
+          "Bandeja e hilos"
+        ],
+        "summary": "Resumen multimodal de lo que te perdiste en un hilo (imágenes/audios/docs). Params: key, since.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/thread/media": {
+      "get": {
+        "tags": [
+          "Bandeja e hilos"
+        ],
+        "summary": "Galería de adjuntos de un hilo (fotos, docs, audios, video).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/thread/meetings": {
+      "get": {
+        "summary": "tarjeta de reuniones con este contacto",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/thread/schedule": {
+      "get": {
+        "summary": "calendarizador por chat: ¿hay intención de agendar?",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/thread/seen": {
+      "post": {
+        "tags": [
+          "Bandeja e hilos"
+        ],
+        "summary": "Marca el hilo como visto hasta un timestamp.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/thread/suggest-reply": {
+      "get": {
+        "tags": [
+          "Bandeja e hilos"
+        ],
+        "summary": "Borrador de respuesta con IA para el input (NO envía).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/thread/summarize": {
+      "get": {
+        "tags": [
+          "Bandeja e hilos"
+        ],
+        "summary": "Resumen del chat en un rango, guardado como nota IA. Param: range.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/thread/targets": {
+      "get": {
+        "tags": [
+          "Bandeja e hilos"
+        ],
+        "summary": "Canales/números disponibles para responderle a ese contacto.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/threads": {
+      "get": {
+        "tags": [
+          "Bandeja e hilos"
+        ],
+        "summary": "Lista de hilos unificados ordenados por actividad (bandeja). Param: limit.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/tts": {
+      "get": {
+        "tags": [
+          "Voz y briefing"
+        ],
+        "summary": "Texto → audio (voz).",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/voices": {
+      "get": {
+        "tags": [
+          "Voz y briefing"
+        ],
+        "summary": "Voces TTS disponibles + la actual.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/wa-qr": {
+      "get": {
+        "tags": [
+          "Integraciones y vínculos"
+        ],
+        "summary": "QR en vivo para vincular WhatsApp.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/wa-status": {
+      "get": {
+        "tags": [
+          "Integraciones y vínculos"
+        ],
+        "summary": "Estado de vinculación de WhatsApp.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/wa/status": {
+      "get": {
+        "summary": "números WhatsApp caídos → banner de re-link",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  }
+}

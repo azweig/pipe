@@ -1,0 +1,352 @@
+// i18n del web PWA — traducción en runtime sin tocar los 373 call-sites de app.js.
+// Estrategia: LANG (localStorage o idioma del navegador) + mapa ES→EN + reglas regex para lo interpolado,
+// aplicado por un MutationObserver sobre el DOM (captura render() central Y los innerHTML sueltos).
+// El español es la fuente; con LANG='en' se traduce lo que el usuario ve (nodos de texto + placeholders/títulos).
+(function () {
+  "use strict"
+  var LANG = (function () {
+    try { var s = localStorage.getItem("lang"); if (s === "en" || s === "es") return s } catch (e) {}
+    try { return (navigator.language || "es").slice(0, 2).toLowerCase() === "en" ? "en" : "es" } catch (e) { return "es" }
+  })()
+  window.PIPE_LANG = LANG
+  window.setLang = function (l) { try { localStorage.setItem("lang", l) } catch (e) {} location.reload() }
+
+  try { document.documentElement.lang = LANG } catch (e) {}
+  if (LANG !== "en") return // español = sin traducir (fuente)
+
+  // ── mapa ES → EN (texto exacto tal como aparece en la UI) ──
+  var TR = {
+    // navegación / tabs / chrome
+    "Inicio": "Home", "Mensajes": "Messages", "Calendario": "Calendar", "Radar": "Radar", "Notas": "Notes",
+    "Ajustes": "Settings", "Configuración": "Settings", "Cuenta y configuración": "Account & settings", "Ajustes del contacto": "Contact settings",
+    "Buscar": "Search", "Buscar con IA": "Search with AI", "Búsqueda IA": "AI search", "Buscar contacto…": "Search contact…", "buscar o preguntar": "search or ask",
+    "Guardar": "Save", "Cerrar": "Close", "Enviar": "Send", "Enviar mensaje": "Send message", "Enviar código": "Send code", "Enviar fotos o videos (podés elegir varios)": "Send photos or videos (pick several)",
+    "Agregar": "Add", "Agregar key": "Add key", "Agregar regla": "Add rule", "Agregar excepción": "Add exception", "Más": "More", "Ver semana": "See week", "Cuándo": "When", "Código": "Code", "Descripción": "Description", "Duración": "Duration", "Título": "Title", "Ámbito": "Scope", "Canal": "Channel", "Mensaje": "Message", "Nada.": "Nothing.",
+    // home
+    "Tu día en breve": "Your day at a glance", "Generando tu resumen del día…": "Generating your daily brief…",
+    "✅ Por hacer": "✅ To do", "🎯 Tus objetivos": "🎯 Your goals", "📅 Agenda de hoy": "📅 Today's agenda", "Ver": "See", "Sin eventos hoy 🎉": "No events today 🎉",
+    "📊 Tus KPIs": "📊 Your KPIs", "📰 Para vos": "📰 For you", "📊 Tu semana": "📊 Your week", "📰 Novedades de redes": "📰 Social updates", "📰 Novedades de tus redes": "📰 Your social updates",
+    "🔔 Activá las notificaciones": "🔔 Turn on notifications", "No te estás enterando de los mensajes nuevos. Suenan y vibran.": "You're missing new messages. They ring and vibrate.",
+    "Activar en este dispositivo": "Enable on this device",
+    "Puede que se haya desconectado — reconectá para no perder mensajes.": "It may have disconnected — reconnect so you don't miss messages.",
+    "✨ Lo que te perdiste": "✨ What you missed", "✨ Ver resumen de lo que me perdí": "✨ See a summary of what I missed",
+    "Resumiendo lo que te perdiste…": "Summarizing what you missed…", "No pude generar el resumen ahora. Intentá de nuevo.": "Couldn't generate the summary now. Try again.",
+    "No hay mensajes en ese período o no pude generarlo.": "No messages in that period, or I couldn't generate it.",
+    // radar / coach
+    "La IA vigila tus mensajes y te avisa qué atender — sin que preguntes nada.": "AI watches your messages and flags what to handle — without you asking.",
+    "Acá está lo que se te puede escapar; lo urgente de hoy vive en": "Here's what might slip; today's urgent lives in",
+    "Nada en el radar ahora — lo urgente ya está en Inicio 🏠. La IA revisa cada pocas horas.": "Nothing on the radar now — the urgent stuff is in Home 🏠. AI checks every few hours.",
+    "Sin sugerencias por ahora. Jarvis está observando.": "No suggestions yet. Jarvis is watching.", "Sugerencias de Jarvis": "Jarvis suggestions", "💡 El Coach sugiere": "💡 The Coach suggests",
+    "◎ Hueco libre — el Coach sugiere vaciar la bandeja": "◎ Free slot — the Coach suggests clearing your inbox",
+    "✍️ Responder": "✍️ Reply", "↩️ Responder": "↩️ Reply", "✍️ Responder con IA": "✍️ Reply with AI", "✍️ Redactar con IA": "✍️ Draft with AI", "✍️ Posts para LinkedIn": "✍️ LinkedIn posts",
+    "Redactando tu respuesta…": "Drafting your reply…", "Redactando una respuesta…": "Drafting a reply…", "Un borrador en tu voz según la conversación": "A draft in your voice based on the conversation",
+    "Armando tu review semanal…": "Building your weekly review…", "Mirando la actividad de los últimos 7 días.": "Looking at the last 7 days of activity.",
+    "Jarvis está pensando objetivos…": "Jarvis is thinking up goals…", "No pude generar borradores (¿pocas novedades todavía?).": "Couldn't generate drafts (not enough updates yet?).",
+    "⏰ Después": "⏰ Later",
+    // mensajes / bandeja
+    "Sin contactos en la bandeja.": "No contacts in the inbox.", "Sin contactos.": "No contacts.", "Sin mensajes.": "No messages.", "Sin mensajes en esta vista.": "No messages in this view.",
+    "Sin coincidencias": "No matches", "Probá con el nombre, el número o el correo.": "Try the name, number or email.", "Probá con el nombre, el número o el correo": "Try the name, number or email",
+    "Escribí tu mensaje": "Write your message", "Opciones del mensaje": "Message options", "Elegí qué enviar": "Choose what to send", "Elegí a dónde mandar el mensaje.": "Choose where to send the message.",
+    "Reenviar a…": "Forward to…", "Responder por…": "Reply via…", "Responder · Reenviar · Copiar": "Reply · Forward · Copy", "↪ Reenviar": "↪ Forward",
+    "Seleccionar mensajes para reenviar": "Select messages to forward", "Elegí qué IA usa cada tipo de tarea (barato para lo trivial, potente para lo que importa). Vacío = automático (local para lo privado).": "Choose which AI runs each task type (cheap for trivial, powerful for what matters). Empty = automatic (local for private).",
+    "Imagen del mensaje": "Message image", "Imagen de la nota": "Note image", "Nota de voz (manda el audio)": "Voice note (sends the audio)",
+    "🎤 Nota de voz": "🎤 Voice note", "Dictar con IA: hablás y te lo paso a texto (tal cual · corregido · mejorado)": "Dictate with AI: speak and I turn it into text (as-is · corrected · improved)",
+    "Corrección ortográfica: tocá para activar/desactivar": "Spell-check: tap to toggle", "Transcribiendo lo que dijiste…": "Transcribing what you said…", "Revisando tu texto…": "Reviewing your text…",
+    "Sin historial de conversación con este contacto.": "No conversation history with this contact.", "Sin adjuntos en esta conversación.": "No attachments in this conversation.",
+    "Resumiendo el chat…": "Summarizing the chat…", "No pude buscar eso ahora — probá de nuevo.": "Couldn't search that now — try again.",
+    "Preguntame lo que quieras sobre tus mensajes, gente, reuniones…": "Ask me anything about your messages, people, meetings…",
+    // notas
+    "Tus notas": "Your notes", "Resumen de tus notas": "Summary of your notes", "La IA piensa": "The AI thinks", "Hablá con tu cerebro": "Talk to your brain", "Preguntá a tu cerebro": "Ask your brain",
+    "Escribí a tu segundo cerebro…": "Write to your second brain…", "Respuesta de tu cerebro": "Your brain's answer", "Resumen guardado acá — no se envía": "Summary saved here — not sent",
+    "Preguntame sobre tus notas: resumime, buscá un link, decime qué dejé pasar…": "Ask me about your notes: summarize, find a link, tell me what I let slip…",
+    "Recuperar de junk": "Recover from junk", "De qué hablan": "What you talk about", "En común": "In common", "✦ Quién es": "✦ Who they are", "✦ Preparación": "✦ Prep",
+    "Sin historial de conversación con este contacto": "No conversation history with this contact",
+    // conexiones / settings
+    "Cuenta y configuración": "Account & settings", "Configurá tu hub": "Set up your hub", "🤖 Motor de IA": "🤖 AI engine", "🤖 Que decida Jarvis": "🤖 Let Jarvis decide",
+    "Quién sos y tus canales propios. Nombre y empresa aplican al toque; los números/mails propios aplican al reiniciar el servicio.": "Who you are and your own channels. Name and company apply instantly; your own numbers/emails apply when the service restarts.",
+    "Tu nombre completo": "Your full name", "Nombre de pila (para el saludo)": "First name (for the greeting)", "Empresa (contexto de la IA)": "Company (context for the AI)",
+    "Tus números de WhatsApp (separados por coma)": "Your WhatsApp numbers (comma-separated)", "Tus correos propios (separados por coma)": "Your own emails (comma-separated)",
+    "MENSAJERÍA": "MESSAGING", "CORREO": "EMAIL", "Sin canales de mensajería": "No messaging channels", "Todavía no conectaste ningún correo": "You haven't connected any email yet",
+    "Tocá “Agregar canal” para vincular tu primer chat.": "Tap “Add channel” to link your first chat.", "Tocá “Agregar cuenta de correo” para sumar tu primera bandeja.": "Tap “Add email account” to add your first inbox.",
+    "➕ Agregar canal de mensajería": "➕ Add messaging channel", "➕ Agregar conexión": "➕ Add connection", "➕ Agregar cuenta de correo": "➕ Add email account", "➕ Agregar key": "➕ Add key",
+    "Guías paso a paso, simples, para conectar cada fuente.": "Simple, step-by-step guides to connect each source.", "Guía paso a paso de cada fuente": "Step-by-step guide for each source",
+    "❓ Cómo conectar": "❓ How to connect", "❓ Cómo conectar cada cosa — guía paso a paso": "❓ How to connect everything — step by step", "Cómo conectar": "How to connect",
+    "Ya está conectado ✓ — leyendo tus chats (solo lectura).": "Already connected ✓ — reading your chats (read-only).", "✓ ¡Conectado!": "✓ Connected!", "✓ ¡Telegram conectado!": "✓ Telegram connected!",
+    "desconectado — recibís pero no podés responder esos chats.": "disconnected — you receive but can't reply to those chats.",
+    "WhatsApp se desconectó. Volvé a vincularlo para seguir recibiendo y enviando.": "WhatsApp disconnected. Re-link it to keep receiving and sending.", "Contestá desde WhatsApp": "Reply from WhatsApp",
+    "PASO 1 · TUS KEYS": "STEP 1 · YOUR KEYS", "PASO 2 · ÁREAS DE USO": "STEP 2 · USE AREAS", "Orden de preferencia": "Preference order",
+    "Agregá solo las que tengas. Podés poner varias (incluso 2 del mismo proveedor). El token queda cifrado en tu servidor.": "Add only the ones you have. You can add several (even 2 from the same provider). The token is encrypted on your server.",
+    "Tus datos van al motor que elijas. Tus tokens quedan en tu servidor, nunca se muestran.": "Your data goes to the engine you pick. Your tokens stay on your server, never shown.",
+    "Pegá tu API key": "Paste your API key", "Pegá la key primero.": "Paste the key first.", "Pegá el token primero.": "Paste the token first.", "Falta la key.": "Missing the key.", "Generar contraseña ↗": "Generate password ↗",
+    // telegram / discord / email / whatsapp linking
+    "Código de Telegram": "Telegram code", "Código por número": "Code by number", "Enviando código a tu Telegram…": "Sending a code to your Telegram…", "Escribí el código.": "Enter the code.",
+    "Poné tu teléfono; Telegram te manda un código a tu app para confirmar.": "Enter your phone; Telegram sends a code to your app to confirm.", "Poné tu teléfono con código de país.": "Enter your phone with country code.",
+    "Poné el número primero, con código de país.": "Enter the number first, with country code.", "con código de país": "with country code", "+51 999 000 000 (con código de país)": "+51 999 000 000 (with country code)",
+    "Tenés 2FA en Telegram. Poné tu contraseña de 2 pasos.": "You have 2FA on Telegram. Enter your 2-step password.", "Contraseña de 2 pasos": "2-step password",
+    "API ID (número)": "API ID (number)", "Vincular con token": "Link with token", "Pegá tu token de Discord acá": "Paste your Discord token here",
+    "Servidor IMAP (automático)": "IMAP server (automatic)", "Contraseña de aplicación (16 letras)": "App password (16 letters)", "contraseña de aplicación": "app password", "Contraseñas de aplicación": "App passwords",
+    "o con contraseña de aplicación": "or with an app password", "Reconectar los lectores de email": "Reconnect the email readers", "Verificación en 2 pasos": "2-step verification", "Verificación en dos pasos": "Two-step verification",
+    "El hub trae solo lo reciente. ¿Falta un correo viejo (un cliente, una deuda)? Traelo del archivo por nombre, dominio o palabra.": "The hub only fetches recent mail. Missing an old email (a client, a debt)? Pull it from the archive by name, domain or keyword.",
+    "Elegí de dónde traer tus mensajes.": "Choose where to fetch your messages from.",
+    // espacios / reglas
+    "Nuevo espacio": "New space", "Nueva regla": "New rule", "Nueva excepción": "New exception", "+ Excepción": "+ Exception", "+ Nuevo": "+ New", "sin espacios": "no spaces", "Sin excepciones.": "No exceptions.",
+    "Todavía no creaste espacios.": "You haven't created any spaces yet.", "Todavía sin reglas. Tocá": "No rules yet. Tap", "Sin mensajes que matcheen las reglas todavía.": "No messages match the rules yet.",
+    "Agrupá contactos en niveles (Trabajo → Equipo → Ana…). Cada espacio se ve como un contacto en tu bandeja.": "Group contacts into levels (Work → Team → Ana…). Each space appears as a contact in your inbox.",
+    "Organizá la bandeja por relevancia — cada grupo es una pestaña. Los": "Organize the inbox by relevance — each group is a tab. The",
+    "Los mensajes que matcheen entran al espacio.": "Messages that match go into the space.", "Lo que matchee queda": "Whatever matches stays", "Quién queda": "Who stays", "Ámbito": "Scope",
+    "Quién entra a este espacio: por correo, dominio (": "Who enters this space: by email, domain (", "Nombre de un grupo nuevo (ej: Clientes)": "Name of a new group (e.g. Clients)", "Invitar a (emails, separá con coma)": "Invite (emails, comma-separated)",
+    "Combiná canal y estado": "Combine channel and status", "Los mensajes que matcheen entran al espacio": "Messages that match go into the space", "Últimos mensajes de cada conversación:": "Latest messages from each conversation:",
+    // objetivos / kpis
+    "Todavía no cargaste objetivos.": "You haven't added any goals yet.", "Título (ej: 5 clientes nuevos)": "Title (e.g. 5 new clients)", "Unidad (clientes, %, noches/semana…)": "Unit (clients, %, nights/week…)",
+    "KPIs personales y de tus empresas, por horizonte. Jarvis mide el progreso solo.": "Personal and company KPIs, by horizon. Jarvis measures progress on its own.", "¿Desde cuándo?": "Since when?", "¿Qué es esta persona para vos?": "What is this person to you?",
+    // merge / persona
+    "Es la misma": "Same person", "🔗 Buscar si es la misma persona que otra": "🔗 Check if it's the same person as another", "Jarvis cree que son la misma persona": "Jarvis thinks they're the same person",
+    "Jarvis no encontró otra conversación que parezca la misma persona.": "Jarvis didn't find another conversation that looks like the same person.", "Ahora son una sola conversación.": "They're now a single conversation.",
+    // calendario / reuniones
+    "📅 Agendar reunión": "📅 Schedule meeting", "🎙 Reunión": "🎙 Meeting", "🎙️ Voz (transcripción)": "🎙️ Voice (transcript)", "Mover la reunión": "Move the meeting", "Nueva fecha y hora": "New date and time", "Nota / agenda (opcional)": "Note / agenda (optional)",
+    "↩️ Reunión cancelada": "↩️ Meeting canceled", "No tenés eventos próximos en la agenda.": "You have no upcoming events.", "🗓️ Tus horarios libres ese día:": "🗓️ Your free slots that day:", "📤 Mejor proponerle estos horarios por chat": "📤 Better to propose these times over chat",
+    "📄 Ver transcripción completa →": "📄 See full transcript →", "📖 Ver guía completa →": "📖 See full guide →",
+    // notificaciones / privacidad / storage
+    "Avisos y horas de silencio": "Alerts and quiet hours", "🌙 Horas de silencio (no molestar)": "🌙 Quiet hours (do not disturb)", "🔊 Sonido de mensajes nuevos (con la app abierta)": "🔊 New-message sound (with the app open)",
+    "En ese rango no suena ni te llegan notificaciones (los mensajes los ves igual al abrir la app).": "In that range it won't ring or notify (you still see messages when you open the app).",
+    "🔒 PIN de acceso remoto": "🔒 Remote-access PIN", "PIN de acceso": "Access PIN", "PIN de 4 a 12 dígitos": "PIN, 4 to 12 digits", "🔒 Solo para vos — no se envió": "🔒 Only for you — not sent", "Nada de esto se envía — es solo para vos.": "None of this is sent — it's only for you.",
+    "Guardar fotos y archivos": "Save photos and files", "Guardar fotos, videos y documentos": "Save photos, videos and documents", "Guardar media de este chat": "Save media from this chat", "Liberar espacio de este chat": "Free up space from this chat",
+    "De este chat. El audio siempre se guarda.": "From this chat. Audio is always kept.", "En el servidor, toda la cuenta. El audio (notas de voz) siempre se guarda.": "On the server, the whole account. Audio (voice notes) is always kept.",
+    "No encontré media/archivos en esas conversaciones.": "I didn't find media/files in those conversations.", "Imágenes": "Images",
+    // self-test / mantenimiento
+    "Cada 12h pipe.one se manda una prueba a tu propio número y correo, y verifica que salió de verdad.": "Every 12h pipe.one sends a test to your own number and email, and verifies it actually went out.",
+    "Probar envío ahora": "Test sending now", "Recomputar contadores y últimos mensajes": "Recompute counters and latest messages", "Todo corre en el server sin borrar nada. Reconstruir búsqueda e identidades puede tardar unos minutos.": "Everything runs on the server without deleting anything. Rebuilding search and identities can take a few minutes.",
+    "Todavía no hay novedades leídas. Los feeds se leen 4×/día.": "No updates read yet. Feeds are read 4×/day.",
+    // jarvis
+    "Hablar con Jarvis": "Talk to Jarvis", "Pregúntale a Jarvis…": "Ask Jarvis…", "Seguir conversando en Jarvis →": "Keep chatting in Jarvis →", "Seguir en Jarvis →": "Continue in Jarvis →",
+    "Vos preguntás, él busca en tus datos · privado en tu server": "You ask, it searches your data · private on your server", "Enter para preguntarle a la IA": "Enter to ask the AI",
+    "— preguntale lo que sea sobre tus datos": "— ask it anything about your data", "🗂 Tus grupos": "🗂 Your groups", "Sugerencias de Jarvis": "Jarvis suggestions",
+    // varios
+    "Cruzando novedades + tu voz — unos segundos.": "Cross-referencing updates + your voice — a few seconds.", "Tocá para agregar los que te sirvan.": "Tap to add the ones you want.", "Tocá para agregar o quitar del grupo.": "Tap to add or remove from the group.",
+    "Crear una nueva": "Create a new one", "1 hora": "1 hour", "último": "latest", "Nada.": "Nothing.", "Contestá desde WhatsApp": "Reply from WhatsApp", "Recuperar de junk": "Recover from junk",
+    "Mostrar contraseña": "Show password", "Cuenta Microsoft": "Microsoft account",
+    // batch 2: modelos IA, conexiones, alerts, estados, filtros
+    "(sin asunto)": "(no subject)",
+    "(sin título)": "(untitled)",
+    "Abrir Contraseñas de aplicación de Google": "Open Google App Passwords",
+    "Abrir Seguridad de Microsoft": "Open Microsoft Security",
+    "Abrí el link de autorización que imprime, elegí esa cuenta y aceptá.": "Open the authorization link it prints, pick that account and accept.",
+    "Acá en tu equipo no te lo pide.": "On your machine it won't ask for it.",
+    "Agregá tu correo": "Add your email",
+    "Avisos, tu cerebro Jarvis y el PIN de acceso.": "Alerts, your Jarvis brain and the access PIN.",
+    "Aún no se ejecutó ninguna prueba. Corre solo cada 12h — o probala ahora.": "No test has run yet. It runs on its own every 12h — or test it now.",
+    "Buenos días": "Good morning",
+    "Buscando en el archivo… (puede tardar)": "Searching the archive… (may take a while)",
+    "Buscar por nombre, teléfono o email…": "Search by name, phone or email…",
+    "Cambiar tu PIN": "Change your PIN",
+    "Cargá tus keys y elegí qué IA usa cada tarea. Todo queda cifrado en tu servidor.": "Add your keys and choose which AI runs each task. Everything is encrypted on your server.",
+    "Claude Haiku 4.5 — rápido/barato": "Claude Haiku 4.5 — fast/cheap",
+    "Claude Opus 4.8 — máxima capacidad": "Claude Opus 4.8 — top capability",
+    "Completá correo y contraseña.": "Fill in email and password.",
+    "Con esto la IA sabe quién sos y desde dónde escribís — para atribuir bien tus mensajes.": "This lets the AI know who you are and where you write from — to attribute your messages correctly.",
+    "Con token": "With token",
+    "Conectar otro correo por IMAP": "Connect another email via IMAP",
+    "Conectá WhatsApp": "Connect WhatsApp",
+    "Contexto para redacción": "Context for drafting",
+    "Contraseña de aplicación de Gmail": "Gmail app password",
+    "Contraseña de aplicación de Outlook": "Outlook app password",
+    "Copiá la clave que te da y pegala acá en el campo de contraseña.": "Copy the key it gives you and paste it here in the password field.",
+    "Corre sobre un bridge Matrix (mautrix-meta) en el servidor del hub.": "Runs on a Matrix bridge (mautrix-meta) on the hub server.",
+    "Correo": "Email",
+    "Creando el evento…": "Creating the event…",
+    "Crear un PIN": "Create a PIN",
+    "Cualquier proveedor con IMAP + contraseña de aplicación.": "Any provider with IMAP + an app password.",
+    "Cuentas de correo": "Email accounts",
+    "Cómo firmás y te ve la IA": "How you sign and how the AI sees you",
+    "Decí tu mensaje… la IA lo pasa a texto": "Say your message… the AI turns it into text",
+    "Desde el principio de los tiempos": "From the beginning of time",
+    "Diagnóstico": "Diagnostics",
+    "El archivo es muy grande (máx 64 MB).": "The file is too large (max 64 MB).",
+    "El hub se autoprueba mandándote un mensaje y te avisa si algo no sale.": "The hub tests itself by sending you a message and warns you if something fails.",
+    "El token interno no expira.": "The internal token doesn't expire.",
+    "Elegí la nueva fecha": "Choose the new date",
+    "Elegí qué media guardar en el servidor (toda la cuenta, o por chat desde el 📎). El audio siempre se guarda.": "Choose which media to keep on the server (whole account, or per chat from the 📎). Audio is always kept.",
+    "Elegí tu IA": "Choose your AI",
+    "Email de": "Email from",
+    "En el servidor": "On the server",
+    "En pausa": "Paused",
+    "Enviando prueba a vos mismo…": "Sending a test to yourself…",
+    "Enviando prueba por cada canal…": "Sending a test on each channel…",
+    "Error en el login. Reintentá.": "Login error. Try again.",
+    "Es solo lectura de tus chats.": "It's read-only access to your chats.",
+    "Escaneá un QR desde tu teléfono": "Scan a QR from your phone",
+    "Escribí un nombre, dominio o palabra.": "Type a name, domain or keyword.",
+    "Estado de envío": "Sending status",
+    "Falta la fecha": "Missing the date",
+    "Fijar arriba": "Pin to top",
+    "GPT-4o mini — rápido y barato": "GPT-4o mini — fast and cheap",
+    "GPT-4o — más capaz": "GPT-4o — more capable",
+    "Gemini 2.5 Flash Lite — el más rápido": "Gemini 2.5 Flash Lite — the fastest",
+    "Gemini 2.5 Pro — más capaz": "Gemini 2.5 Pro — more capable",
+    "Generando el resumen…": "Generating the summary…",
+    "Gmail, Outlook o cualquier IMAP — todo en un solo lugar.": "Gmail, Outlook or any IMAP — all in one place.",
+    "Gmail/Outlook con contraseña de aplicación": "Gmail/Outlook with an app password",
+    "Grabando nota de voz…": "Recording voice note…",
+    "Iniciá sesión con tu cuenta Microsoft y aceptá los permisos.": "Sign in with your Microsoft account and accept the permissions.",
+    "Keys y áreas": "Keys and areas",
+    "La conexión con Google (Permitir acceso) todavía no está activada en este hub. Por ahora conectá con una contraseña de aplicación.": "Google connection (Allow access) isn't enabled on this hub yet. For now, connect with an app password.",
+    "Las notas de voz no aplican a email.": "Voice notes don't apply to email.",
+    "Leídos": "Read",
+    "Listo — no hay que volver a escanear, queda vinculado en el servidor.": "Done — no need to scan again, it stays linked on the server.",
+    "Los mensajes seleccionados no tienen texto para reenviar.": "The selected messages have no text to forward.",
+    "Mensajería": "Messaging",
+    "Motor de IA": "AI engine",
+    "Nada en la papelera.": "Nothing in the trash.",
+    "Necesito permiso de micrófono.": "I need microphone permission.",
+    "Necesitás el actual para cambiarlo.": "You need the current one to change it.",
+    "No hay notas en esta categoría.": "No notes in this category.",
+    "No pude entender el audio. Probá de nuevo hablando un poco más claro.": "I couldn't understand the audio. Try again, speaking a bit more clearly.",
+    "No pude generar una respuesta ahora.": "I couldn't generate a reply right now.",
+    "No pude responder eso — probá reformular.": "I couldn't answer that — try rephrasing.",
+    "No se pudo cambiar el PIN.": "Couldn't change the PIN.",
+    "No se pudo crear el evento": "Couldn't create the event",
+    "No se pudo enviar el audio:": "Couldn't send the audio:",
+    "Ocultar contraseña": "Hide password",
+    "Otro correo": "Another email",
+    "Otro correo (IMAP)": "Another email (IMAP)",
+    "PIN de 6 a 12 dígitos": "PIN, 6 to 12 digits",
+    "PIN nuevo (6 a 12 dígitos)": "New PIN (6 to 12 digits)",
+    "Para reconocerte en grupos": "To recognize you in groups",
+    "Por ahora las fotos/videos van por WhatsApp/Telegram/etc., no por email.": "For now photos/videos go via WhatsApp/Telegram/etc., not email.",
+    "Próximamente": "Coming soon",
+    "QR o código": "QR or code",
+    "Queda el token (Calendar + Drive) y empieza a sincronizar.": "The token (Calendar + Drive) is saved and it starts syncing.",
+    "Resumí mis notas de esta semana": "Summarize my notes from this week",
+    "Resúmenes y horarios": "Summaries and schedules",
+    "Reunión": "Meeting",
+    "Se conecta junto con Google Calendar (mismo login).": "Connects together with Google Calendar (same login).",
+    "Se configura una vez desde el servidor.": "Set up once from the server.",
+    "Se enlazan a tu identidad": "They link to your identity",
+    "Si algo se desincronizó, reconstruilo desde acá. No borra nada.": "If something got out of sync, rebuild it here. It deletes nothing.",
+    "Sin leer": "Unread",
+    "Sin nombre": "No name",
+    "Sin responder": "Unanswered",
+    "Sincroniza tus archivos de Drive para buscarlos desde el hub.": "Syncs your Drive files so you can search them from the hub.",
+    "Sincronización": "Sync",
+    "Sumá tus chats a la bandeja unificada.": "Add your chats to the unified inbox.",
+    "Te llamó": "Called you",
+    "Telefonía": "Telephony",
+    "Teléfono + código": "Phone + code",
+    "Todavía no tengo notas para resumir.": "I don't have notes to summarize yet.",
+    "Tu identidad": "Your identity",
+    "Tu motor y token (o usá el nuestro)": "Your engine and token (or use ours)",
+    "Tus bandejas": "Your inboxes",
+    "Tus correos": "Your emails",
+    "Tus números de WhatsApp": "Your WhatsApp numbers",
+    "Un solo login cubre Outlook + Teams + SharePoint/OneDrive.": "A single login covers Outlook + Teams + SharePoint/OneDrive.",
+    "WhatsApp, Telegram y más": "WhatsApp, Telegram and more",
+    "a las": "at",
+    "buscar en el general": "search the main list",
+    "lo que me perdí": "what I missed",
+    "memes de messi": "messi memes",
+    "miércoles": "Wednesday",
+    "sábado": "Saturday",
+    "no leído": "unread",
+    "número": "number",
+    "números": "numbers",
+    "por conversación": "per conversation",
+    "sin PIN": "no PIN",
+    "sin canales": "no channels",
+    "sin cuentas": "no accounts",
+    "sin motor — pegá un token": "no engine — paste a token",
+    "sin probar": "untested",
+    "sin token": "no token",
+    "toda la historia": "all history",
+    "tu hub": "your hub",
+    "tu@correo.com": "you@email.com",
+    "tu@outlook.com": "you@outlook.com",
+    "· elegí hora": "· pick a time",
+    "· nueva (sin guardar)": "· new (unsaved)",
+    "¿Borrar este grupo? No borra los contactos, solo el grupo.": "Delete this group? It removes the group only, not the contacts.",
+    "¿Cancelar esta reunión? Se les avisa a los invitados.": "Cancel this meeting? Guests will be notified.",
+    "¿Mandar a la papelera TODAS las fotos, videos y documentos ya guardados? El audio se mantiene y NO se borran los mensajes. Tenés 30 días para recuperarlos antes de que se liberen del disco.": "Trash ALL saved photos, videos and documents? Audio is kept and messages are NOT deleted. You have 30 days to recover them before they're freed from disk.",
+    "¿Permitir?": "Allow?",
+    "¿Quitar esta cuenta de correo? (no borra los correos ya traídos)": "Remove this email account? (it won't delete emails already fetched)",
+    "¿Quién sos?": "Who are you?",
+    "¿Qué estoy postergando?": "What am I postponing?",
+    "¿Qué links guardé para leer?": "What links did I save to read?",
+    "¿Tus mensajes salen?": "Are your messages going out?",
+    "Última semana": "Last week",
+    "Último día": "Last day",
+    "Último mes": "Last month",
+    "última semana": "last week",
+    "último día": "last day",
+    "último mes": "last month",
+    "⏳ sin confirmar": "⏳ unconfirmed",
+    "▶ Escuchar de nuevo": "▶ Listen again",
+    "✅ Correo conectado. Empieza a traer mensajes en unos segundos.": "✅ Email connected. It starts pulling messages in a few seconds.",
+    "✅ Identidad actualizada. Los números/correos propios se aplican al reiniciar el servicio.": "✅ Identity updated. Your own numbers/emails apply when the service restarts.",
+    "✅ Motor de IA actualizado.": "✅ AI engine updated.",
+    "✓ Tu texto (sin errores)": "✓ Your text (no errors)",
+    "✨ Otra forma de decirlo": "✨ Another way to say it",
+    "📄 Contenido en imágenes/HTML — abrilo para verlo": "📄 Content in images/HTML — open it to view",
+    "ese día": "that day",
+    // guías de conexión (paso a paso)
+    "Abrí": "Open", "Apretá": "Press", "Entrá a": "Go to", "Copiá el": "Copy the", "Copiá ese valor y pegalo abajo.": "Copy that value and paste it below.",
+    "Ajustes → Dispositivos vinculados → Vincular un dispositivo": "Settings → Linked devices → Link a device",
+    "En la app → Dispositivos vinculados → Vincular con número:": "In the app → Linked devices → Link with number:",
+    "El QR de Discord suele fallar. Lo confiable es tu": "The Discord QR often fails. What's reliable is your",
+    "Hacé cualquier acción; abrí un request y buscá el header": "Do any action; open a request and find the header",
+    "Telegram te mandó un código a tu": "Telegram sent a code to your", "Vinculá desde el teléfono de esa cuenta. Podés agregar varios números.": "Link from that account's phone. You can add several numbers.",
+    "Ej: \"¿quién me debe plata?\", \"resumime lo de Carlos\"": "E.g. \"who owes me money?\", \"summarize the Carlos thread\"",
+    "🔑 ¿Cómo consigo la contraseña de aplicación?": "🔑 How do I get the app password?", "🔑 ¿Cómo saco mi token?": "🔑 How do I get my token?", "🔑 ¿De dónde saco el API ID / Hash? (una vez)": "🔑 Where do I get the API ID / Hash? (one time)",
+    "Ej: ¿quién me debe? · resumime a Juan · ¿qué quedó con X?": "E.g. who owes me? · summarize Juan · what's pending with X?",
+  }
+
+  // ── reglas para texto DINÁMICO (con números/fechas interpolados) ──
+  var RULES = [
+    [/^hace (\d+)\s*d$/i, "$1d ago"], [/^hace (\d+)\s*días?$/i, "$1 days ago"], [/^hace (\d+)\s*h$/i, "$1h ago"], [/^hace un momento$/i, "just now"],
+    [/^en (\d+)\s*días?$/i, "in $1 days"], [/^en (\d+)\s*h$/i, "in $1h"],
+    [/^\((\d+)\s*más\)$/i, "($1 more)"], [/^(\d+)\s*más$/i, "$1 more"],
+    [/(\d+)\s*mensajes/gi, "$1 messages"], [/(\d+)\s*mensaje\b/gi, "$1 message"],
+    [/(\d+)\s*correos? traídos?/i, "$1 emails fetched"], [/(\d+)\s*adjuntos? a la papelera/i, "$1 attachments to trash"],
+    [/(\d+)\s*contactos?/gi, "$1 contacts"], [/(\d+)\s*eventos?/gi, "$1 events"], [/(\d+)\s*notas?/gi, "$1 notes"],
+    [/recuperables?\s*(\d+)\s*días/i, "recoverable for $1 days"], [/^Sin señal$/i, "No signal"],
+    [/(\d+)\s*sin señal/i, "$1 offline"], [/^Activo hoy$/i, "Active today"], [/^Activo ahora$/i, "Active now"],
+    [/^hoy$/i, "today"], [/^ayer$/i, "yesterday"], [/^mañana$/i, "tomorrow"], [/^ahora$/i, "now"],
+  ]
+
+  function trStr(raw) {
+    var key = raw.trim(); if (!key) return null
+    if (TR[key]) return raw.replace(key, TR[key])
+    for (var i = 0; i < RULES.length; i++) { if (RULES[i][0].test(key)) { var out = key.replace(RULES[i][0], RULES[i][1]); if (out !== key) return raw.replace(key, out) } }
+    return null
+  }
+
+  var ATTRS = ["placeholder", "title", "aria-label", "alt"]
+  function trEl(el) {
+    if (el.nodeType === 1) {
+      for (var a = 0; a < ATTRS.length; a++) { if (el.hasAttribute && el.hasAttribute(ATTRS[a])) { var v = el.getAttribute(ATTRS[a]); var t = v && TR[v.trim()] ? v.replace(v.trim(), TR[v.trim()]) : null; if (t) el.setAttribute(ATTRS[a], t) } }
+    }
+  }
+  function walk(node) {
+    if (!node) return
+    if (node.nodeType === 3) { var t = trStr(node.nodeValue); if (t != null) node.nodeValue = t; return }
+    if (node.nodeType !== 1) return
+    if (node.tagName === "SCRIPT" || node.tagName === "STYLE" || node.tagName === "SVG" || node.tagName === "PATH") return
+    trEl(node)
+    for (var c = node.firstChild; c; c = c.nextSibling) walk(c)
+  }
+
+  function run(root) { try { walk(root || document.body) } catch (e) {} }
+  // observar TODO cambio del DOM (render() central + innerHTML sueltos)
+  function observe() {
+    try {
+      var obs = new MutationObserver(function (muts) {
+        for (var i = 0; i < muts.length; i++) {
+          var m = muts[i]
+          if (m.type === "childList") { for (var j = 0; j < m.addedNodes.length; j++) walk(m.addedNodes[j]) }
+          else if (m.type === "characterData") { var t = trStr(m.target.nodeValue); if (t != null && t !== m.target.nodeValue) m.target.nodeValue = t }
+        }
+      })
+      obs.observe(document.body, { childList: true, subtree: true, characterData: true })
+    } catch (e) {}
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { run(); observe() })
+  else { run(); observe() }
+})()

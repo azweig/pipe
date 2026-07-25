@@ -1,0 +1,34 @@
+# Pipe — one-command self-host.
+#   1) cp .env.example .env                          # fill in the keys you use
+#   2) cp hub-config.example.json data/hub-config.json  (or set it from the UI on first run)
+#   3) docker compose up -d --build                  # web UI on http://localhost:3000
+#
+# WhatsApp/Telegram/etc. bridges run as a SEPARATE Matrix stack (see deploy/PROVISIONING.md);
+# point this app at it via MATRIX_HS in .env. This service is just Pipe itself.
+services:
+  pipe:
+    build: .
+    # once you publish an image, swap build for:
+    # image: ghcr.io/azweig/pipe:latest
+    ports:
+      - "127.0.0.1:3000:3000"   # SOLO localhost del host → detrás de Caddy (TLS+PIN). Nunca 0.0.0.0 (Docker saltea UFW → brute-force del PIN sin límite)
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+      # IMPORTANT: set SECRETS_KEY in .env — otherwise ./.secret-key is regenerated on every
+      # rebuild and previously-encrypted BYOK tokens in the data volume become undecryptable.
+    volumes:
+      - pipe-data:/app/data      # SQLite messages DB, hub-config.json, vapid/secret keys
+      - pipe-auth:/app/auth      # per-channel sessions & tokens
+      - pipe-vault:/app/vault    # Obsidian knowledge-graph notes
+    restart: unless-stopped
+    # First run connects channels + sets the access PIN in the UI. To run web-only
+    # (no channel readers) uncomment:
+    # command: ["npm", "run", "web"]
+
+volumes:
+  pipe-data:
+  pipe-auth:
+  pipe-vault:

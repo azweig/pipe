@@ -1,0 +1,9 @@
+{
+  "ownerName": "Owner Name",
+  "ownerFirst": "Owner",
+  "company": "My Company",
+  "myNumbers": ["15551234567"],
+  "myEmails": ["you@example.com"],
+  "timezone": "America/Lima",
+  "domain": "hub.example.com"
+}

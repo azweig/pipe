@@ -1,0 +1,32 @@
+# NO meter en la imagen: datos/secretos/deps (van montados como volúmenes o se instalan en el build)
+node_modules
+data
+auth
+vault
+.secret-key
+.env
+.env.*
+*.session
+*.pem
+.git
+.gitignore
+**/*.log
+scratchpad
+*.tmp
+deploy/**/postgres
+deploy/**/synapse
+# datos personales / secretos que .gitignore excluye pero COPY . . arrastraría a la imagen:
+src/seed-graph.mjs
+secrets
+media
+*.db
+*.sqlite
+wa-go/wa
+**/__pycache__
+.DS_Store
+# privado que .gitignore excluye pero COPY . . mete en la imagen pública (ghcr):
+web
+docs/dossier.html
+docs/pipe-dossier.pdf
+test
+bench

@@ -1,0 +1,177 @@
+// db-core: dueño del handle SQLite y del esquema. El seam de datos.
+// REGLA: el handle NUNCA cruza el seam. Vive privado acá; los repos lo obtienen vía handle() (interno),
+// los callers usan named queries. En Wave 0 esto es andamiaje: solo lo usan los tests (:memory:).
+// db.mjs sigue teniendo su db() intacto y comparte SOLO initSchema() con este módulo.
+import Database from "better-sqlite3"
+
+// initSchema(handle): función PURA con el mismo DDL que vivía dentro de db(). Idempotente
+// (CREATE IF NOT EXISTS + PRAGMA table_info para migraciones). Corre igual sobre archivo o ':memory:'.
+export function initSchema(h) {
+  h.exec(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id TEXT PRIMARY KEY,
+      channel TEXT, account TEXT, thread TEXT, jid TEXT,
+      sender TEXT, name TEXT, text TEXT, ts INTEGER, dir TEXT,
+      grp TEXT, media TEXT, mediaType TEXT, filename TEXT, unread INTEGER DEFAULT 0, body TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_thread_ts ON messages(thread, ts);
+    CREATE INDEX IF NOT EXISTS idx_ts ON messages(ts);
+    CREATE INDEX IF NOT EXISTS idx_name ON messages(name);
+    CREATE INDEX IF NOT EXISTS idx_channel ON messages(channel);
+    CREATE INDEX IF NOT EXISTS idx_dir_thread ON messages(dir, thread);
+    CREATE INDEX IF NOT EXISTS idx_thread_dir_ts ON messages(thread, dir, ts);
+    CREATE INDEX IF NOT EXISTS idx_grp ON messages(grp) WHERE grp IS NOT NULL;
+    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(text, name, content='messages', content_rowid='rowid');
+    CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+      INSERT INTO messages_fts(rowid, text, name) VALUES (new.rowid, new.text, new.name);
+    END;
+    CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
+    CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, text TEXT, thread TEXT, name TEXT, due TEXT, ts INTEGER, done INTEGER DEFAULT 0, created INTEGER);
+    CREATE TABLE IF NOT EXISTS promesas (id TEXT PRIMARY KEY, text TEXT, thread TEXT, name TEXT, due TEXT, ts INTEGER, done INTEGER DEFAULT 0, created INTEGER);
+    CREATE TABLE IF NOT EXISTS clips (id TEXT PRIMARY KEY, ts INTEGER, kind TEXT, url TEXT, title TEXT, para TEXT, done INTEGER DEFAULT 0, created INTEGER);
+    CREATE TABLE IF NOT EXISTS note_meta (id TEXT PRIMARY KEY, category TEXT, title TEXT, status TEXT DEFAULT 'active', pinned INTEGER DEFAULT 0, ts INTEGER);
+    -- historia diaria de KPIs (para deltas reales en la Home). Antes la creaba home-brief.mjs; el esquema es de db-core (fuente única).
+    CREATE TABLE IF NOT EXISTS metrics (metric TEXT, day TEXT, value REAL, PRIMARY KEY(metric, day));
+    -- Router por facetas (búsqueda barata): una fila por CONVERSACIÓN con tags/entidades/keywords pre-computados offline.
+    CREATE TABLE IF NOT EXISTS conversations (
+      thread TEXT PRIMARY KEY, name TEXT, channels TEXT,
+      summary TEXT, entities TEXT, tags TEXT, keywords TEXT,
+      n_msgs INTEGER, first_ts INTEGER, last_ts INTEGER,
+      enriched_last_ts INTEGER DEFAULT 0, enriched_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_conv_last ON conversations(last_ts DESC);
+    -- índice invertido: faceta -> hilo. El routing es un SELECT ... WHERE facet IN (...) (indexado, sin LLM).
+    CREATE TABLE IF NOT EXISTS conv_facets (thread TEXT, kind TEXT, facet TEXT);
+    CREATE INDEX IF NOT EXISTS idx_facet ON conv_facets(facet);
+    CREATE INDEX IF NOT EXISTS idx_facet_thread ON conv_facets(thread);
+    -- v2: grafo PONDERADO (tags con puntajes). node="kind:facet" (entity:juan pérez, topic:deuda). weight = frecuencia×idf sobre TODO el hilo (FTS), no solo el tail.
+    CREATE TABLE IF NOT EXISTS graph_edges (node TEXT, thread TEXT, kind TEXT, weight REAL, PRIMARY KEY(node, thread));
+    CREATE INDEX IF NOT EXISTS idx_ge_node ON graph_edges(node);
+    CREATE INDEX IF NOT EXISTS idx_ge_thread ON graph_edges(thread);
+    -- FTS sobre el CUERPO de los emails (el messages_fts principal solo indexa el asunto → los montos/fechas que viven en el body no eran buscables).
+    CREATE VIRTUAL TABLE IF NOT EXISTS email_fts USING fts5(body);
+    CREATE TRIGGER IF NOT EXISTS messages_body_ai AFTER INSERT ON messages WHEN new.body IS NOT NULL AND new.body != '' BEGIN
+      INSERT INTO email_fts(rowid, body) VALUES (new.rowid, new.body);
+    END;
+    -- external-content FTS necesita _ad/_au además de _ai: sin ellos, borrar/editar filas desincroniza el índice EN SILENCIO
+    -- (el integrity-check pasa igual). Bug real reproducido: tras el dedup, un rowid REUSADO hacía que buscar "X" devolviera el mensaje de OTRO contacto.
+    CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, text, name) VALUES('delete', old.rowid, old.text, old.name);
+    END;
+    CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE OF text, name ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, text, name) VALUES('delete', old.rowid, old.text, old.name);
+      INSERT INTO messages_fts(rowid, text, name) VALUES (new.rowid, new.text, new.name);
+    END;
+    -- email_fts NO es external-content y el cuerpo llega por UPDATE (los emails entran sin body) → el _ai con WHEN body IS NOT NULL nunca lo indexaba.
+    -- Sin estos, todo email backfilleado por cuerpo era inbuscable, y tras un dedup su rowid apuntaba a otra fila (cross-contamination).
+    CREATE TRIGGER IF NOT EXISTS email_body_au AFTER UPDATE OF body ON messages BEGIN
+      DELETE FROM email_fts WHERE rowid = old.rowid;
+      INSERT INTO email_fts(rowid, body) SELECT new.rowid, new.body WHERE new.body IS NOT NULL AND new.body != '';
+    END;
+    CREATE TRIGGER IF NOT EXISTS email_body_ad AFTER DELETE ON messages BEGIN
+      DELETE FROM email_fts WHERE rowid = old.rowid;
+    END;
+  `)
+  // migración: columna body (cuerpo completo del email, HTML) + summary (pitch IA) para DBs existentes
+  const mcols = h.prepare("PRAGMA table_info(messages)").all().map((c) => c.name)
+  if (!mcols.includes("body")) h.exec("ALTER TABLE messages ADD COLUMN body TEXT")
+  if (!mcols.includes("summary")) h.exec("ALTER TABLE messages ADD COLUMN summary TEXT")
+  if (!mcols.includes("attachments")) h.exec("ALTER TABLE messages ADD COLUMN attachments TEXT") // JSON [{name,cas,mime,size}] — adjuntos de email (multi)
+  // migración: pin/archivo de clips (para priorizar/enfocar en Notas)
+  const ccols = h.prepare("PRAGMA table_info(clips)").all().map((c) => c.name)
+  if (!ccols.includes("pinned")) h.exec("ALTER TABLE clips ADD COLUMN pinned INTEGER DEFAULT 0")
+  if (!ccols.includes("archived")) h.exec("ALTER TABLE clips ADD COLUMN archived INTEGER DEFAULT 0")
+  // migración: categorización gráfica de notas (catkey→ícono), acciones detectadas (checklist JSON) y veredicto hoax/certeza (JSON)
+  const ncols = h.prepare("PRAGMA table_info(note_meta)").all().map((c) => c.name)
+  if (!ncols.includes("catkey")) h.exec("ALTER TABLE note_meta ADD COLUMN catkey TEXT")   // clave de categoría fija para el ícono (salud/receta/link/…)
+  if (!ncols.includes("actions")) h.exec("ALTER TABLE note_meta ADD COLUMN actions TEXT")  // JSON [{texto,cuando,done}] — acciones detectadas por la IA
+  if (!ncols.includes("verdict")) h.exec("ALTER TABLE note_meta ADD COLUMN verdict TEXT")  // JSON {nivel:hoax|dudoso|verificado, motivo} — solo para claims/noticias
+  // resumen por hilo (derivado) — recrear si el esquema cambió
+  const cols = h.prepare("PRAGMA table_info(thread_stats)").all().map((c) => c.name)
+  if (!cols.includes("channels") || !cols.includes("nsenders")) h.exec("DROP TABLE IF EXISTS thread_stats")
+  h.exec(`CREATE TABLE IF NOT EXISTS thread_stats (thread TEXT PRIMARY KEY, last_ts INTEGER, count INTEGER, unread INTEGER, channels TEXT, nsenders INTEGER DEFAULT 0);
+    CREATE INDEX IF NOT EXISTS idx_stats_ts ON thread_stats(last_ts DESC);`)
+}
+
+// reintento centralizado para ESCRITURAS ante SQLITE_BUSY (lock multi-proceso: server + ingest + crons compiten por el write-lock).
+// Backoff LINEAL y SÍNCRONO (better-sqlite3 es sync → dormimos el thread con Atomics.wait, igual que replaceGraphEdges).
+// Re-lanza cualquier error que NO sea BUSY/locked — NO traga. El seam lo habilita: un solo lugar para todas las writes.
+const _isBusy = (e) => !!e && (e.code === "SQLITE_BUSY" || e.code === "SQLITE_BUSY_SNAPSHOT" || /database is locked|database table is locked/i.test(e.message || "")) // preciso: NO matchear "busy" suelto (evita reintentar errores ajenos)
+export function withRetry(fn, { tries = 6, baseMs = 200 } = {}) {
+  for (let i = 0; ; i++) {
+    try { return fn() }
+    catch (e) {
+      if (!_isBusy(e) || i >= tries - 1) throw e // no-BUSY → re-lanza YA; reintentos agotados → re-lanza el último BUSY
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, baseMs * (i + 1)) // sleep síncrono con backoff lineal
+    }
+  }
+}
+
+// ── handle privado ──────────────────────────────────────────────────────────
+let _db = null
+let _path = process.env.MESSAGES_DB || "./data/messages.db"
+const isFile = (p) => p !== ":memory:" && !String(p).startsWith("file::memory:")
+
+// construye un handle con los MISMOS pragmas que db() (WAL/mmap solo si es archivo) + esquema.
+function openDb(path) {
+  const h = new Database(path)
+  h.pragma("synchronous = NORMAL")
+  h.pragma("busy_timeout = " + (+process.env.DB_BUSY_TIMEOUT_MS || 2000)) // multi-proceso (default 2s). withRetry paga ESTE timeout por reintento → con 2s el worst-case de insertMany baja de 123s a ~15s. Subilo por env si hiciera falta.
+  if (isFile(path)) {
+    try { h.pragma("journal_mode = WAL") } catch {}          // WAL requiere archivo
+    try { h.pragma("mmap_size = 1073741824") } catch {}       // 1GB mapeado (no aplica a :memory:)
+  }
+  try { h.pragma("cache_size = " + -(1024 * (+process.env.DB_CACHE_MB || 16))) } catch {} // cache PRIVADO por conexión. 16MB default: 64MB×~22 procesos (readers+crons) = 1.4GB reventaba el mem_limit del container (OOM→crash-loop). El server puede subirlo con DB_CACHE_MB.
+  try { h.pragma("temp_store = MEMORY") } catch {}
+  initSchema(h)
+  try { h.pragma("optimize") } catch {}
+  return h
+}
+
+// getter interno del singleton. NO se re-exporta desde db.mjs (el handle no cruza el seam).
+export function handle() {
+  if (!_db) _db = openDb(_path)
+  return _db
+}
+
+// ajusta el busy_timeout del handle (algunos crons quieren más/menos que el default de 20s según su workload).
+// Named op → el handle sigue privado. Sin try/catch interno: el caller lo envuelve como hacía con db().pragma(...).
+export function setBusyTimeout(ms) {
+  handle().pragma("busy_timeout = " + Number(ms))
+}
+
+// cambia el path y reabre (cierra el handle actual). Para tests: configureDb({ path: ':memory:' }).
+export function configureDb({ path } = {}) {
+  if (_db) { _db.close(); _db = null }
+  if (path !== undefined) _path = path
+  return handle()
+}
+
+// cierra y reabre una DB fresca. Default ':memory:' → cada test arranca aislado y vacío.
+export function resetDb(path = ":memory:") {
+  return configureDb({ path })
+}
+
+// ── seed de fixtures para tests ──────────────────────────────────────────────
+// Inserta filas de `messages` (dispara el trigger de FTS por esquema). NO mantiene thread_stats:
+// eso lo hace insertMany/rebuildStats del ingest-repo (Wave 1). Suficiente para caracterizar lecturas.
+const SEED_COLS = ["id", "channel", "account", "thread", "jid", "sender", "name", "text", "ts", "dir", "grp", "media", "mediaType", "filename", "unread", "body", "summary", "attachments"]
+function normSeed(r) {
+  const ts = r.ts ?? 0
+  return {
+    id: r.id || `${r.channel || "x"}:${ts}:${String(r.name || "").slice(0, 12)}`,
+    channel: r.channel || "", account: r.account || "", thread: r.thread || "", jid: r.jid || "",
+    sender: r.sender || "", name: r.name || "", text: r.text || "", ts, dir: r.dir || "in",
+    grp: r.grp ?? null, media: r.media ?? null, mediaType: r.mediaType ?? null, filename: r.filename ?? null,
+    unread: r.unread ? 1 : 0, body: r.body ?? null, summary: r.summary ?? null, attachments: r.attachments ?? null,
+  }
+}
+export function seed(rows = []) {
+  const h = handle()
+  const cols = SEED_COLS.join(", ")
+  const vals = SEED_COLS.map((c) => "@" + c).join(", ")
+  const stmt = h.prepare(`INSERT OR IGNORE INTO messages (${cols}) VALUES (${vals})`)
+  const tx = h.transaction((rs) => { for (const r of rs) stmt.run(normSeed(r)) })
+  tx(rows)
+  return rows.length
+}

@@ -1,0 +1,28 @@
+[Unit]
+# Supervisor del daemon de pipe. Antes NO estaba versionado → si el daemon moría o el box rebooteaba,
+# quedaba todo caído hasta arranque manual. Con Restart=always systemd lo revive y arranca solo tras reboot.
+Description=pipe daemon (readers + jobs + web)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=comms
+WorkingDirectory=/opt/pipe
+# ExecStart usa el mismo node20 con que corrés el daemon. Ajustá el path si tu node vive en otro lado.
+ExecStart=/usr/bin/env node src/daemon.mjs
+Restart=always
+RestartSec=5
+# reinicios repetidos no deben apagar el servicio para siempre:
+StartLimitIntervalSec=0
+# límite de file descriptors amplio (defensa en profundidad ADEMÁS del fix de fugas en daemon.mjs):
+LimitNOFILE=65536
+# logs a journald (journalctl -u pipe -f). El daemon igual escribe data/logs/*.log por servicio.
+StandardOutput=journal
+StandardError=journal
+# endurecimiento básico:
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

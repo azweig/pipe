@@ -1,0 +1,217 @@
+// brain/reply — SEND-PATH (WhatsApp bridge/Unipile/email) + compositor (draft en tu voz, corrección, sugerencia).
+// wrong-recipient es EL fallo temido → threadTargets (destinos + default) está characterizado en test/brain-reply.mjs.
+// threadTargets / sendReply* son export function HOISTED: schedule/meetings/otros los importan por la fachada (brain.mjs).
+import { insertSent as dbInsertSent, threadMessagesTail as dbThreadMsgs, whatsappRoomsOf, roomInboundSenders, emailAddressesOf, lastInboundJid, lastEmailByAddress, lastEmailInThread, lastUnipileJid, lastWhatsappRoom, lastHistoricJid } from "../db.mjs"
+import { phoneOf, MY_NUMBERS } from "../thread.mjs"
+import { sendMatrix, sendMatrixAudio, sendMatrixMedia, startWhatsAppChat, roomLogin } from "../../matrix.mjs"
+import { unipileConfigured, unipileSend } from "../unipile-api.mjs"
+import { sendEmailReply } from "../mailer.mjs"
+import { casPutBuffer } from "../cas.mjs"
+import { llm } from "../llm.mjs"
+import { harden, UNTRUSTED_NOTE } from "../safety.mjs"
+import { ownerFirst } from "../hub.mjs"
+import { buildStyleProfile, buildStyleProfiles, styleExamples, categoryOf } from "../style.mjs"
+import { jf, contactName } from "./kernel/contacts.mjs"
+import { canonOfKey, stripWA } from "./kernel/keys.mjs"
+import { cleanMsg } from "./kernel/convo.mjs"
+
+// error claro cuando el envío por el bridge falla: si el número dueño de la sala está deslogueado, decí cuál revincular.
+async function waSendError(room) {
+  const st = room && await roomLogin(room)
+  return { error: st && !st.alive ? `El número ${st.receiver} está desconectado — revinculalo en /link para poder responder a este contacto.` : "no se pudo enviar por WhatsApp (el bridge no lo entregó)." }
+}
+
+// DESTINOS de un contacto unificado: sus números de WhatsApp (dedup, última sala por número) + sus emails (mensajes + los conocidos del identity manual). Default = donde escribió último (entrante).
+export function threadTargets(key) {
+  if (key === "self") return { targets: [], default: 0 } // Mis Notas: sin selector, solo notas locales
+  // WhatsApp: salas portal → dedup por NÚMERO real (una entrada por número, la sala más reciente)
+  const byNum = new Map()
+  for (const r of whatsappRoomsOf(key)) {
+    const senders = roomInboundSenders(key, r.jid)
+    let num = null; for (const s of senders) { const p = phoneOf(s.sender); if (p && !MY_NUMBERS.has(p)) { num = p; break } }
+    const nk = num || r.jid
+    if (!byNum.has(nk) || byNum.get(nk).last < r.last) byNum.set(nk, { channel: "whatsapp", target: r.jid, label: num ? `+${num}` : "WhatsApp", last: r.last })
+  }
+  // Emails: de los mensajes + los conocidos del identity manual para este contacto
+  const emails = new Map()
+  for (const a of emailAddressesOf(key)) emails.set(a.jid.toLowerCase(), { channel: "email", target: a.jid, label: a.jid, last: a.last })
+  const man = jf("identity-manual.json") || {}
+  for (const [alias, canon] of Object.entries(man)) if (canon === key && /@/.test(alias) && !emails.has(alias.toLowerCase())) emails.set(alias.toLowerCase(), { channel: "email", target: alias, label: alias, last: 0 })
+  if (String(key).startsWith("email:")) { const addr = key.slice(6); if (!emails.has(addr.toLowerCase())) emails.set(addr.toLowerCase(), { channel: "email", target: addr, label: addr, last: 0 }) }
+  const targets = [...byNum.values(), ...emails.values()].sort((a, b) => (b.last || 0) - (a.last || 0))
+  // default = target del último mensaje ENTRANTE
+  const lastIn = lastInboundJid(key)
+  let def = 0
+  if (lastIn) { const i = targets.findIndex((t) => t.target === lastIn.jid); if (i >= 0) def = i }
+  targets.forEach((t, i) => (t.isDefault = i === def))
+  return { targets, default: def }
+}
+
+// COMPOSITOR: responde al hilo. Con {channel,target} manda a ese destino puntual; sin él, auto (última sala / email del key).
+export async function sendReply(key, text, { channel, target } = {}) {
+  text = String(text || "").trim()
+  if (!text) return { error: "mensaje vacío" }
+  if (key === "self") return { ok: true, channel: "note", ...dbInsertSent("self", "note", text) } // "Mis Notas": guarda local, no envía a nadie
+  // destino EXPLÍCITO elegido por el usuario
+  if (channel === "email" && target) {
+    const last = lastEmailByAddress(target) || lastEmailInThread(key)
+    const r = await sendEmailReply(target, text, { account: last?.account, subject: (last?.text || "").split(" — ")[0] })
+    return r.error ? r : { ok: true, channel: "email" }
+  }
+  if (channel === "whatsapp" && target) {
+    const r = await sendMatrix(target, text)
+    return r.ok ? { ok: true, channel: "whatsapp", ...dbInsertSent(key, "whatsapp", text) } : await waSendError(target)
+  }
+  // AUTO (sin destino): email si el key es email, si no la última sala de WhatsApp
+  if (String(key).startsWith("email:")) {
+    const last = lastEmailInThread(key)
+    const r = await sendEmailReply(key, text, { account: last?.account, subject: (last?.text || "").split(" — ")[0] })
+    return r.error ? r : { ok: true, channel: "email" }
+  }
+  // ¿el contacto se maneja por Unipile? (sus mensajes recientes vienen con account='unipile') → enviar por Unipile, NO por el
+  // bridge (que para ese número está deslogueado a propósito). Cierra el híbrido: recibe y envía por Unipile.
+  if (unipileConfigured()) {
+    const u = lastUnipileJid(key)
+    if (u?.jid) {
+      const r = await unipileSend(u.jid, text)
+      return r.ok ? { ok: true, channel: "whatsapp", ...dbInsertSent(key, "whatsapp", text) } : { error: r.error }
+    }
+  }
+  const room = lastWhatsappRoom(key)?.jid
+  if (room) {
+    const r = await sendMatrix(room, text)
+    return r.ok ? { ok: true, channel: "whatsapp", ...dbInsertSent(key, "whatsapp", text) } : await waSendError(room)
+  }
+  // contacto HISTÓRICO (jid crudo <num>@s.whatsapp.net, sin sala del bridge) → iniciar chat nuevo por número
+  const histJid = lastHistoricJid(key)?.jid
+  const histNum = histJid && phoneOf(histJid)
+  if (histNum && !MY_NUMBERS.has(histNum)) {
+    const mxid = await startWhatsAppChat(histNum)
+    if (mxid) { const r = await sendMatrix(mxid, text); return r.ok ? { ok: true, channel: "whatsapp", ...dbInsertSent(key, "whatsapp", text) } : { error: "no se pudo enviar por WhatsApp (bridge)" } }
+    return { error: "Estoy abriendo el chat de WhatsApp con este contacto (es la primera vez desde acá). Probá de nuevo en unos segundos." }
+  }
+  return { error: "No encuentro por qué canal responder (sin sala de WhatsApp ni dirección de email)." }
+}
+
+// ENVÍO DE NOTA DE VOZ: resuelve la sala del bridge (igual que sendReply) y manda el audio como voice message.
+// Solo canales de mensajería bridgeados por Matrix (WhatsApp/Telegram/Discord/Signal/IG/FB). Email/notas NO soportan voz.
+export async function sendReplyAudio(key, buffer, { channel, target, mime = "audio/ogg", durationMs = 0 } = {}) {
+  if (!buffer || !buffer.length) return { error: "audio vacío" }
+  if (key === "self" || channel === "email" || String(key).startsWith("email:")) return { error: "este canal no soporta notas de voz" }
+  // sala del bridge: target explícito (mxid) → última sala del hilo → iniciar chat por número (contacto histórico)
+  let room = (target && /^![^:]+:/.test(target)) ? target : null // sala Matrix (!<id>:<dominio>), agnóstico del dominio
+  if (!room) room = lastWhatsappRoom(key)?.jid
+  if (!room) {
+    const histJid = lastHistoricJid(key)?.jid
+    const histNum = histJid && phoneOf(histJid)
+    if (histNum && !MY_NUMBERS.has(histNum)) room = await startWhatsAppChat(histNum)
+  }
+  if (!room) return { error: "No encuentro un chat de mensajería para mandar el audio (las notas de voz van por WhatsApp/Telegram/etc., no por email)." }
+  const r = await sendMatrixAudio(room, buffer, { mime, durationMs })
+  if (!r.ok) return { error: r.error || "no se pudo enviar el audio (bridge)" }
+  // el audio YA salió por el bridge. Guardamos copia local (CAS) para poder REPRODUCIRLO en la app y registramos el mensaje.
+  // Si la DB está trabada (lock multi-proceso), NO fallamos el envío: el audio ya se entregó.
+  let media = null
+  try { media = casPutBuffer(buffer, /ogg/.test(mime) ? "ogg" : /m4a|mp4|aac/.test(mime) ? "m4a" : "ogg", `${channel || "whatsapp"}:sent`) } catch (e) { console.error("[send-audio] CAS:", e.message) }
+  let ins = {}
+  try { ins = dbInsertSent(key, channel || "whatsapp", "🎤 Nota de voz", { media, mediaType: "audio" }) } catch (e) { console.error("[send-audio] guardado local falló (audio ya enviado):", e.message) }
+  return { ok: true, channel: channel || "whatsapp", media, mediaType: "audio", ...ins }
+}
+
+// ENVÍO DE IMAGEN / VIDEO / ARCHIVO: misma resolución de sala que sendReplyAudio. Solo canales bridgeados (no email/self).
+const _mimeExt = (m) => ({ "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/heic": "heic", "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm", "video/3gpp": "3gp", "application/pdf": "pdf" }[(m || "").toLowerCase()] || (m || "").split("/")[1] || "bin")
+export async function sendReplyMedia(key, buffer, { channel, target, mime = "application/octet-stream", filename = "archivo" } = {}) {
+  if (!buffer || !buffer.length) return { error: "archivo vacío" }
+  if (key === "self" || channel === "email" || String(key).startsWith("email:")) return { error: "este canal no soporta enviar archivos (van por WhatsApp/Telegram/etc., no por email)." }
+  let room = (target && /^![^:]+:/.test(target)) ? target : null // sala Matrix (!<id>:<dominio>), agnóstico del dominio
+  if (!room) room = lastWhatsappRoom(key)?.jid
+  if (!room) {
+    const histJid = lastHistoricJid(key)?.jid
+    const histNum = histJid && phoneOf(histJid)
+    if (histNum && !MY_NUMBERS.has(histNum)) room = await startWhatsAppChat(histNum)
+  }
+  if (!room) return { error: "No encuentro un chat de mensajería para mandar el archivo." }
+  const r = await sendMatrixMedia(room, buffer, { mime, filename })
+  if (!r.ok) return { error: r.error || "no se pudo enviar el archivo (bridge)" }
+  // ya salió por el bridge → copia local (CAS) para verlo en la app + registrar. Lock de DB no debe fallar el envío.
+  const kind = /^image\//.test(mime) ? "image" : /^video\//.test(mime) ? "video" : "file"
+  let media = null
+  try { media = casPutBuffer(buffer, _mimeExt(mime), `${channel || "whatsapp"}:sent`) } catch (e) { console.error("[send-media] CAS:", e.message) }
+  const placeholder = kind === "image" ? "🖼 Imagen" : kind === "video" ? "📹 Video" : `📄 ${filename}`
+  let ins = {}
+  try { ins = dbInsertSent(key, channel || "whatsapp", placeholder, { media, mediaType: kind, filename: kind === "file" ? filename : null }) } catch (e) { console.error("[send-media] guardado local falló (archivo ya enviado):", e.message) }
+  return { ok: true, channel: channel || "whatsapp", media, mediaType: kind, ...ins }
+}
+
+// ── DRAFT REPLY (en tu estilo, por categoría de relación) ──
+export async function draftReply(nameOrKey, instruction = "") {
+  const { personView } = await import("./people.mjs") // ciclo reply↔people → runtime-only (nunca en eval)
+  const v = personView(nameOrKey)
+  const canon = v.canon || v.name
+  const lastInbound = [...v.timeline].reverse().find((e) => e.dir !== "out")
+  if (!lastInbound) return { error: "El último mensaje ya es tuyo — nada pendiente." }
+  const channel = lastInbound.channel
+  const profile = await buildStyleProfile().catch(() => null)
+  const byCat = await buildStyleProfiles().catch(() => ({}))
+  const category = v.canon ? categoryOf(v.canon) : "otro"
+  const examples = styleExamples(v.key || canon, channel, 6) // por thread del contacto (ya NO reparsea 80MB del jsonl por llamada)
+  const recent = v.timeline.slice(-8).map((e) => `${e.dir === "out" ? ownerFirst() : canon}: ${(e.text || "").slice(0, 200)}`).join("\n")
+  const draft = await llm(`Sos ${ownerFirst()} respondiendo por ${channel}. Escribí el borrador EN SU VOZ.
+ESTILO GENERAL: ${profile ? JSON.stringify(profile) : "natural"}
+ESTILO CON "${category}": ${byCat[category] ? JSON.stringify(byCat[category]) : "(usá el general + relación)"}
+EJEMPLOS REALES:\n${examples.map((e) => `- "${e.slice(0, 180)}"`).join("\n") || "(sin ejemplos)"}
+CON QUIÉN: ${canon} (${v.role || "contacto"}) categoría ${category}.
+CONVERSACIÓN:\n${recent}
+${instruction ? "LO QUE QUIERE DECIR: " + instruction : "Redactá respuesta apropiada al último mensaje."}
+Devolvé SOLO el texto, como lo escribiría ${ownerFirst()}.`, { system: UNTRUSTED_NOTE, bypassCap: true })
+  return { to: canon, role: v.role, channel, category, replyingTo: lastInbound.text, draft: draft.trim() }
+}
+
+// ── COMPOSITOR: corrección rápida ANTES de enviar (los teclados son malos). Devuelve 3 opciones: original, corregido y
+// una alternativa mejor redactada del MISMO mensaje. LLM liviano y rápido (es solo corregir un texto corto).
+export async function composeCorrect(text, { channel } = {}) {
+  const { scheduleSlots } = await import("./schedule.mjs") // huecos libres para el "momento de espera" del envío (runtime)
+  const t = (text || "").trim()
+  if (t.length < 2) return { original: t, corrected: t, alternative: "" }
+  // Corrección de texto: debe ser RÁPIDA (se dispara al tocar enviar). gpt-4o-mini (~1.5s, fiel) como primario;
+  // fallback local qwen2.5:3b (más fiel que el 1.5b). Gemini queda fuera (free-tier 429). num_predict acota la salida.
+  const prompt = `Sos un corrector de mensajes. Te doy un texto que ${ownerFirst()} va a enviar por ${channel || "chat"} y devolvés SOLO un JSON válido:
+{"corregido":"...","alternativo":"..."}
+
+"corregido": el MISMO texto corrigiendo únicamente ortografía, tildes, mayúsculas y puntuación. Reglas estrictas: NO cambies ninguna palabra por un sinónimo, NO reformules, NO agregues ni quites contenido, NO cambies el tono ni la jerga (dejá "pucha", "oe", "xfa", etc. tal cual). Solo arreglás cómo está escrito.
+"alternativo": una reformulación más clara y natural del MISMO mensaje, tono directo y humano, sin inventar datos ni cambiar la intención.
+
+Mantené el idioma original. Sin comillas de más ni explicaciones.
+Texto: """${t}"""`
+  // CLOUD-OK: redactar/corregir borradores es INTERACTIVO (lo dispara el usuario y espera calidad+velocidad) y ve solo el hilo en
+  // cuestión, no el corpus. Nube deliberada; local no da la voz. Con GPU: LLM_CHAIN_CORRECT=ollama.
+  try {
+    const r = await llm(prompt, {
+      json: true,
+      feature: "correct",
+      chain: process.env.LLM_CHAIN_CORRECT || "openai,ollama",
+      models: { ollama: process.env.OLLAMA_MODEL_CORRECT || "qwen2.5:3b" },
+      numPredict: 260,
+      temperature: 0.2,
+      task: "correct",
+      bypassCap: true, // interactivo + chico (se dispara al tocar enviar) → nunca cae a ollama-CPU por el tope diario
+    })
+    const corrected = (r?.corregido || t).trim() || t
+    let alternative = (r?.alternativo || "").trim()
+    if (alternative === corrected || alternative === t) alternative = "" // no ofrecer una "alternativa" idéntica
+    return { original: t, corrected, alternative, ...scheduleSlots(t) }
+  } catch { return { original: t, corrected: t, alternative: "", slots: [] } }
+}
+
+// SUGERIR RESPUESTA: la IA redacta un borrador en tu voz según la conversación reciente. NO envía — va al input para que edites.
+export async function suggestReply(key) {
+  if (key === "self") return { draft: "" }
+  const rows = dbThreadMsgs(key, { limit: 25 })
+  const who = canonOfKey(key) || contactName(key) || "el contacto"
+  const lines = rows.map((r) => `${r.dir === "out" ? "Vos" : stripWA(contactName(r.sender) || contactName(r.name) || r.name || "?")}: ${cleanMsg(r.text) || `[${r.mediaType || "adjunto"}]`}`).filter((l) => l.trim())
+  if (!lines.length) return { draft: "" }
+  const sys = harden(`Sos ${ownerFirst()} respondiendo un WhatsApp/email. Escribí SOLO el texto del mensaje a enviar (sin comillas, sin firmar, sin "Hola" genérico si no corresponde), en español, natural y directo, en tu voz. Respondé a lo ÚLTIMO que te dijeron. Breve salvo que amerite. Nada de explicaciones ni opciones.`)
+  const draft = await llm(`Conversación con ${who}:\n${lines.join("\n").slice(0, 4000)}\n\nMi respuesta:`, { system: sys, chain: process.env.LLM_CHAIN_CATCHUP || "gemini,ollama", temperature: 0.5, bypassCap: true })
+    .then((s) => (s || "").trim().replace(/^["'`]|["'`]$/g, "")).catch(() => "")
+  return { draft }
+}

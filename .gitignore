@@ -1,0 +1,43 @@
+node_modules/
+auth/
+data/
+*.log
+.env
+.env.*
+!.env.example
+# secretos / bases de datos / sesiones — NUNCA versionar (defensa en profundidad; ya cubiertos por auth/ data/)
+*.db
+*.sqlite
+.secret-key
+*.session
+*.pem
+scratchpad/
+*.tmp
+deploy/**/postgres
+deploy/**/synapse
+
+# semilla del grafo con TUS datos reales (usá seed-graph.example.mjs como plantilla)
+src/seed-graph.mjs
+
+# datos personales derivados — NO versionar
+vault/
+media/
+docs/pipe-dossier.pdf
+docs/dossier.html
+
+# landing/marketing (pipe.one) + notas de estrategia interna → viven en un repo PRIVADO aparte, NO en el público
+web/
+
+# secretos (passphrase de backups, etc.) — NUNCA versionar
+secrets/
+
+# binarios compilados / caches
+wa-go/wa
+__pycache__/
+*.pyc
+*.tsbuildinfo
+.DS_Store
+
+# backups locales
+*.pre-a11y
+*.pre-*.html

@@ -1,0 +1,22 @@
+# CI — corre los tests PORTABLES (unitarios + roundtrip de backup) en cada push.
+# Listo para cuando conectes un remoto en GitHub. Los tests de integración NO van acá: dependen de data de producción
+# (server vivo + contactos reales) → no son portables. Solo lo determinístico.
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20   # pinneado: Node 25 rompe Baileys + ABI de better-sqlite3
+      - run: npm ci || npm install
+      - name: unit + characterization suite (120 tests, portable)
+        run: npm test
+      - name: coverage (unit)
+        run: npm run test:coverage
+      - name: backup/restore roundtrip
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y zstd sqlite3 openssl
+          bash scripts/test-backup.sh
