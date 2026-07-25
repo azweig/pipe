@@ -178,3 +178,14 @@ Privacy-sensitive crons (the knowledge graph, the self-model learner, email summ
 ---
 
 Questions or a bug? Open an issue. Contributions welcome — see [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+## SMS (optional)
+
+SMS reading is push-based: something forwards your texts to the hub, which files them **in the same thread as that number's WhatsApp** (one conversation per person).
+
+1. Set a token: `SMS_TOKEN=$(openssl rand -hex 24)` in `.env`, restart.
+2. Feed it, either:
+   - **From your phone (Android)** — any SMS-forwarder app (or the Pipe native app) that POSTs each incoming text to `POST https://<your-hub>/api/ingest/sms` with header `X-Token: <SMS_TOKEN>` and body `{"from":"+51...","text":"…","ts":<ms>,"dir":"in"}`. Batches accepted as `{"messages":[…]}`.
+   - **From a Mac (SMS + iMessage)** — run `HUB_URL=https://<your-hub> SMS_TOKEN=… node src/sms-imessage.mjs` on the Mac (needs Full Disk Access; reads `~/Library/Messages/chat.db`). iOS can't read SMS directly, so the Mac is the Apple path.
+
+iOS note: Apple sandboxes SMS, so there's no in-app iOS reader — use the Mac (`chat.db`) or an Android device.

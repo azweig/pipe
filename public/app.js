@@ -497,7 +497,7 @@ const CONN_PROV = [
   { id: "imap", name: "Otro correo", cat: "correo", chan: "email", sub: "Cualquier IMAP", status: "ready" },
   { id: "whatsapp", name: "WhatsApp", cat: "telefonia", chan: "whatsapp", sub: "QR o código", status: "ready" },
   { id: "telegram", name: "Telegram", cat: "telefonia", chan: "telegram", sub: "Teléfono + código", status: "ready" },
-  { id: "sms", name: "SMS", cat: "telefonia", chan: null, emoji: "💬", sub: "Próximamente", status: "soon" },
+  { id: "sms", name: "SMS", cat: "telefonia", chan: null, emoji: "💬", sub: "Reenviá SMS al hub (celu/Mac)", status: "guide" },
   { id: "discord", name: "Discord", cat: "redes", chan: "discord", emoji: "🎮", sub: "Con token", status: "ready" },
   { id: "instagram", name: "Instagram", cat: "redes", chan: "instagram", sub: "En el servidor", status: "server" },
   { id: "facebook", name: "Messenger", cat: "redes", chan: "facebook", sub: "En el servidor", status: "server" },

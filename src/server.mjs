@@ -216,6 +216,29 @@ const server = createServer(async (req, res) => {
       }
       return json(res, 200, { ok: true }) // Ko-fi espera 200 para confirmar recepción
     }
+    // INGESTA DE SMS (desde el teléfono con un forwarder, o el reader de Mac de chat.db). Público con TOKEN (SMS_TOKEN) — el forwarder no tiene PIN.
+    // Se VINCULA POR NÚMERO al hilo de WhatsApp del mismo contacto (computeThread rama 'sms'): SMS + WhatsApp = una sola conversación.
+    // Body: {from,text,ts?,dir?,name?,id?} o batch {messages:[…]}.
+    if (path === "/api/ingest/sms" && req.method === "POST") {
+      const tok = (process.env.SMS_TOKEN || "").trim()
+      const given = String(req.headers["x-token"] || (req.headers.authorization || "").replace(/^Bearer\s+/i, "")).trim()
+      if (!tok || given !== tok) return json(res, 401, { error: "token inválido" })
+      const b = await body(req)
+      const items = Array.isArray(b.messages) ? b.messages : [b]
+      let n = 0
+      for (const m of items) {
+        const from = String(m.from || m.number || "").trim()
+        const text = String(m.text || m.body || "").trim()
+        if (!from || !text) continue
+        const num = from.replace(/[^\d]/g, "")
+        const ts = +m.ts || Date.now()
+        const dir = m.dir === "out" ? "out" : "in"
+        const name = String(m.name || "").trim() || undefined
+        const id = String(m.id || `sms-${num || "x"}-${ts}`)
+        try { appendMessage({ id, channel: "sms", account: "sms", jid: num, name, text, ts, dir }); n++ } catch {}
+      }
+      return json(res, 200, { ok: true, ingested: n })
+    }
     if (!authed) { // no autenticado y remoto → 401 para API, página de PIN para HTML
       if (path.startsWith("/api/")) return json(res, 401, { error: "no autorizado" })
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(loginPage(auth.pinIsSet(), isLocal))
