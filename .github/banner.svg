@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="340" viewBox="0 0 1280 340" role="img" aria-label="Pipe — self-hostable unified inbox + AI second brain">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#191a2b"/><stop offset="1" stop-color="#101018"/></linearGradient>
+    <radialGradient id="glow" cx="0.82" cy="0.2" r="0.6"><stop offset="0" stop-color="#6366f1" stop-opacity="0.28"/><stop offset="1" stop-color="#6366f1" stop-opacity="0"/></radialGradient>
+    <linearGradient id="logo" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#a78bfa"/></linearGradient>
+  </defs>
+  <rect width="1280" height="340" rx="20" fill="url(#bg)"/>
+  <rect width="1280" height="340" rx="20" fill="url(#glow)"/>
+  <g font-family="'Segoe UI',system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif">
+    <g transform="translate(88,120)"><rect width="52" height="52" rx="15" fill="url(#logo)"/><text x="26" y="37" font-size="32" font-weight="800" fill="#fff" text-anchor="middle">P</text></g>
+    <text x="158" y="160" font-size="74" font-weight="800" fill="#ffffff" letter-spacing="-2">Pipe</text>
+    <text x="90" y="212" font-size="25" font-weight="600" fill="#c9cae6">Self-hostable unified inbox <tspan fill="#8b8bff">+</tspan> AI second brain</text>
+    <text x="90" y="248" font-size="16.5" fill="#7f819e">WhatsApp · email · Telegram · Teams — one thread per person, on your own server.</text>
+    <g transform="translate(90,278)" font-size="12.5" font-weight="700" fill="#a6a7c9"><text x="0" y="0" letter-spacing="1.5">MIT · SELF-HOSTED · LOCAL AI · pipe.one</text></g>
+  </g>
+  <!-- motif: channels converging into one thread -->
+  <g transform="translate(1000,170)">
+    <path d="M-120,-90 C -30,-90 20,-30 90,0" stroke="#25D366" stroke-width="2.5" fill="none" opacity="0.8"/>
+    <path d="M-120,-30 C -40,-30 30,-10 90,0" stroke="#EA4335" stroke-width="2.5" fill="none" opacity="0.8"/>
+    <path d="M-120,30 C -40,30 30,10 90,0" stroke="#229ED9" stroke-width="2.5" fill="none" opacity="0.8"/>
+    <path d="M-120,90 C -30,90 20,30 90,0" stroke="#E1306C" stroke-width="2.5" fill="none" opacity="0.8"/>
+    <circle cx="-120" cy="-90" r="13" fill="#25D366"/><circle cx="-120" cy="-30" r="13" fill="#EA4335"/><circle cx="-120" cy="30" r="13" fill="#229ED9"/><circle cx="-120" cy="90" r="13" fill="#E1306C"/>
+    <circle cx="90" cy="0" r="24" fill="url(#logo)"/><circle cx="90" cy="0" r="34" fill="none" stroke="#6366f1" stroke-opacity="0.35" stroke-width="2"/>
+  </g>
+</svg>
