@@ -4,6 +4,7 @@
 import { insertSent as dbInsertSent, threadMessagesTail as dbThreadMsgs, whatsappRoomsOf, roomInboundSenders, emailAddressesOf, lastInboundJid, lastEmailByAddress, lastEmailInThread, lastUnipileJid, lastWhatsappRoom, lastHistoricJid, messageById } from "../db.mjs"
 import { readFileSync } from "fs"
 import { join } from "path"
+import { getSlackToken, getSignal } from "../integrations.mjs" // config Slack/Signal conectada desde la Consola (cifrada) — para que los senders la vean, no solo el .env
 import { phoneOf, MY_NUMBERS } from "../thread.mjs"
 import { sendMatrix, sendMatrixAudio, sendMatrixMedia, startWhatsAppChat, roomLogin } from "../../matrix.mjs"
 import { unipileConfigured, unipileSend } from "../unipile-api.mjs"
@@ -19,12 +20,14 @@ import { spawn } from "child_process"
 
 // ── envío por canales HTTP/proceso (Slack / Signal / Telegram) — cada uno gated por su config; error claro si no está montado ──
 async function slackSend(channel, text) {
-  if (!process.env.SLACK_TOKEN) return { error: "Slack no está configurado (SLACK_TOKEN)." }
-  try { const r = await fetch("https://slack.com/api/chat.postMessage", { method: "POST", headers: { Authorization: `Bearer ${process.env.SLACK_TOKEN}`, "Content-Type": "application/json" }, body: JSON.stringify({ channel: String(channel).replace(/^slack:/, ""), text }) }).then((x) => x.json()); return r.ok ? { ok: true } : { error: r.error || "slack" } } catch (e) { return { error: e.message } }
+  const token = process.env.SLACK_TOKEN || getSlackToken() // .env o lo conectado desde la Consola (cifrado) — MISMA fuente que el reader
+  if (!token) return { error: "Slack no está configurado — conectalo en Ajustes (o poné SLACK_TOKEN)." }
+  try { const r = await fetch("https://slack.com/api/chat.postMessage", { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ channel: String(channel).replace(/^slack:/, ""), text }) }).then((x) => x.json()); return r.ok ? { ok: true } : { error: r.error || "slack" } } catch (e) { return { error: e.message } }
 }
 async function signalSend(peer, text) {
-  const url = (process.env.SIGNAL_CLI_URL || "").replace(/\/+$/, ""); const me = (process.env.SIGNAL_NUMBER || "").trim()
-  if (!url || !me) return { error: "Signal no está configurado (SIGNAL_CLI_URL/SIGNAL_NUMBER)." }
+  const stored = getSignal() || {} // lo conectado desde la Consola (cifrado) — fallback tras el .env, igual que el reader
+  const url = (process.env.SIGNAL_CLI_URL || stored.url || "").replace(/\/+$/, ""); const me = (process.env.SIGNAL_NUMBER || stored.number || "").trim()
+  if (!url || !me) return { error: "Signal no está configurado — conectalo en Ajustes." }
   const num = String(peer).replace(/^signal:/, ""); const to = /^\+/.test(num) ? num : "+" + num.replace(/[^\d]/g, "")
   try { const r = await fetch(`${url}/v2/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ number: me, recipients: [to], message: text }) }); return r.ok ? { ok: true } : { error: "signal " + r.status } } catch (e) { return { error: e.message } }
 }
