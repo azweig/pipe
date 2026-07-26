@@ -1,7 +1,9 @@
 // brain/reply — SEND-PATH (WhatsApp bridge/Unipile/email) + compositor (draft en tu voz, corrección, sugerencia).
 // wrong-recipient es EL fallo temido → threadTargets (destinos + default) está characterizado en test/brain-reply.mjs.
 // threadTargets / sendReply* son export function HOISTED: schedule/meetings/otros los importan por la fachada (brain.mjs).
-import { insertSent as dbInsertSent, threadMessagesTail as dbThreadMsgs, whatsappRoomsOf, roomInboundSenders, emailAddressesOf, lastInboundJid, lastEmailByAddress, lastEmailInThread, lastUnipileJid, lastWhatsappRoom, lastHistoricJid } from "../db.mjs"
+import { insertSent as dbInsertSent, threadMessagesTail as dbThreadMsgs, whatsappRoomsOf, roomInboundSenders, emailAddressesOf, lastInboundJid, lastEmailByAddress, lastEmailInThread, lastUnipileJid, lastWhatsappRoom, lastHistoricJid, messageById } from "../db.mjs"
+import { readFileSync } from "fs"
+import { join } from "path"
 import { phoneOf, MY_NUMBERS } from "../thread.mjs"
 import { sendMatrix, sendMatrixAudio, sendMatrixMedia, startWhatsAppChat, roomLogin } from "../../matrix.mjs"
 import { unipileConfigured, unipileSend } from "../unipile-api.mjs"
@@ -165,6 +167,32 @@ export async function sendReplyMedia(key, buffer, { channel, target, mime = "app
   let ins = {}
   try { ins = dbInsertSent(key, channel || "whatsapp", placeholder, { media, mediaType: kind, filename: kind === "file" ? filename : null }) } catch (e) { console.error("[send-media] guardado local falló (archivo ya enviado):", e.message) }
   return { ok: true, channel: channel || "whatsapp", media, mediaType: kind, ...ins }
+}
+
+// ── REENVIAR mensajes (preservando el MEDIA) ── Antes se mandaba solo el texto → reenviar un audio mandaba el placeholder "audio".
+// Ahora: si el mensaje tiene media, se lee del CAS y se reenvía como audio/imagen/archivo; si no, como texto.
+const EXT_MIME = { ogg: "audio/ogg", oga: "audio/ogg", opus: "audio/ogg", m4a: "audio/mp4", mp4a: "audio/mp4", mp3: "audio/mpeg", aac: "audio/aac", wav: "audio/wav", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", heic: "image/heic", mp4: "video/mp4", mov: "video/quicktime", webm: "video/webm", "3gp": "video/3gpp", pdf: "application/pdf" }
+export async function forwardMessages(ids, key) {
+  const rows = (Array.isArray(ids) ? ids : [ids]).map(messageById).filter(Boolean).sort((a, b) => (a.ts || 0) - (b.ts || 0))
+  if (!rows.length) return { error: "No encontré los mensajes a reenviar." }
+  let sent = 0, lastErr = null
+  for (const m of rows) {
+    const hasMedia = m.media && String(m.media).startsWith("/cas/")
+    if (hasMedia) {
+      try {
+        const buf = readFileSync(join(process.cwd(), "data", m.media))
+        const ext = (String(m.media).match(/\.([a-z0-9]+)$/i)?.[1] || "").toLowerCase()
+        const mime = EXT_MIME[ext] || "application/octet-stream"
+        const r = m.mediaType === "audio" ? await sendReplyAudio(key, buf, { mime }) : await sendReplyMedia(key, buf, { mime, filename: m.filename || `archivo.${ext || "bin"}` })
+        if (r && r.ok) { sent++; continue } // media reenviado → NO mandar además el placeholder de texto
+        lastErr = (r && r.error) || "no se pudo reenviar el media"
+      } catch (e) { lastErr = e.message; console.error("[forward] media:", e.message) }
+    }
+    const text = (m.text || "").trim() // sin media (o si el media falló y hay texto): reenviar el texto
+    if (text) { const r = await sendReply(key, text, {}); if (r && r.ok) sent++; else lastErr = (r && r.error) || lastErr }
+    else if (!hasMedia) lastErr = "mensaje sin texto ni media"
+  }
+  return sent ? { ok: true, sent } : { error: lastErr || "no se pudo reenviar" }
 }
 
 // ── DRAFT REPLY (en tu estilo, por categoría de relación) ──

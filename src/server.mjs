@@ -446,6 +446,8 @@ const server = createServer(async (req, res) => {
       if (path === "/api/contact/profile") return json(res, 200, brain.contactProfile(q.key || ""))
       if (path === "/api/thread/targets") return json(res, 200, brain.threadTargets(q.key || ""))
       if (path === "/api/send" && req.method === "POST") { const b = await body(req); const r = await brain.sendReply(b.key, b.text, { channel: b.channel, target: b.target }); return json(res, r && r.error ? 400 : 200, r) }
+      // REENVIAR mensajes preservando el media (audio/imagen/archivo), no solo el texto
+      if (path === "/api/forward" && req.method === "POST") { const b = await body(req); const r = await brain.forwardMessages(b.ids, b.key); return json(res, r && r.error ? 400 : 200, r) }
       // AUTO-TEST DE ENVÍO: último resultado (GET) o correr ahora (POST). El cron lo corre cada ~12h; verifica que el envío funciona de verdad.
       if (path === "/api/selftest" && req.method === "GET") return json(res, 200, lastSelfTest() || { ts: 0, results: [] })
       if (path === "/api/selftest" && req.method === "POST") return json(res, 200, await runSelfTest())

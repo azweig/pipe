@@ -1336,11 +1336,9 @@ window.fwdPick = async () => {
 window.fwdFilter = (q) => { const o = (window._fwdOpts || []).filter((t) => (t.name || "").toLowerCase().includes((q || "").toLowerCase())); const el = document.getElementById("fwdList"); if (el) el.innerHTML = o.slice(0, 60).map(window._fwdRow).join("") || '<div class="sub">Nada.</div>' }
 window.doForward = async (destKey) => {
   const sel = curFwd(); if (!sel || !sel.size) return
-  const items = (convState.items || []).filter((m) => sel.has(m.id)).sort((a, b) => (a.ts || 0) - (b.ts || 0))
-  const text = items.length === 1 ? (items[0].text || "").trim()
-    : "↪ Reenviado:\n" + items.map((m) => (m.dir === "out" ? "Yo" : (m.name || "").trim()) + ": " + (m.text || "").replace(/\s+/g, " ").trim()).join("\n")
-  if (!text.trim()) return alert("Los mensajes seleccionados no tienen texto para reenviar.")
-  const r = await post("/api/send", { key: destKey, text })
+  // el server reenvía preservando el MEDIA (audio/imagen/archivo); antes se mandaba solo el texto (un audio salía como "audio")
+  const ids = [...sel]
+  const r = await post("/api/forward", { ids, key: destKey })
   if (r && r.ok) { closeSheet(); fwdSel = null; _fwdIds = null; renderConv(); alert("✓ Reenviado") }
   else alert((r && r.error) || "No se pudo reenviar") // deja el picker abierto → probá otro contacto
 }

@@ -38,8 +38,12 @@ let _man = null, _manM = 0
 function manualId() { const f = "./data/identity-manual.json"; if (!existsSync(f)) return {}; const m = statSync(f).mtimeMs; if (_man && m === _manM) return _man; _man = JSON.parse(readFileSync(f, "utf8")); _manM = m; return _man }
 export function manualCanon(e) {
   const man = manualId(); if (!Object.keys(man).length) return null
-  for (const v of [e.jid, e.sender, (e.name || "").toLowerCase()]) { if (v && man[String(v).toLowerCase()]) return man[String(v).toLowerCase()] }
-  const n = digitsOf(e.jid); if (n.length >= 8 && man[n]) return man[n]
+  for (const v of [e.jid, e.sender, e.dm, (e.name || "").toLowerCase()]) { if (v && man[String(v).toLowerCase()]) return man[String(v).toLowerCase()] }
+  // por NÚMERO real (no solo digitsOf(jid)): resuelve los DM del bridge Matrix, donde e.jid es la sala "!room" (sin dígitos) y el
+  // teléfono vive en e.dm; también LIDs → teléfono via jid_map. Sin esto, la misma persona se partía en dos hilos (nombre vs número crudo).
+  for (const num of [phoneOf(e.dm), phoneOf(e.jid), phoneOf(e.sender), (digitsOf(e.jid).length >= 8 ? digitsOf(e.jid) : null)]) {
+    if (num && man[num]) return man[num]
+  }
   return null
 }
 const idmap = () => jf("identity-map.json") || {}
