@@ -52,6 +52,17 @@ export function conversationsByThreads(threads = []) {
 }
 export function convStats() { return { enriched: db().prepare("SELECT COUNT(*) c FROM conversations").get().c, total: db().prepare("SELECT COUNT(*) c FROM thread_stats").get().c, facets: db().prepare("SELECT COUNT(*) c FROM conv_facets").get().c } }
 
+// PODA de conversaciones HUÉRFANAS: filas de conversations/conv_facets cuyo thread ya no tiene mensajes (quedaron tras un re-key
+// que movió los mensajes a otro hilo). thread_stats se reconstruye entero en rebuildStats, pero conversations no → el contacto
+// fantasma sobrevivía. Devuelve cuántas filas borró.
+export function pruneOrphanConversations() {
+  const D = db()
+  const noMsgs = "thread NOT IN (SELECT DISTINCT thread FROM messages WHERE thread IS NOT NULL AND thread != '')"
+  const dc = D.prepare(`DELETE FROM conversations WHERE ${noMsgs}`).run().changes
+  let df = 0; try { df = D.prepare(`DELETE FROM conv_facets WHERE ${noMsgs}`).run().changes } catch {}
+  return { conversations: dc, facets: df }
+}
+
 // ── GRAFO PONDERADO v2 (tags con puntajes por grafo + activación por difusión) ──
 export function graphVocabulary() { return db().prepare("SELECT DISTINCT kind, facet FROM conv_facets").all() } // qué nodos existen (descubiertos por el enrichment)
 export function replaceGraphEdges(rows) { // swap atómico (como rebuildStats): morir a mitad no deja el grafo a medias

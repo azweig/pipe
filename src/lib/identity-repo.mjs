@@ -6,26 +6,27 @@ import { phoneOf, isContainerJid, MY_NUMBERS } from "./thread.mjs"
 
 // nombre de agenda de un número SOLO si es ÚNICO (no homónimo): si el mismo nombre está en 2+ números, keyear por nombre fusionaría
 // personas DISTINTAS en un hilo → responderías al equivocado. Compartido por las 3 funciones de re-key (antes solo rekeyContacts lo tenía).
-function safeName(contactsMap, num) {
+function safeName(contactsMap, num, manual = {}) {
+  if (manual[num]) return manual[num] // verdad del usuario (mapa manual): tiene prioridad sobre la agenda y NO pasa por el chequeo de homónimo (ya decidió que es esta persona). Antes unifyByNumber ignoraba el mapa manual → consolidaba por número y peleaba con computeThread.
   const nm = contactsMap[num]; if (!nm) return null
   let c = 0; for (const v of Object.values(contactsMap)) if (v === nm && ++c > 1) return null
   return nm
 }
 
 // re-etiqueta hilos WhatsApp 1:1 (número) → nombre del contacto, para unificar con bridge/email. Devuelve #hilos migrados.
-export function rekeyContacts(contactsMap) {
+export function rekeyContacts(contactsMap, manual = {}) {
   const rows = db().prepare("SELECT DISTINCT thread FROM messages WHERE channel='whatsapp' AND thread LIKE 'whatsapp:%@s.whatsapp.net'").all()
   const upd = db().prepare("UPDATE messages SET thread=? WHERE thread=?")
   const tx = db().transaction((list) => {
     let n = 0
     for (const { thread } of list) {
       const num = thread.replace(/^whatsapp:/, "").replace(/@.*/, "")
-      const name = safeName(contactsMap, num) // homónimo → null → queda keyed por número (jid), no fusionado
+      const name = safeName(contactsMap, num, manual) // homónimo → null → queda keyed por número (jid), no fusionado
       if (name) { upd.run(name, thread); n++ }
     }
     return n
-  })
-  const migrated = tx(rows)
+  }).immediate
+  const migrated = withRetry(() => tx(rows)) // .immediate+withRetry: sobrevive al SQLITE_BUSY cuando el daemon está escribiendo (igual que rekeyBridge)
   rebuildStats()
   return migrated
 }
@@ -43,12 +44,12 @@ export function rekeyEmails(manual = {}) {
       if (manualEmails.has(addr)) continue // lo cubre la regla manual (ej: ana@ → Ana García)
       n += upd.run("email:" + addr, addr, "email:" + addr).changes
     }
-  })
-  tx(); rebuildStats(); return n
+  }).immediate
+  withRetry(() => tx()); rebuildStats(); return n
 }
 
 // re-etiqueta mensajes del BRIDGE (matrix) 1:1 por el número del sender (@whatsapp_<num>) → nombre de contacto. NO toca grupos.
-export function rekeyBridge(contactsMap) {
+export function rekeyBridge(contactsMap, manual = {}) {
   // Resuelve hilos del bridge Matrix (WhatsApp) keyed por sala "!room" o por número → nombre/número canónico.
   // Detección DM vs grupo ROBUSTA: cuenta números REALES distintos (phoneOf resuelve LID→número) entre los remitentes entrantes.
   // Exactamente 1 número = 1:1 (aunque tenga LID + número + mi saliente = varios "sender" crudos). >1 = grupo real → no se toca.
@@ -71,7 +72,7 @@ export function rekeyBridge(contactsMap) {
       for (const r of inSenders.all(t.thread)) { const p = phoneOf(r.sender); if (p && !MY_NUMBERS.has(p)) nums.add(p) } // excluir mis cuentas
       if (nums.size !== 1) continue // 0 = no resoluble; >1 = grupo real → dejar
       const num = [...nums][0]
-      const target = safeName(contactsMap, num) || `whatsapp:${num}@s.whatsapp.net` // homónimo → hilo por número (no fusionar personas distintas)
+      const target = safeName(contactsMap, num, manual) || `whatsapp:${num}@s.whatsapp.net` // homónimo → hilo por número (no fusionar personas distintas)
       if (target !== t.thread) n += upd.run(target, t.thread).changes
     }
     return n
@@ -101,7 +102,7 @@ export function dedupMessages() {
 
 // CORRIDA: unifica TODOS los hilos 1:1 de WhatsApp que compartan el mismo número real (jid, sender del bridge, o LID→número).
 // Devuelve {grupos, hilosFusionados, mensajesMovidos}. NO toca grupos.
-export function unifyByNumber(contactsMap = {}) {
+export function unifyByNumber(contactsMap = {}, manual = {}) {
   const D = db()
   // hilos 1:1 (NO contenedores). Ojo: NO filtrar por nsenders — un 1:1 fusionado tiene varios nombres de remitente y es válido.
   const threads = D.prepare("SELECT thread, count FROM thread_stats").all()
@@ -125,11 +126,11 @@ export function unifyByNumber(contactsMap = {}) {
       if (ts.length < 2) continue
       grupos++
       // target: el nombre de agenda si existe; si no, el hilo con más mensajes
-      const target = safeName(contactsMap, num) || ts.sort((a, b) => b.count - a.count)[0].thread // homónimo → hilo con más mensajes (no fusionar)
+      const target = safeName(contactsMap, num, manual) || ts.sort((a, b) => b.count - a.count)[0].thread // homónimo → hilo con más mensajes (no fusionar)
       for (const t of ts) { if (t.thread !== target) { movidos += upd.run(target, t.thread).changes; fusionados++ } }
     }
-  })
-  tx(); rebuildStats()
+  }).immediate
+  withRetry(() => tx()); rebuildStats()
   return { grupos, fusionados, movidos }
 }
 
@@ -154,6 +155,6 @@ export function rekeyManual(manual) {
       if (/^\d{8,}$/.test(low)) n += updNum.run(name, low + "@%", name).changes
       else n += updExact.run(name, low, name).changes
     }
-  })
-  tx(); rebuildStats(); return n
+  }).immediate
+  withRetry(() => tx()); rebuildStats(); return n
 }
