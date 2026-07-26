@@ -19,6 +19,16 @@ const norm = (name) => (name && REV[name.trim().toLowerCase()]) || name
 const CANON_LIST = [...Object.keys(ALIASES.people || {}), ...Object.keys(ALIASES.companies || {})]
 const NO_ATTRIBUTE = new Set(existsSync("./data/no-attribute.json") ? JSON.parse(readFileSync("./data/no-attribute.json", "utf8")) : [])
 
+// SOURCE GROUNDING (anti-alucinación): una entidad extraída debe tener ANCLA textual en el lote (nombre/alias/canal/dominio de email).
+// Sin ancla = probable invención → se descarta. Conservador: alcanza con que aparezca UNA palabra significativa (apellido, dominio) o
+// el canal → así NO tira personas mencionadas por apodo/canal, solo las fabricadas de la nada. (tags = clasificación, gist = resumen → no se groundean.)
+const gstrip = (s) => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}\s@._-]/gu, " ").replace(/\s+/g, " ").trim()
+function anchored(name, hay) {
+  const s = gstrip(name); if (!s) return false
+  if (hay.includes(s)) return true
+  return s.split(/[\s@._-]+/).filter((w) => w.length > 2).some((w) => hay.includes(w))
+}
+
 const SYSTEM = `Sos el motor de extracción de un "segundo cerebro" personal. Recibís eventos de comunicación (WhatsApp, Telegram, Teams, email) de UN usuario dueño del sistema. Tu trabajo: extraer el GRAFO DE CONOCIMIENTO.
 
 Reglas:
@@ -29,6 +39,7 @@ Reglas:
 - "channel" del evento identifica el canal+id de esa persona (ej "email:juan@empresa.com", "whatsapp:519..."). Registralo.
 - Para cada persona, "gist" = resumen de UNA línea del evento (qué pasó), en español, sin datos sensibles crudos (nada de passwords).
 - Ignorá ruido: promos, spam, códigos de verificación, newsletters.
+- NO INVENTES entidades: cada persona/empresa/proyecto debe estar MENCIONADA en los eventos (por nombre, alias, canal o dominio de email). Si no aparece en el texto, NO la crees.
 Respondé SOLO JSON válido con el schema pedido.`
 
 function dateOf(ts) { return new Date(ts || Date.now()).toISOString().slice(0, 10) }
@@ -55,19 +66,24 @@ async function main() {
 
   const identity = loadIdentity()
   const known = [...new Set([...CANON_LIST, ...Object.values(identity)])]
-  let people = 0, companies = 0, projects = 0
+  let people = 0, companies = 0, projects = 0, dropped = 0
 
   for (let i = 0; i < events.length; i += BATCH) {
     const batch = events.slice(i, i + BATCH)
     let g
     try { g = await processBatch(batch, known) } catch (e) { console.log(`lote ${i}: ${e.message}`); continue }
+    // pajar del lote (lo que REALMENTE se le mandó al LLM): nombres + canales + texto → contra esto se verifica cada entidad
+    const hay = gstrip(batch.map((e) => `${e.name || ""} ${channelId(e)} ${e.text || ""}`).join("  "))
 
     for (const p of g.people || []) {
       if (!p.canonical) continue
       const canon = norm(p.canonical)
       if (NO_ATTRIBUTE.has(canon)) continue // nunca atribuir mensajes entrantes a menores/sin-canales
+      // grounding: una persona NUEVA (no ya conocida) tiene que estar anclada en el texto por su nombre, un alias o un canal.
+      // Sin eso → invención → descartar. Las conocidas pasan siempre (el LLM reusó bien un canónico existente).
+      if (!known.includes(canon) && !anchored(canon, hay) && !(p.aliases || []).some((a) => anchored(a, hay)) && !(p.channels || []).some((c) => anchored(c, hay))) { dropped++; continue }
       const chans = (p.channels || []).filter((ch) => !isGroupChannel(ch)) // NO asociar grupos como canal de la persona
-      upsertNode("person", canon, { aliases: p.aliases, channels: chans, orgs: (p.orgs || []).map(norm), projects: (p.projects || []).map(norm), tags: p.tags },
+      upsertNode("person", canon, { aliases: p.aliases, channels: chans, orgs: (p.orgs || []).filter((o) => anchored(o, hay)).map(norm), projects: (p.projects || []).filter((pr) => anchored(pr, hay)).map(norm), tags: p.tags },
         (p.events || []).map((ev) => ({ date: ev.date, line: `[${ev.channel}] ${ev.gist}` })))
       for (const ch of chans) identity[ch] = canon
       if (!known.includes(canon)) known.push(canon)
@@ -75,12 +91,14 @@ async function main() {
     }
     for (const c of g.companies || []) {
       if (!c.name) continue
+      if (!anchored(c.name, hay)) { dropped++; continue } // empresa no mencionada (ni por dominio) → descartar
       upsertNode("company", norm(c.name), { tags: c.tags, projects: (c.projects || []).map(norm),
         aliases: [], channels: [], orgs: (c.people || []).map(norm) }, [])
       companies++
     }
     for (const pr of g.projects || []) {
       if (!pr.name) continue
+      if (!anchored(pr.name, hay)) { dropped++; continue } // proyecto no nombrado en el texto → descartar
       upsertNode("project", norm(pr.name), { orgs: (pr.companies || []).map(norm), tags: [], aliases: [], channels: [], projects: [] },
         pr.summary ? [{ date: dateOf(batch[0].ts), line: pr.summary }] : [])
       projects++
@@ -89,7 +107,7 @@ async function main() {
     process.stdout.write(`\r  lote ${Math.floor(i / BATCH) + 1}/${Math.ceil(events.length / BATCH)} · ${people}p ${companies}e ${projects}pr`)
   }
   commit() // TRANSACCIONAL: recién ahora avanzamos el offset (si crasheó a mitad, la próxima corrida reprocesa; upsert es idempotente)
-  console.log(`\n✅ Grafo actualizado: ${people} personas · ${companies} empresas · ${projects} proyectos`)
+  console.log(`\n✅ Grafo actualizado: ${people} personas · ${companies} empresas · ${projects} proyectos · ${dropped} descartadas (sin ancla en el texto)`)
   console.log(`   Vault: ./vault/  ·  Identidades: ${Object.keys(identity).length} canales mapeados`)
   appendFileSync(`./vault/Daily/${dateOf(Date.now())}.md`, `- graphify: +${people}p/+${companies}e/+${projects}pr @ ${new Date().toISOString().slice(11, 16)}\n`)
 }
