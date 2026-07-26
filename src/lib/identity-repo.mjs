@@ -57,23 +57,25 @@ export function rekeyBridge(contactsMap, manual = {}) {
   // NUNCA relabelear un GRUPO como 1:1. El filtro excluía @g.us pero NO los portales !room del bridge:
   // un grupo donde en la ventana capturada escribió UN solo miembro (nums.size===1) se colapsaba al contacto de ese miembro
   // (mensajes de grupo apareciendo como chat personal). Excluir todo thread que tenga mensajes con grp (marca de grupo) lo evita.
-  const threads = D.prepare(`SELECT DISTINCT thread FROM messages
-    WHERE account='matrix' AND channel='whatsapp' AND thread NOT LIKE '%@g.us'
-    AND thread NOT IN (SELECT thread FROM messages WHERE grp IS NOT NULL AND grp != '')`).all()
+  // Resolvemos por SALA (jid = !room), NO por thread: así los mensajes SALIENTES de una sala (tus respuestas, que por sí solas no
+  // dicen el número) se pegan a la conversación de esa sala igual. Antes, un fragmento de solo-salientes quedaba huérfano bajo un
+  // hilo-nombre aparte = contacto duplicado (ej: "Nop"/"Jajaja" sueltos). El número se detecta por los remitentes ENTRANTES de la sala.
+  const rooms = D.prepare(`SELECT DISTINCT jid FROM messages
+    WHERE account='matrix' AND channel='whatsapp' AND jid LIKE '!%:%'
+    AND jid NOT IN (SELECT jid FROM messages WHERE grp IS NOT NULL AND grp != '')`).all()
   const inSenders = D.prepare(`SELECT DISTINCT sender FROM messages
-    WHERE thread=? AND dir='in' AND sender LIKE '@whatsapp\\_%' ESCAPE '\\'`)
-  const upd = D.prepare("UPDATE messages SET thread=? WHERE thread=?")
-  // .immediate: BEGIN IMMEDIATE toma el write-lock YA → busy_timeout/withRetry aplican. Sin él, la tx DIFERIDA lee (inSenders.all)
-  // antes de escribir → SQLITE_BUSY_SNAPSHOT que busy_timeout NO reintenta → resolve-identities moría y unifyByNumber/etc no corrían.
+    WHERE jid=? AND dir='in' AND sender LIKE '@whatsapp\\_%' ESCAPE '\\'`)
+  const upd = D.prepare("UPDATE messages SET thread=? WHERE jid=? AND thread!=?") // TODOS los mensajes de la sala (entrantes Y salientes)
+  // .immediate: BEGIN IMMEDIATE toma el write-lock YA → busy_timeout/withRetry aplican (si no, SQLITE_BUSY_SNAPSHOT no reintenta).
   const tx = D.transaction(() => {
     let n = 0
-    for (const t of threads) {
+    for (const room of rooms) {
       const nums = new Set()
-      for (const r of inSenders.all(t.thread)) { const p = phoneOf(r.sender); if (p && !MY_NUMBERS.has(p)) nums.add(p) } // excluir mis cuentas
-      if (nums.size !== 1) continue // 0 = no resoluble; >1 = grupo real → dejar
+      for (const r of inSenders.all(room.jid)) { const p = phoneOf(r.sender); if (p && !MY_NUMBERS.has(p)) nums.add(p) } // excluir mis cuentas
+      if (nums.size !== 1) continue // 0 = solo salientes / sin entrantes → no resoluble; >1 = grupo real → dejar
       const num = [...nums][0]
       const target = safeName(contactsMap, num, manual) || `whatsapp:${num}@s.whatsapp.net` // homónimo → hilo por número (no fusionar personas distintas)
-      if (target !== t.thread) n += upd.run(target, t.thread).changes
+      n += upd.run(target, room.jid, target).changes
     }
     return n
   }).immediate

@@ -6,6 +6,15 @@ const jf = (f) => (existsSync(`./data/${f}`) ? JSON.parse(readFileSync(`./data/$
 // agenda del teléfono: número → nombre. Unifica el histórico (número) con el bridge/email (nombre).
 let _cm = null, _cmM = 0
 function contactsMap() { const f = "./data/contacts-map.json"; if (!existsSync(f)) return {}; const m = statSync(f).mtimeMs; if (_cm && m === _cmM) return _cm; _cm = JSON.parse(readFileSync(f, "utf8")); _cmM = m; return _cm }
+// nombre de agenda de un número SOLO si es ÚNICO — MISMO guard de homónimo que safeName() en identity-repo. Debe usarse en TODO
+// keyeo por nombre de computeThread para que ingest y resolve-identities COINCIDAN. Antes computeThread usaba contactsMap()[num] crudo
+// (sin guard) → creaba un hilo por-nombre para contactos con nombre repetido en la agenda, que resolve-identities dejaba por número →
+// la misma conversación se partía (ej: 2 mensajes salientes sueltos bajo el nombre). Con el guard, ambos keyean igual → sin duplicado.
+function safeContactName(num) {
+  const cm = contactsMap(); const nm = num && cm[num]; if (!nm) return null
+  let c = 0; for (const v of Object.values(cm)) if (v === nm && ++c > 1) return null // nombre en 2+ números → no keyear por nombre (podrían ser 2 personas)
+  return nm
+}
 const digitsOf = (s) => (s || "").replace(/[^\d]/g, "")
 // mapa LID → número real (de jid_map de WhatsApp). Resuelve los chats @lid a su teléfono.
 let _lid = null, _lidM = 0
@@ -84,7 +93,7 @@ export function computeThread(e) {
   // OJO: si el mensaje trae `grp` (nombre de grupo), ES un grupo — nunca al DM, aunque el lector haya marcado e.dm por membresía incompleta.
   if (e.channel === "whatsapp" && e.dm && !e.grp) {
     const num = phoneOf(e.dm)
-    if (num && !MY_NUMBERS.has(num)) { const man = manualCanon(e); if (man) return man; return contactsMap()[num] || `whatsapp:${num}@s.whatsapp.net` }
+    if (num && !MY_NUMBERS.has(num)) { const man = manualCanon(e); if (man) return man; return safeContactName(num) || `whatsapp:${num}@s.whatsapp.net` }
   }
   if (isContainerJid(e.jid)) return `${e.channel}:${e.jid}` // grupos/canales quedan en el grupo, no en un hilo personal
   // SMS / Signal: keyear por NÚMERO al MISMO hilo donde vive el WhatsApp 1:1 de ese teléfono (`whatsapp:<num>@s.whatsapp.net`) →
@@ -99,7 +108,7 @@ export function computeThread(e) {
   // WhatsApp 1:1: por NÚMERO real (jid, sender del bridge, o LID→número via jid_map). Determinístico → unifica todo lo del mismo teléfono.
   if (e.channel === "whatsapp") {
     const num = phoneOf(e.jid) || phoneOf(e.sender) || null
-    const canon = (num && contactsMap()[num]) || contactName(e.name)
+    const canon = (num && safeContactName(num)) || contactName(e.name)
     if (canon) return canon
     if (num) return `whatsapp:${num}@s.whatsapp.net` // sin nombre en agenda, pero unificado por número
     return `whatsapp:${e.jid || e.account}`
