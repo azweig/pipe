@@ -33,12 +33,12 @@ export function insertClip(id, ts, kind, url, title, para, archived, created) {
 // tabla dinámica resuelta por ALLOWLIST (nunca se interpola input), como markDone/setBusyTimeout.
 const _ACTION_TABLES = { todos: "todos", promesas: "promesas" }
 // tarea nueva (lo que me pidieron / quedó de mi lado). Idempotente por id (OR IGNORE). (era extract-actions)
-export function insertTodo(id, text, thread, name, due, ts, created) {
-  return withRetry(() => db().prepare("INSERT OR IGNORE INTO todos(id,text,thread,name,due,ts,done,created) VALUES(?,?,?,?,?,?,0,?)").run(id, text, thread, name, due, ts, created))
+export function insertTodo(id, text, thread, name, due, ts, created, cita) {
+  return withRetry(() => db().prepare("INSERT OR IGNORE INTO todos(id,text,thread,name,due,ts,done,created,cita) VALUES(?,?,?,?,?,?,0,?,?)").run(id, text, thread, name, due, ts, created, cita || null))
 }
 // promesa nueva (lo que YO me comprometí a hacer). Idempotente por id. (era extract-actions)
-export function insertPromesa(id, text, thread, name, due, ts, created) {
-  return withRetry(() => db().prepare("INSERT OR IGNORE INTO promesas(id,text,thread,name,due,ts,done,created) VALUES(?,?,?,?,?,?,0,?)").run(id, text, thread, name, due, ts, created))
+export function insertPromesa(id, text, thread, name, due, ts, created, cita) {
+  return withRetry(() => db().prepare("INSERT OR IGNORE INTO promesas(id,text,thread,name,due,ts,done,created,cita) VALUES(?,?,?,?,?,?,0,?,?)").run(id, text, thread, name, due, ts, created, cita || null))
 }
 // ítems abiertos (done=0) de todos|promesas. kind por allowlist. Defensivo (nunca tira). (era home-brief.openActions)
 export function openActionItems(kind, { limit = 6 } = {}) {

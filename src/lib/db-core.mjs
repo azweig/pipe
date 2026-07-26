@@ -86,6 +86,11 @@ export function initSchema(h) {
   if (!ncols.includes("catkey")) h.exec("ALTER TABLE note_meta ADD COLUMN catkey TEXT")   // clave de categoría fija para el ícono (salud/receta/link/…)
   if (!ncols.includes("actions")) h.exec("ALTER TABLE note_meta ADD COLUMN actions TEXT")  // JSON [{texto,cuando,done}] — acciones detectadas por la IA
   if (!ncols.includes("verdict")) h.exec("ALTER TABLE note_meta ADD COLUMN verdict TEXT")  // JSON {nivel:hoax|dudoso|verificado, motivo} — solo para claims/noticias
+  // source grounding: cita textual del mensaje que respalda cada tarea/promesa (anti-alucinación + trazabilidad). Nombres de tabla fijos (no input).
+  for (const t of ["todos", "promesas"]) {
+    const cols = h.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name)
+    if (!cols.includes("cita")) h.exec(`ALTER TABLE ${t} ADD COLUMN cita TEXT`)
+  }
   // resumen por hilo (derivado) — recrear si el esquema cambió
   const cols = h.prepare("PRAGMA table_info(thread_stats)").all().map((c) => c.name)
   if (!cols.includes("channels") || !cols.includes("nsenders")) h.exec("DROP TABLE IF EXISTS thread_stats")
