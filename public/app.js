@@ -497,8 +497,10 @@ const CONN_PROV = [
   { id: "imap", name: "Otro correo", cat: "correo", chan: "email", sub: "Cualquier IMAP", status: "ready" },
   { id: "whatsapp", name: "WhatsApp", cat: "telefonia", chan: "whatsapp", sub: "QR o código", status: "ready" },
   { id: "telegram", name: "Telegram", cat: "telefonia", chan: "telegram", sub: "Teléfono + código", status: "ready" },
-  { id: "sms", name: "SMS", cat: "telefonia", chan: null, emoji: "💬", sub: "Reenviá SMS al hub (celu/Mac)", status: "guide" },
+  { id: "sms", name: "SMS", cat: "telefonia", chan: null, emoji: "💬", sub: "Próximamente", status: "soon" },
+  { id: "signal", name: "Signal", cat: "telefonia", chan: null, emoji: "🔒", sub: "signal-cli en tu server", status: "ready" },
   { id: "discord", name: "Discord", cat: "redes", chan: "discord", emoji: "🎮", sub: "Con token", status: "ready" },
+  { id: "slack", name: "Slack", cat: "trabajo", chan: null, emoji: "💬", sub: "Con token (xoxp/xoxb)", status: "ready" },
   { id: "instagram", name: "Instagram", cat: "redes", chan: "instagram", sub: "En el servidor", status: "server" },
   { id: "facebook", name: "Messenger", cat: "redes", chan: "facebook", sub: "En el servidor", status: "server" },
   { id: "linkedin", name: "LinkedIn", cat: "redes", chan: "linkedin", sub: "Próximamente", status: "soon" },
@@ -573,6 +575,8 @@ window.connOpen = (id) => {
   if (id === "whatsapp") return waSheet()
   if (id === "discord") return discordSheet()
   if (id === "telegram") return tgSheet()
+  if (id === "slack") return slackSheet()
+  if (id === "signal") return signalSheet()
 }
 // Guías de fuentes que se configuran en el servidor del hub (Teams/Notion/Google/Telegram/IG/FB)
 const GUIDES = {
@@ -609,6 +613,45 @@ window.discordLink = async () => {
   o.innerHTML = '<span class="tiny muted">Vinculando…</span>'
   await post("/api/matrix-link-token?net=discord", { token: t }).catch(() => {})
   netPoll("discord", "dcOut")
+}
+// Slack: token de una app (xoxp/xoxb) → se valida con auth.test y se guarda cifrado → /api/integrations/slack
+window.slackSheet = () => {
+  openSheet(`<button class="cfg-back" onclick="addConnectionSheet('trabajo')">${IC_BACK}Conexiones</button>
+  <h2 style="margin:6px 0 4px">Slack</h2>
+  <div class="sub" style="margin:0 0 12px">Trae tus DMs y canales a la bandeja. Necesitás un <b>token de app</b> de Slack.</div>
+  <details style="margin:0 0 12px"><summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13.5px;list-style:none">🔑 ¿Cómo saco el token?</summary><ol style="padding-left:20px;font-size:13.5px;line-height:1.6;margin:9px 0 0"><li>Entrá a <b>api.slack.com/apps</b> → <b>Create New App</b> (From scratch).</li><li>En <b>OAuth &amp; Permissions</b> agregá scopes: <code>channels:history</code>, <code>groups:history</code>, <code>im:history</code>, <code>mpim:history</code>, <code>channels:read</code>, <code>users:read</code> (y <code>chat:write</code> para responder).</li><li><b>Install to Workspace</b> y copiá el <b>User OAuth Token</b> (<code>xoxp-…</code>).</li></ol><a href="https://api.slack.com/apps" target="_blank" rel="noopener" style="display:inline-block;margin-top:9px;font-weight:600;font-size:13.5px">Abrir api.slack.com/apps ↗</a></details>
+  <textarea id="slkTok" rows="2" placeholder="Pegá tu token de Slack (xoxp-… o xoxb-…)" style="${CINP};resize:none"></textarea>
+  <button class="btn" style="width:100%" onclick="slackSave()">Conectar Slack</button>
+  <div id="slkOut" style="margin-top:12px;text-align:center;min-height:24px;font-size:13.5px"></div>`)
+}
+window.slackSave = async () => {
+  const t = (document.getElementById("slkTok").value || "").trim(), o = document.getElementById("slkOut")
+  if (!t) { o.innerHTML = '<span class="tiny muted">Pegá el token primero.</span>'; return }
+  o.innerHTML = '<span class="muted">Verificando con Slack…</span>'
+  const r = await post("/api/integrations/slack", { token: t }).catch(() => null)
+  if (!r || r.error) { o.innerHTML = `<span style="color:#e0663a">${esc((r && r.error) || "No se pudo conectar.")}</span>`; return }
+  o.innerHTML = `<b style="color:var(--ok,#16a34a)">✓ ¡Slack conectado!${r.team ? " (" + esc(r.team) + ")" : ""}</b>`
+  setTimeout(() => { closeSheet(); viewSettings() }, 1600)
+}
+// Signal: signal-cli-rest-api corre en tu server → URL + número (se vincula por número al hilo de WhatsApp/SMS) → /api/integrations/signal
+window.signalSheet = () => {
+  openSheet(`<button class="cfg-back" onclick="addConnectionSheet('telefonia')">${IC_BACK}Conexiones</button>
+  <h2 style="margin:6px 0 4px">Signal</h2>
+  <div class="sub" style="margin:0 0 12px">Se une al <b>mismo hilo</b> que WhatsApp/SMS de cada contacto. Necesitás <b>signal-cli-rest-api</b> corriendo en tu servidor.</div>
+  <details style="margin:0 0 12px"><summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13.5px;list-style:none">🔧 ¿Cómo lo levanto? (una vez)</summary><ol style="padding-left:20px;font-size:13.5px;line-height:1.6;margin:9px 0 0"><li>En tu server: <code>docker run -d -p 8080:8080 -v signal:/home/.local/share/signal-cli bbernhard/signal-cli-rest-api</code></li><li>Vinculá tu número como dispositivo (ver el README del proyecto).</li><li>Poné acá la URL (ej <code>http://localhost:8080</code>) y tu número.</li></ol></details>
+  <input class="inp" id="sgUrl" placeholder="http://localhost:8080" style="${CINP}">
+  <input class="inp" id="sgNum" inputmode="tel" placeholder="+51 999 000 000" style="${CINP}">
+  <button class="btn" style="width:100%" onclick="signalSave()">Conectar Signal</button>
+  <div id="sgOut" style="margin-top:12px;text-align:center;min-height:24px;font-size:13.5px"></div>`)
+}
+window.signalSave = async () => {
+  const url = (document.getElementById("sgUrl").value || "").trim(), number = (document.getElementById("sgNum").value || "").trim(), o = document.getElementById("sgOut")
+  if (!url || !number) { o.innerHTML = '<span class="tiny muted">Completá la URL y tu número.</span>'; return }
+  o.innerHTML = '<span class="muted">Guardando…</span>'
+  const r = await post("/api/integrations/signal", { url, number }).catch(() => null)
+  if (!r || r.error) { o.innerHTML = `<span style="color:#e0663a">${esc((r && r.error) || "No se pudo guardar.")}</span>`; return }
+  o.innerHTML = '<b style="color:var(--ok,#16a34a)">✓ ¡Signal conectado!</b>'
+  setTimeout(() => { closeSheet(); viewSettings() }, 1600)
 }
 // ── Telegram self-service: teléfono → código → 2FA opcional (GramJS vía el server) ──
 window.tgSheet = async () => {
@@ -1791,6 +1834,15 @@ window.freeChatMedia = async (keyEnc) => {
   viewMedia(keyEnc)
 }
 window.viewPerson = (key) => go("#person/" + key) // key ya viene encodeURIComponent-eado por quien llama
+// modal de un GRUPO en común: lista sus miembros (clickeables → cada persona) + abrir el chat del grupo
+window.grpCardSheet = (i) => {
+  const g = (window._pcGroups || [])[i]; if (!g) return
+  const mem = g.members || []
+  const chips = mem.length
+    ? mem.map((m) => `<span class="pr-chip" style="cursor:pointer" onclick="closeSheet();viewPerson('${enck(m.name)}')">${esc(m.name)}${m.n > 1 ? ` <b>·${m.n}</b>` : ""}</span>`).join("")
+    : '<div class="sub">No pude listar los miembros de este grupo.</div>'
+  openSheet(`<h2 style="margin:0 0 4px">👥 ${esc(g.name)}</h2><div class="sub" style="margin:0 0 12px">${mem.length} ${mem.length === 1 ? "miembro" : "miembros"}${mem.length ? " · tocá para ver a cada uno" : ""}</div><div class="pr-chips">${chips}</div>${g.thread ? `<button class="btn" style="width:100%;margin-top:14px" onclick="closeSheet();go('#conv/${enck(g.thread)}')">Abrir el chat del grupo</button>` : ""}`)
+}
 const CHAN_META = { whatsapp: ["WhatsApp", "#25d366"], email: ["Email", "#ef4444"], telegram: ["Telegram", "#37aee2"], instagram: ["Instagram", "#e1306c"], teams: ["Teams", "#5b5fc7"], linkedin: ["LinkedIn", "#0a66c2"] }
 const _ini = (s) => (String(s || "?").trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("") || "?").toUpperCase()
 async function viewPersonScreen(nameOrKey) {
@@ -1799,6 +1851,7 @@ async function viewPersonScreen(nameOrKey) {
   const nm = p.name || decodeURIComponent(nameOrKey), ini = esc(_ini(nm))
   const convKey = p.canon || nm
   const people = (p.shared?.people || []), groups = (p.shared?.groups || [])
+  window._pcGroups = groups // para el modal de miembros al tocar un grupo
   // grafo: personas EN COMÚN (más cerca/grandes cuanto más comparten) + org + grupos; con movimiento
   const maxSh = Math.max(1, ...people.map((x) => x.shared || 1))
   const sats = []
@@ -1836,10 +1889,12 @@ async function viewPersonScreen(nameOrKey) {
     ${p.bio ? `<div class="pr-bio"><div class="mtg-eyebrow light">✦ Quién es</div><div class="pr-bio-txt">${esc(p.bio)}</div></div>` : ""}
     <div class="pr-stats">${stat(respTxt, "responde", "good")}${stat(enComun || "—", "en común")}${stat(relDur(p.stats?.firstTs), "se conocen")}</div>
     ${(p.topics || []).length ? `<div class="mtg-card"><div class="mtg-eyebrow">De qué hablan</div>${p.topics.map((t) => `<div class="pr-topic"><span class="pr-recent-dot"></span><span>${esc(t)}</span></div>`).join("")}</div>` : ""}
+    ${(p.groupMembers && p.groupMembers.length) ? `<div class="mtg-card"><div class="mtg-eyebrow">Miembros del grupo · ${p.groupMembers.length}</div><div class="pr-chips">${p.groupMembers.map((m) => `<span class="pr-chip" style="cursor:pointer" onclick="viewPerson('${enck(m.name)}')">${esc(m.name)}${m.n > 1 ? ` <b>·${m.n}</b>` : ""}</span>`).join("")}</div></div>` : ""}
     ${(people.length || groups.length) ? `<div class="mtg-card"><div class="mtg-eyebrow">En común</div>
-      ${groups.length ? `<div class="pr-common"><span class="pr-common-l">Grupos</span><div class="pr-chips">${groups.map((g) => `<span class="pr-chip grp">👥 ${esc(g.name)}</span>`).join("")}</div></div>` : ""}
+      ${groups.length ? `<div class="pr-common"><span class="pr-common-l">Grupos</span><div class="pr-chips">${groups.map((g, i) => `<span class="pr-chip grp" style="cursor:pointer" onclick="grpCardSheet(${i})">👥 ${esc(g.name)}${(g.members || []).length ? ` <b>·${g.members.length}</b>` : ""}</span>`).join("")}</div></div>` : ""}
       ${people.length ? `<div class="pr-common"><span class="pr-common-l">Personas</span><div class="pr-chips">${people.map((pp) => `<span class="pr-chip" onclick="viewPerson('${enck(pp.name)}')">${esc(pp.name)}${pp.shared > 1 ? ` <b>·${pp.shared}</b>` : ""}</span>`).join("")}</div></div>` : ""}
     </div>` : ""}
+    ${(p.contacts && ((p.contacts.phones || []).length || (p.contacts.emails || []).length)) ? `<div class="mtg-card"><div class="mtg-eyebrow">Datos de contacto</div><div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">${(p.contacts.phones || []).map((n) => `<a href="tel:+${esc(n)}" style="display:inline-flex;align-items:center;gap:6px;padding:9px 13px;border-radius:12px;background:var(--card2,#f1f3f8);color:inherit;text-decoration:none;font-size:14px;font-weight:600">📞 +${esc(n)}</a>`).join("")}${(p.contacts.emails || []).map((e) => `<a href="mailto:${esc(e)}" style="display:inline-flex;align-items:center;gap:6px;padding:9px 13px;border-radius:12px;background:var(--card2,#f1f3f8);color:inherit;text-decoration:none;font-size:14px;font-weight:600">✉️ ${esc(e)}</a>`).join("")}</div></div>` : ""}
     ${(p.channels || []).length ? `<div class="mtg-card"><div class="mtg-eyebrow">Canales</div><div class="pr-chans">${p.channels.map(chCard).join("")}</div></div>` : ""}
     ${p.pending && !p.stats?.messages ? `<div class="hb-empty" style="text-align:center">Sin historial de conversación con este contacto.</div>` : ""}
     </div>
@@ -2432,7 +2487,7 @@ window.setupPinPrompt = async () => {
   const s = await api("/api/auth/status")
   if (!s || s.pinSet || !s.canSetup) return // ya tiene PIN, o no es un equipo local que pueda crearlo
   openSheet(`<h2 style="margin:0 0 4px">🔒 PIN de acceso remoto</h2><div class="sub" style="margin:0 0 12px">Para entrar desde internet (${esc(location.host)}) necesitás un PIN. Acá en tu equipo no te lo pide.</div>
-    <input id="newpin" type="password" inputmode="numeric" maxlength="12" placeholder="PIN de 6 a 12 dígitos" style="width:100%;box-sizing:border-box;padding:12px;font-size:18px;letter-spacing:4px;text-align:center;border-radius:12px;border:1px solid var(--line);margin-bottom:10px" onkeydown="if(event.key==='Enter')savePin()">
+    <input id="newpin" type="password" inputmode="numeric" maxlength="12" placeholder="PIN de 4 a 12 dígitos" style="width:100%;box-sizing:border-box;padding:12px;font-size:18px;letter-spacing:4px;text-align:center;border-radius:12px;border:1px solid var(--line);margin-bottom:10px" onkeydown="if(event.key==='Enter')savePin()">
     <button class="btn" style="width:100%" onclick="savePin()">Crear PIN</button>
     <button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Ahora no</button>
     <div id="pinerr" style="color:#e0663a;font-size:13px;margin-top:8px"></div>`)

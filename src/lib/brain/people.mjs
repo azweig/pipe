@@ -168,6 +168,45 @@ export async function genPersonCards({ topN = 1000, minMsgs = 15 } = {}) {
   }
   return n
 }
+// DATOS DE CONTACTO de la persona: números reales + emails (de threadTargets + senders entrantes). Baratos → se computan al LEER.
+function contactData(key) {
+  const phones = new Set(), emails = new Set()
+  try { for (const tg of (threadTargets(key).targets || [])) {
+    if (tg.channel === "email" && /@/.test(tg.target || "")) emails.add(String(tg.target).toLowerCase())
+    else if (tg.channel === "whatsapp") { const d = String(tg.label || "").replace(/[^\d]/g, ""); if (d.length >= 8) phones.add(d) }
+  } } catch {}
+  try { for (const r of threadInboundSenders(key, { limit: 40 })) { const p = phoneOf(r.sender); if (p && !MY_NUMBERS.has(p)) phones.add(p) } } catch {}
+  if (String(key).startsWith("email:")) emails.add(String(key).slice(6).toLowerCase())
+  return { phones: [...phones].slice(0, 6), emails: [...emails].slice(0, 6) }
+}
+// añade los MIEMBROS a cada grupo EN COMÚN (para el modal clickeable) desde el índice de membresía. Excluye owner/números sueltos.
+function withGroupMembers(shared) {
+  const mem = getMembership()
+  if (mem && shared && shared.groups) for (const g of shared.groups) {
+    const gi = (mem.groups || []).find((x) => x.thread === g.thread)
+    g.members = gi ? (gi.members || []).filter(([nm]) => nm && String(nm).length >= 2 && !/^\d+$/.test(nm) && !isOwnerName(nm)).map(([nm, k, n]) => ({ name: nm, key: k, n })).slice(0, 40) : []
+  }
+  return shared
+}
+// miembros del PROPIO grupo (cuando la card ES un grupo @g.us / sala) → para mostrarlos al abrir el grupo. Clickeables en la UI.
+function ownGroupMembers(card) {
+  const key = card.canon || "", nm = card.name || ""
+  if (!(card.group || /@g\.us$|@broadcast$|@newsletter$/.test(key) || /@g\.us/.test(key))) return null
+  const mem = getMembership(); if (!mem) return []
+  // el índice keyea por THREAD, pero la card puede venir por NOMBRE → matchear por thread O por nombre de grupo (grp).
+  const gi = (mem.groups || []).find((x) => x.thread === key || (x.grp && (x.grp === nm || x.grp === key)))
+  return gi ? (gi.members || []).filter(([m]) => m && String(m).length >= 2 && !/^\d+$/.test(m) && !isOwnerName(m)).map(([m, k, n]) => ({ name: m, key: k, n })).slice(0, 60) : []
+}
+// enriquece una card (de cache o fresca) con datos baratos que NO conviene cachear: contacto + miembros de grupo.
+function enrichCard(card) {
+  if (card) { // OJO: los grupos tienen canon=null → NO gatear por canon (si no, no se enriquecen)
+    if (card.canon) card.contacts = contactData(card.canon)
+    withGroupMembers(card.shared)
+    const gm = ownGroupMembers(card); if (gm) card.groupMembers = gm
+  }
+  return card
+}
+
 // lectura RÁPIDA de la tarjeta de persona. Top pre-generadas; la cola larga se genera y CACHEA en la 1ra vista (nunca lenta 2 veces).
 export async function personCard(nameOrKey, { force = false } = {}) {
   const { listThreads } = await import("./inbox.mjs") // inbox ya es su propio módulo (M4b); people→inbox no tiene ciclo
@@ -178,7 +217,7 @@ export async function personCard(nameOrKey, { force = false } = {}) {
   const canon = resolvePerson(eff)
   // force → saltear la cache y REGENERAR el grafify completo (botón "Explorar" del perfil)
   if (!force) for (const k of [...new Set([norm(eff), norm(nameOrKey), canon ? norm(canon) : ""].filter(Boolean))]) {
-    const v = getMeta("personcard:" + k); if (v) { try { const c = JSON.parse(v); if (c && c.canon) return c } catch {} }
+    const v = getMeta("personcard:" + k); if (v) { try { const c = JSON.parse(v); if (c && c.canon) return enrichCard(c) } catch {} }
   }
   // hilo por nombre canónico exacto → generá + cacheá
   const want = canon ? norm(canon) : norm(eff)
@@ -198,10 +237,10 @@ export async function personCard(nameOrKey, { force = false } = {}) {
       if (cand[0]) { t = cand[0].x; setMeta("personalias:" + reqN, t.canon) } // aprender el alias para la próxima
     }
   }
-  if (t && (t.count || 0) > 0) { try { const card = await buildPersonCard(t.canon, t); setMeta("personcard:" + norm(t.canon), JSON.stringify(card)); return card } catch {} }
+  if (t && (t.count || 0) > 0) { try { const card = await buildPersonCard(t.canon, t); setMeta("personcard:" + norm(t.canon), JSON.stringify(card)); return enrichCard(card) } catch {} }
   const pv = personView(eff) // último recurso (grupos, o nombre sin hilo) — lo que se pueda al toque, sin bio
   const tl = pv.timeline || []
-  return { canon: pv.canon, name: pv.name, role: pv.role, tags: pv.tags, orgs: pv.orgs, bio: "", topics: [], shared: { groups: [], people: [] }, stats: { messages: tl.length, respMin: null, firstTs: tl[0]?.ts || 0, lastTs: tl[tl.length - 1]?.ts || 0 }, channels: (pv.byChannel || []).map((c) => ({ channel: c.channel, n: c.n, last: 0 })), links: pv.links || [], photo: null, group: pv.group, pending: true }
+  return enrichCard({ canon: pv.canon, name: pv.name, role: pv.role, tags: pv.tags, orgs: pv.orgs, bio: "", topics: [], shared: { groups: [], people: [] }, stats: { messages: tl.length, respMin: null, firstTs: tl[0]?.ts || 0, lastTs: tl[tl.length - 1]?.ts || 0 }, channels: (pv.byChannel || []).map((c) => ({ channel: c.channel, n: c.n, last: 0 })), links: pv.links || [], photo: null, group: pv.group, pending: true })
 }
 
 // fusiona hilos: mueve <sources[]> al hilo <target>. Base del botón "es la misma persona".
