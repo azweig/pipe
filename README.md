@@ -13,6 +13,7 @@ Pipe is a self-hostable **unified inbox + AI second brain**. It merges WhatsApp,
 - **A second brain, built automatically** — a living knowledge graph of the people, companies and projects in your life, grown from your own activity. Your self-notes become ideas and reminders.
 - **A real backup of everything** — a daily, encrypted, restore-tested backup of your whole history: every message, the WhatsApp bridge sessions, your OAuth tokens, and the irreplaceable media — photos, voice notes and PDFs from every channel. On your box, and offsite if you want it.
 - **Your keys, your box** — bring your own AI engine or run everything locally with Ollama. Single-tenant, self-hostable, secrets encrypted at rest. No data leaves your infrastructure.
+- **Bring your own AI assistant (MCP)** — connect Claude Desktop/Code (or any MCP client) straight to your inbox: search, read threads and pending items, and — if you turn it on — reply/forward with a confirmation step. Read-only by default, zero egress of its own, every call audited. See [docs/MCP.md](docs/MCP.md).
 
 ## Own your data
 
@@ -97,6 +98,7 @@ Every step above is a plain, human-followable command — you never need an AI t
 
 - **[docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)** — full self-host walkthrough (install, config, connect every channel, WhatsApp bridge, ops, troubleshooting). **Start here.**
 - [docs/UNIPILE.md](docs/UNIPILE.md) — the managed WhatsApp/LinkedIn channel.
+- [docs/MCP.md](docs/MCP.md) — connect an AI assistant to your inbox via the Model Context Protocol (read/write tools, privacy-first, stdio or SSH; no open ports).
 - [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md)
 
 ## Architecture & deployment
