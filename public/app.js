@@ -1329,8 +1329,10 @@ function renderConv() {
     const dk = dayKey(it.ts); if (dk !== lastDay) { body += dateSep(it.ts); lastDay = dk } body += convBubble(it)
   }
   const canSend = d.key !== "self" // notas propias no se responden
-  if (window._covertKey !== d.key) { window._covertKey = d.key; window._covertOn = false; window._covertCfg = null } // reset modo encubierto al cambiar de chat
-  const covertBtn = canSend ? `<button id="covertBtn" onclick="covertToggle()" title="Modo encubierto: cifrá el mensaje como un poema (estilo El Santo)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:${window._covertOn ? "var(--accent)" : "var(--bg2)"};color:${window._covertOn ? "#fff" : ""};font-size:17px;cursor:pointer;flex-shrink:0">🕊️</button>` : ""
+  if (window._covertKey !== d.key) { window._covertKey = d.key; window._covertOn = false } // reset modo encubierto al cambiar de chat
+  window._covertStyle = d.covert || "poema" // el hilo informa el estilo si el contacto tiene modo encubierto configurado (si no, null)
+  // toggle 🕊️ en el composer SOLO si este contacto ya tiene modo encubierto configurado (la config vive en el perfil de la persona)
+  const covertBtn = (canSend && d.covert) ? `<button id="covertBtn" onclick="covertToggle()" title="Modo encubierto ON/OFF · la clave se configura en el perfil del contacto" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:${window._covertOn ? "var(--accent)" : "var(--bg2)"};color:${window._covertOn ? "#fff" : ""};font-size:17px;cursor:pointer;flex-shrink:0">🕊️</button>` : ""
   const tg = d.target || {}
   const multi = (d.targets || []).length > 1
   const chanIcon = tg.channel === "email" ? "✉️" : "📱"
@@ -1519,27 +1521,29 @@ window.pickSend = (enc) => { const inp = document.getElementById("msgInput"); if
 window.insertSlot = (label) => { const inp = document.getElementById("msgInput"); if (!inp) return; const cur = inp.value.trim(); inp.value = (cur ? cur + " " : "") + "a las " + label; closeSheet(); growComposer(inp); inp.focus() }
 
 // ── MODO ENCUBIERTO ("El Santo"): cifra tu mensaje como un poema/cuento/etc.; la otra persona con Pipe + la misma clave lo revierte ──
-window.covertToggle = async () => {
-  if (!convState) return
-  if (!window._covertCfg) window._covertCfg = await fetch(`/api/covert/config?key=${encodeURIComponent(convState.key)}`).then((r) => r.json()).catch(() => null)
-  if (!window._covertCfg || !window._covertCfg.enabled) return covertConfigSheet() // sin configurar → abrir el sheet para poner la clave
+// La CONFIG (clave + estilo) vive en el perfil del contacto. El toggle del composer solo aparece si ya está configurado.
+window.covertToggle = () => {
   window._covertOn = !window._covertOn
-  window._covertStyle = window._covertCfg.style
   const b = document.getElementById("covertBtn"); if (b) { b.style.background = window._covertOn ? "var(--accent)" : "var(--bg2)"; b.style.color = window._covertOn ? "#fff" : "" }
   const inp = document.getElementById("msgInput"); if (inp) inp.placeholder = window._covertOn ? "🕊️ Mensaje encubierto…" : "Mensaje…"
 }
-window.covertConfigSheet = async () => {
-  const cfg = window._covertCfg || (window._covertCfg = await fetch(`/api/covert/config?key=${encodeURIComponent(convState.key)}`).then((r) => r.json()).catch(() => ({ styles: [], style: "poema" })))
-  window._covertStyle = window._covertStyle || cfg.style || "poema"
+// se abre desde el perfil de la persona (o desde el composer): keyEnc = thread key encodeado, name = nombre para el texto
+window.covertConfigSheet = async (keyEnc, name) => {
+  const key = keyEnc ? decodeURIComponent(keyEnc) : (convState && convState.key)
+  if (!key) return
+  window._covertSheetKey = key
+  const cfg = await fetch(`/api/covert/config?key=${encodeURIComponent(key)}`).then((r) => r.json()).catch(() => ({ styles: [], style: "poema", enabled: false }))
+  window._covertStyle = cfg.style || "poema"
+  const who = name || (convState && convState.name) || "la otra persona"
   const chips = (cfg.styles || []).map((s) => `<button class="chip" data-cs="${s.id}" onclick="covertPickStyle('${s.id}')" style="border:1.5px solid ${s.id === window._covertStyle ? "var(--accent)" : "var(--line)"};background:${s.id === window._covertStyle ? "var(--accent)" : "var(--bg2)"};color:${s.id === window._covertStyle ? "#fff" : ""}">${s.label}</button>`).join("")
   openSheet(`<h2 style="margin:0 0 4px">🕊️ Modo encubierto</h2>
-    <p class="sub" style="margin:0 0 12px">Tu mensaje viaja <b>cifrado</b>, disfrazado de texto normal. Quien lo vea por WhatsApp lee un poema; <b>${esc(convState.name || "la otra persona")}</b>, con Pipe y la misma clave, lo ve descifrado. Acordá la clave por un canal seguro (en persona, llamada…).</p>
+    <p class="sub" style="margin:0 0 12px">Tus mensajes a <b>${esc(who)}</b> pueden ir <b>cifrados</b>, disfrazados de texto normal. Quien los vea por WhatsApp lee un poema; ${esc(who)}, con Pipe y la misma clave, los ve descifrados. Acordá la clave por un canal seguro (en persona, llamada…).</p>
     <input id="covPass" type="text" autocomplete="off" spellcheck="false" placeholder="Clave compartida (ej. nuestro café 2019)" oninput="covertPreview()" style="width:100%;box-sizing:border-box;padding:11px 13px;border-radius:12px;border:1px solid var(--line);font-size:15px;margin-bottom:10px">
     <div id="covChips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${chips}</div>
     <div class="tiny muted" style="margin-bottom:4px">Vista previa (así se verá el mensaje):</div>
     <div id="covPrev" style="white-space:pre-wrap;background:var(--bg2);border-radius:12px;padding:11px 13px;font-size:13.5px;line-height:1.5;min-height:44px;max-height:180px;overflow:auto">Escribí una clave arriba…</div>
     <div style="display:flex;gap:8px;margin-top:14px">
-      <button onclick="covertSave()" class="btn" style="flex:1">Activar modo encubierto</button>
+      <button onclick="covertSave()" class="btn" style="flex:1">${cfg.enabled ? "Guardar cambios" : "Activar modo encubierto"}</button>
       ${cfg.enabled ? `<button onclick="covertDisable()" class="pill" style="flex-shrink:0">Desactivar</button>` : ""}
     </div>`)
 }
@@ -1560,17 +1564,23 @@ window.covertPreview = () => {
   }, 250)
 }
 window.covertSave = async () => {
+  const key = window._covertSheetKey; if (!key) return
   const pass = (document.getElementById("covPass")?.value || "").trim()
   if (pass.length < 4) return alert("Poné una clave de al menos 4 caracteres (tiene que ser la MISMA que la de la otra persona).")
-  const r = await post("/api/covert/config", { key: convState.key, pass, style: window._covertStyle || "poema" }).catch(() => null)
+  const r = await post("/api/covert/config", { key, pass, style: window._covertStyle || "poema" }).catch(() => null)
   if (!r || !r.enabled) return alert("No se pudo guardar.")
-  window._covertCfg = r; window._covertOn = true; window._covertStyle = r.style
-  closeSheet(); renderConv()
+  closeSheet(); covertAfterSave(key)
 }
 window.covertDisable = async () => {
-  await post("/api/covert/config", { key: convState.key, pass: "", style: "poema" }).catch(() => null)
-  window._covertCfg = { enabled: false, style: "poema", styles: window._covertCfg?.styles || [] }; window._covertOn = false
-  closeSheet(); renderConv()
+  const key = window._covertSheetKey; if (!key) return
+  await post("/api/covert/config", { key, pass: "", style: "poema" }).catch(() => null)
+  window._covertOn = false
+  closeSheet(); covertAfterSave(key)
+}
+// tras guardar/desactivar: refrescá lo que esté a la vista (el perfil de la persona, o el chat) para que el estado/toggle se actualice
+function covertAfterSave(key) {
+  if (window._personKey != null && location.hash.includes("#person/")) viewPersonScreen(window._personKey)
+  else if (convState && convState.key === key) viewConv(key) // re-fetch → trae d.covert → aparece el toggle en el composer
 }
 window.covertReveal = (id) => {
   const it = (convState.items || []).find((x) => x.id === id); if (!it) return
@@ -1698,8 +1708,8 @@ async function viewConv(key) {
     api("/api/thread/targets?key=" + enck(key)).then((x) => x || { targets: [] }),
   ])
   if (location.hash !== startHash) return // navegaste a otra pantalla mientras cargaba → no pisar
-  convState = { key, items: d.items || [], name: d.name, photo: d.photo, email: d.email, account: d.account, channels: d.channels || [], total: d.total || (d.items || []).length, hasMore: d.hasMore, oldestTs: d.oldestTs, targets: tg.targets || [], target: (tg.targets || [])[tg.default || 0] || null, unread: d.unread || 0, lastSeen: d.lastSeen || 0 }
-  _lsSet("conv:" + key, { items: (d.items || []).slice(-40), name: d.name, photo: d.photo, email: d.email, account: d.account, channels: d.channels || [], total: d.total, hasMore: d.hasMore, targets: tg.targets || [], target: (tg.targets || [])[tg.default || 0] || null }) // cache liviano
+  convState = { key, items: d.items || [], name: d.name, photo: d.photo, email: d.email, account: d.account, channels: d.channels || [], total: d.total || (d.items || []).length, hasMore: d.hasMore, oldestTs: d.oldestTs, targets: tg.targets || [], target: (tg.targets || [])[tg.default || 0] || null, unread: d.unread || 0, lastSeen: d.lastSeen || 0, covert: d.covert || null }
+  _lsSet("conv:" + key, { items: (d.items || []).slice(-40), name: d.name, photo: d.photo, email: d.email, account: d.account, channels: d.channels || [], total: d.total, hasMore: d.hasMore, targets: tg.targets || [], target: (tg.targets || [])[tg.default || 0] || null, covert: d.covert || null }) // cache liviano
   renderConv()
   const jb = app.querySelector(".screen"); if (jb) window.scrollTo(0, document.body.scrollHeight)
   // marcar visto hasta el último mensaje (para el resumen "lo que me perdí" la próxima vez)
@@ -1918,6 +1928,9 @@ async function viewPersonScreen(nameOrKey) {
   render(skel(5), ST.tab)
   const p = await api("/api/person?name=" + enck(nameOrKey)) || {}
   const nm = p.name || decodeURIComponent(nameOrKey), ini = esc(_ini(nm))
+  window._personKey = nameOrKey // para refrescar este perfil tras configurar el modo encubierto
+  const cov = (p.key && !p.isGroup) ? await api("/api/covert/config?key=" + enck(p.key)).catch(() => null) : null // estado del modo encubierto de este contacto
+  const covLbl = cov?.styles?.find((s) => s.id === cov.style)?.label || cov?.style || ""
   const convKey = p.canon || nm
   const people = (p.shared?.people || []), groups = (p.shared?.groups || [])
   window._pcGroups = groups // para el modal de miembros al tocar un grupo
@@ -1965,6 +1978,10 @@ async function viewPersonScreen(nameOrKey) {
     </div>` : ""}
     ${(p.contacts && ((p.contacts.phones || []).length || (p.contacts.emails || []).length)) ? `<div class="mtg-card"><div class="mtg-eyebrow">Datos de contacto</div><div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">${(p.contacts.phones || []).map((n) => `<a href="tel:+${esc(n)}" style="display:inline-flex;align-items:center;gap:6px;padding:9px 13px;border-radius:12px;background:var(--card2,#f1f3f8);color:inherit;text-decoration:none;font-size:14px;font-weight:600">📞 +${esc(n)}</a>`).join("")}${(p.contacts.emails || []).map((e) => `<a href="mailto:${esc(e)}" style="display:inline-flex;align-items:center;gap:6px;padding:9px 13px;border-radius:12px;background:var(--card2,#f1f3f8);color:inherit;text-decoration:none;font-size:14px;font-weight:600">✉️ ${esc(e)}</a>`).join("")}</div></div>` : ""}
     ${(p.channels || []).length ? `<div class="mtg-card"><div class="mtg-eyebrow">Canales</div><div class="pr-chans">${p.channels.map(chCard).join("")}</div></div>` : ""}
+    ${(p.key && !p.isGroup) ? `<div class="mtg-card"><div class="mtg-eyebrow">🕊️ Modo encubierto</div>
+      <div class="sub" style="margin:6px 0 10px">${cov && cov.enabled ? `<b style="color:var(--accent)">Activo</b> · estilo <b>${esc(covLbl)}</b>. Los mensajes que le mandes pueden ir cifrados como texto normal; ${esc(nm)} los ve descifrados con la clave.` : `Cifrá tus mensajes disfrazados de poema/cuento/receta — solo ${esc(nm)}, con la clave compartida, los puede leer (como en la película El Santo).`}</div>
+      <button class="btn" style="width:100%" onclick='covertConfigSheet(${escj(enck(p.key))}, ${escj(nm)})'>${cov && cov.enabled ? "Cambiar clave o estilo · desactivar" : "🕊️ Configurar"}</button>
+    </div>` : ""}
     ${p.pending && !p.stats?.messages ? `<div class="hb-empty" style="text-align:center">Sin historial de conversación con este contacto.</div>` : ""}
     </div>
   </div>`, ST.tab)
