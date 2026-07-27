@@ -176,6 +176,8 @@ function contactData(key) {
     else if (tg.channel === "whatsapp") { const d = String(tg.label || "").replace(/[^\d]/g, ""); if (d.length >= 8) phones.add(d) }
   } } catch {}
   try { for (const r of threadInboundSenders(key, { limit: 40 })) { const p = phoneOf(r.sender); if (p && !MY_NUMBERS.has(p)) phones.add(p) } } catch {}
+  const km = String(key).match(/(\d{8,15})@s\.whatsapp\.net/) || String(key).match(/(?:whatsapp|wa):\+?(\d{8,15})\b/) // el número está en el jid del hilo (whatsapp:NUM@…) aunque no haya target
+  if (km && !MY_NUMBERS.has(km[1])) phones.add(km[1])
   if (String(key).startsWith("email:")) emails.add(String(key).slice(6).toLowerCase())
   return { phones: [...phones].slice(0, 6), emails: [...emails].slice(0, 6) }
 }
@@ -200,7 +202,8 @@ function ownGroupMembers(card) {
 // enriquece una card (de cache o fresca) con datos baratos que NO conviene cachear: contacto + miembros de grupo.
 function enrichCard(card) {
   if (card) { // OJO: los grupos tienen canon=null → NO gatear por canon (si no, no se enriquecen)
-    if (card.canon) card.contacts = contactData(card.canon)
+    const ck = card.key || card.canon // la KEY real del hilo (whatsapp:NUM@… / email:…) tiene el dato de contacto; el canon puede ser solo un nombre
+    if (ck) card.contacts = contactData(ck)
     withGroupMembers(card.shared)
     const gm = ownGroupMembers(card); if (gm) card.groupMembers = gm
   }
@@ -222,7 +225,11 @@ export async function personCard(nameOrKey, { force = false } = {}) {
   // hilo por nombre canónico exacto → generá + cacheá
   const want = canon ? norm(canon) : norm(eff)
   const threads = listThreads({ limit: 600 })
+  // match por CANON, y si no, por NOMBRE display o por KEY exacta: los contactos de WhatsApp tienen canon=número/jid pero se abren
+  // por nombre ("Uzimock") o por número crudo desde el chat → sin esto el grafify nunca corría para ellos (quedaba "Generando…").
   let t = threads.find((x) => x.canon && (norm(x.canon) === want || norm(x.canon) === norm(eff)))
+    || threads.find((x) => (norm(x.name) === want || norm(x.name) === norm(nameOrKey)) && (x.count || 0) > 0)
+    || threads.find((x) => x.key && (x.key === nameOrKey || x.key === eff))
   // FALLBACK por NOMBRE: el nombre pedido no tiene hilo propio pero SÍ existe el chat de la misma persona bajo otro nombre
   // (ej "Carlos Mendoza" del calendario → hilo "Carlos" con 20k msgs). Match por prefijo de primer nombre o ≥2 tokens.
   if (!t || (t.count || 0) === 0) {
@@ -237,7 +244,7 @@ export async function personCard(nameOrKey, { force = false } = {}) {
       if (cand[0]) { t = cand[0].x; setMeta("personalias:" + reqN, t.canon) } // aprender el alias para la próxima
     }
   }
-  if (t && (t.count || 0) > 0) { try { const card = await buildPersonCard(t.canon, t); setMeta("personcard:" + norm(t.canon), JSON.stringify(card)); return enrichCard(card) } catch {} }
+  if (t && (t.count || 0) > 0) { const idKey = t.canon || t.name || t.key; try { const card = await buildPersonCard(idKey, t); card.key = card.key || t.key; setMeta("personcard:" + norm(idKey), JSON.stringify(card)); return enrichCard(card) } catch (e) { if (process.env.LLM_DEBUG) console.error("[personCard] buildPersonCard falló:", e.message) } }
   const pv = personView(eff) // último recurso (grupos, o nombre sin hilo) — lo que se pueda al toque, sin bio
   const tl = pv.timeline || []
   return enrichCard({ canon: pv.canon, name: pv.name, role: pv.role, tags: pv.tags, orgs: pv.orgs, bio: "", topics: [], shared: { groups: [], people: [] }, stats: { messages: tl.length, respMin: null, firstTs: tl[0]?.ts || 0, lastTs: tl[tl.length - 1]?.ts || 0 }, channels: (pv.byChannel || []).map((c) => ({ channel: c.channel, n: c.n, last: 0 })), links: pv.links || [], photo: null, group: pv.group, pending: true })
