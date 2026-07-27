@@ -255,7 +255,12 @@ Texto: """${t}"""`
     let alternative = (r?.alternativo || "").trim()
     if (alternative === corrected || alternative === t) alternative = "" // no ofrecer una "alternativa" idéntica
     return { original: t, corrected, alternative, ...scheduleSlots(t) }
-  } catch { return { original: t, corrected: t, alternative: "", slots: [] } }
+  } catch (e) { return { original: t, corrected: t, alternative: "", slots: [], failed: true, error: e.message } } // falló/timeout → el UI lo distingue de "sin errores"
+}
+// mantiene CALIENTE el modelo de corrección (evita el cold-start de ~44s que hace timeout y muestra "sin errores"). Barato, se
+// llama desde el daemon cada pocos minutos. Solo local (si LLM_CHAIN_CORRECT no tiene openai con key, la corrección depende de esto).
+export async function warmCorrectModel() {
+  try { await llm(`Corregí y devolvé JSON {"corregido":"ok"}. Texto: "ok"`, { json: true, feature: "correct", chain: "ollama", models: { ollama: process.env.OLLAMA_MODEL_CORRECT || "qwen2.5:3b" }, numPredict: 8, temperature: 0, task: "warm", bypassCap: true }) } catch {}
 }
 
 // SUGERIR RESPUESTA: la IA redacta un borrador en tu voz según la conversación reciente. NO envía — va al input para que edites.

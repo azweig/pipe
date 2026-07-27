@@ -1602,10 +1602,13 @@ async function showSendOptions(text, ch) {
   const opt = (val, tag, hi) => (val && val.trim()) ? `<button class="sendopt${hi ? " hi" : ""}" onclick="closeSheet();pickSend('${enck(val)}')"><div class="so-tag">${tag}</div><div class="so-txt">${esc(val)}</div></button>` : ""
   const corr = (c.corrected || "").trim(), orig = (c.original || text).trim(), alt = (c.alternative || "").trim()
   const corrChanged = corr && corr !== orig
-  // sin dobles idénticos: si la corrección cambió algo → Corregido (destacado) + Original; si no → el texto una sola vez.
-  const opts = corrChanged
-    ? opt(corr, "✓ Corregido", true) + opt(orig, "✍️ Tal cual lo escribiste", false)
-    : opt(orig, "✓ Tu texto (sin errores)", true)
+  // sin dobles idénticos: si la corrección cambió algo → Corregido (destacado) + Original; si FALLÓ (timeout/sin motor) → aviso claro
+  // en vez del engañoso "sin errores"; si no → el texto una sola vez.
+  const opts = c.failed
+    ? opt(orig, "⚠️ No pude revisar ahora · enviar igual", true)
+    : corrChanged
+      ? opt(corr, "✓ Corregido", true) + opt(orig, "✍️ Tal cual lo escribiste", false)
+      : opt(orig, "✓ Tu texto (sin errores)", true)
   const altOpt = (alt && alt !== corr && alt !== orig) ? opt(alt, "✨ Otra forma de decirlo", false) : ""
   // si el mensaje habla de agendar, mostrar huecos LIBRES del calendario ARRIBA de las opciones de texto (tocar = insertar la hora)
   const slots = c.slots || []

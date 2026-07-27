@@ -184,6 +184,8 @@ function runAudioSummary() { if (audioSummaryRunning) return; audioSummaryRunnin
 // --- EXTRACT ACTIONS: to-dos (lo que te pidieron) + promesas (lo que prometiste) de las conversaciones activas → Home ---
 let extractRunning = false
 function runExtract() { if (extractRunning) return; extractRunning = true; const p = spawnLogged("extract-actions", NODE, ["src/extract-actions.mjs"]); p.on("exit", () => { extractRunning = false }) }
+let warmRunning = false
+function runWarmCorrect() { if (warmRunning) return; warmRunning = true; const p = spawnLogged("warm-correct", NODE, ["src/warm-correct.mjs"]); p.on("exit", () => { warmRunning = false }) } // mantiene caliente el modelo de corrección (sin cold-start)
 
 // --- NOTES AI: digest de tus notas propias (resumen + ideas + reflexión) para el compañero de IA de Notas ---
 let notesAiRunning = false
@@ -369,6 +371,8 @@ setTimeout(runAudioSummary, 100000) // primer resumen de notas de voz a los ~1.5
 setInterval(runAudioSummary, 2 * 60000) // transcribe+resume notas de voz recibidas nuevas cada 2 min (batch chico)
 setTimeout(runExtract, 130000) // primera extracción de tareas/promesas a los ~2 min
 setInterval(runExtract, 10 * 60000) // extrae to-dos + promesas de conversaciones activas cada 10 min
+setTimeout(runWarmCorrect, 20000) // pre-calienta el modelo de corrección al arrancar (a los 20s)
+setInterval(runWarmCorrect, 8 * 60000) // y cada 8 min → dentro de la ventana keep_alive de 30m, la corrección nunca cold-startea
 setTimeout(runNotesAi, 160000) // primer digest de notas a los ~2.5 min
 setInterval(runNotesAi, 3 * 3600000) // digest de tus notas (resumen+ideas+reflexión) cada 3h
 setTimeout(runNotesCategorize, 200000) // primera categorización de notas a los ~3.3 min
