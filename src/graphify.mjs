@@ -6,6 +6,7 @@ import { loadNewEvents, resetOffsets } from "./lib/store.mjs"
 import { upsertNode, loadIdentity, saveIdentity } from "./lib/vault.mjs"
 import { llm, smartChain } from "./lib/llm.mjs"
 import { harden, fence } from "./lib/safety.mjs"
+import { anchored, gstrip } from "./lib/grounding.mjs"
 import { mkdirSync, appendFileSync, readFileSync, existsSync } from "fs"
 
 mkdirSync("./vault/Daily", { recursive: true })
@@ -19,15 +20,8 @@ const norm = (name) => (name && REV[name.trim().toLowerCase()]) || name
 const CANON_LIST = [...Object.keys(ALIASES.people || {}), ...Object.keys(ALIASES.companies || {})]
 const NO_ATTRIBUTE = new Set(existsSync("./data/no-attribute.json") ? JSON.parse(readFileSync("./data/no-attribute.json", "utf8")) : [])
 
-// SOURCE GROUNDING (anti-alucinación): una entidad extraída debe tener ANCLA textual en el lote (nombre/alias/canal/dominio de email).
-// Sin ancla = probable invención → se descarta. Conservador: alcanza con que aparezca UNA palabra significativa (apellido, dominio) o
-// el canal → así NO tira personas mencionadas por apodo/canal, solo las fabricadas de la nada. (tags = clasificación, gist = resumen → no se groundean.)
-const gstrip = (s) => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}\s@._-]/gu, " ").replace(/\s+/g, " ").trim()
-function anchored(name, hay) {
-  const s = gstrip(name); if (!s) return false
-  if (hay.includes(s)) return true
-  return s.split(/[\s@._-]+/).filter((w) => w.length > 2).some((w) => hay.includes(w))
-}
+// SOURCE GROUNDING (anti-alucinación): cada entidad debe tener ANCLA textual en el lote (nombre/alias/canal/dominio). Sin ancla =
+// invención → se descarta. gstrip/anchored viven en lib/grounding.mjs (compartidos con extract-actions + testeados). tags/gist NO se groundean.
 
 const SYSTEM = `Sos el motor de extracción de un "segundo cerebro" personal. Recibís eventos de comunicación (WhatsApp, Telegram, Teams, email) de UN usuario dueño del sistema. Tu trabajo: extraer el GRAFO DE CONOCIMIENTO.
 

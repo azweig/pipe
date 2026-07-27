@@ -12,7 +12,7 @@
     "daemon": "node src/daemon.mjs",
     "web": "node src/server.mjs",
     "wa": "node src/whatsapp.mjs",
-    "test": "node --test test/unit.mjs test/db.mjs test/wave2.mjs test/wave3.mjs test/wave4.mjs test/wave5.mjs test/wave5c.mjs test/wave6.mjs test/brain-keys.mjs test/brain-surface.mjs test/brain-objetivos.mjs test/brain-schedule.mjs test/brain-reply.mjs test/auth.mjs test/llm-privacy.mjs test/llm-enforcement.mjs test/llm-cap.mjs test/llm-feature-policy.mjs test/http-gate.mjs test/gate-position.mjs test/no-cloud-fetch.mjs test/sensitive-chain.mjs test/mcp.mjs test/api-smoke.mjs",
+    "test": "node --test test/unit.mjs test/db.mjs test/wave2.mjs test/wave3.mjs test/wave4.mjs test/wave5.mjs test/wave5c.mjs test/wave6.mjs test/brain-keys.mjs test/brain-surface.mjs test/brain-objetivos.mjs test/brain-schedule.mjs test/brain-reply.mjs test/auth.mjs test/llm-privacy.mjs test/llm-enforcement.mjs test/llm-cap.mjs test/llm-feature-policy.mjs test/http-gate.mjs test/gate-position.mjs test/no-cloud-fetch.mjs test/sensitive-chain.mjs test/grounding.mjs test/mcp.mjs test/api-smoke.mjs",
     "test:coverage": "node --test --experimental-test-coverage test/unit.mjs",
     "test:integration": "node test/integration.mjs"
   },

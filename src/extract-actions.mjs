@@ -3,22 +3,13 @@
 // Corre desde el daemon cada ~10 min. Uso: node src/extract-actions.mjs
 import { maxMessageTs, activeThreadsSince, threadTextTail, insertTodo, insertPromesa, getMeta, setMeta } from "./lib/db.mjs"
 import { llm, smartChain } from "./lib/llm.mjs"
+import { grounded, stripP, wordsOf } from "./lib/grounding.mjs"
 import { createHash } from "crypto"
 
 const NOW = Date.now(), DAY = 86400000
 const MAX_THREADS = +process.env.EXTRACT_MAX_THREADS || 12
 const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim()
 const keyOf = (kind, thread, text) => kind + ":" + createHash("sha1").update(thread + "|" + norm(text)).digest("hex").slice(0, 16)
-// SOURCE GROUNDING (anti-alucinación): normaliza sacando puntuación → la "cita" del LLM tiene que estar en el transcript.
-const stripP = (s) => norm(s).replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim()
-const wordsOf = (s) => new Set(stripP(s).split(" ").filter((w) => w.length > 2))
-// ¿la cita está REALMENTE en el texto? substring normalizado, o ≥70% de sus palabras presentes (tolera parafraseo mínimo del LLM).
-function grounded(cita, hayNorm, hayWords) {
-  const c = stripP(cita); if (c.length < 6) return false // sin cita usable → no verificable → descartar
-  if (hayNorm.includes(c)) return true
-  const cw = [...wordsOf(cita)]; if (!cw.length) return false
-  return cw.filter((w) => hayWords.has(w)).length / cw.length >= 0.7
-}
 
 // (el esquema de todos/promesas lo crea db-core/initSchema — antes había un CREATE TABLE redundante acá)
 

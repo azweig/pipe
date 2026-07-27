@@ -6,7 +6,7 @@ import { phoneOf, isContainerJid, MY_NUMBERS } from "./thread.mjs"
 
 // nombre de agenda de un número SOLO si es ÚNICO (no homónimo): si el mismo nombre está en 2+ números, keyear por nombre fusionaría
 // personas DISTINTAS en un hilo → responderías al equivocado. Compartido por las 3 funciones de re-key (antes solo rekeyContacts lo tenía).
-function safeName(contactsMap, num, manual = {}) {
+export function safeName(contactsMap, num, manual = {}) {
   if (manual[num]) return manual[num] // verdad del usuario (mapa manual): tiene prioridad sobre la agenda y NO pasa por el chequeo de homónimo (ya decidió que es esta persona). Antes unifyByNumber ignoraba el mapa manual → consolidaba por número y peleaba con computeThread.
   const nm = contactsMap[num]; if (!nm) return null
   let c = 0; for (const v of Object.values(contactsMap)) if (v === nm && ++c > 1) return null
