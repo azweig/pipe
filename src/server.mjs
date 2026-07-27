@@ -9,6 +9,7 @@ import * as brain from "./lib/brain.mjs"
 import * as briefing from "./lib/briefing.mjs"
 import * as ws from "./lib/workspace.mjs"
 import * as accounts from "./lib/accounts.mjs"
+import * as integrations from "./lib/integrations.mjs"
 import * as groups from "./lib/groups.mjs"
 import * as goauth from "./lib/google.mjs"
 import * as tglogin from "./lib/telegram-login.mjs"
@@ -409,6 +410,12 @@ const server = createServer(async (req, res) => {
       if (path === "/api/accounts") return json(res, 200, accounts.listAccounts())
       if (path === "/api/accounts/email" && req.method === "POST") { const b = await body(req); const r = await accounts.addEmailAccount(b); if (r.ok) { try { spawn("pkill", ["-f", "mail-imap.mjs"]) } catch {} } return json(res, r && r.error ? 400 : 200, r) } // reconecta el reader
       if (path === "/api/accounts/email/remove" && req.method === "POST") { const b = await body(req); const r = accounts.removeEmailAccount(b.label); if (r.ok) { try { spawn("pkill", ["-f", "mail-imap.mjs"]) } catch {} } return json(res, r && r.error ? 400 : 200, r) }
+      // Integraciones conectables desde la Consola (Slack/Signal): token/URL cifrados; al guardar, pkill al reader → el daemon lo respawnea con la config nueva.
+      if (path === "/api/integrations") return json(res, 200, integrations.getIntegrations())
+      if (path === "/api/integrations/slack" && req.method === "POST") { const r = await integrations.setSlack(await body(req)); if (r.ok) { try { spawn("pkill", ["-f", "src/slack.mjs"]) } catch {} } return json(res, r && r.error ? 400 : 200, r) }
+      if (path === "/api/integrations/slack/remove" && req.method === "POST") { const r = integrations.removeSlack(); try { spawn("pkill", ["-f", "src/slack.mjs"]) } catch {} return json(res, 200, r) }
+      if (path === "/api/integrations/signal" && req.method === "POST") { const r = integrations.setSignal(await body(req)); if (r.ok) { try { spawn("pkill", ["-f", "src/signal.mjs"]) } catch {} } return json(res, r && r.error ? 400 : 200, r) }
+      if (path === "/api/integrations/signal/remove" && req.method === "POST") { const r = integrations.removeSignal(); try { spawn("pkill", ["-f", "src/signal.mjs"]) } catch {} return json(res, 200, r) }
       // BACKFILL de archivados: trae correos viejos (fuera del INBOX) por término. Corre en background; la UI polea el status.
       if (path === "/api/mail/backfill" && req.method === "POST") { const b = await body(req); const q = (b.q || "").trim(); if (!q) return json(res, 400, { error: "Escribí un nombre, dominio o palabra." }); try { spawn(process.execPath, ["src/mail-backfill.mjs"], { env: { ...process.env, BACKFILL_QUERY: q, LLM_TASK: "backfill" }, detached: true, stdio: "ignore" }).unref() } catch (e) { return json(res, 500, { error: e.message }) } return json(res, 200, { ok: true, started: true, q }) }
       if (path === "/api/mail/backfill/status") { const v = getMeta("backfill_status"); return json(res, 200, v ? JSON.parse(v) : { state: "idle" }) }
@@ -445,7 +452,11 @@ const server = createServer(async (req, res) => {
       if (path === "/api/thread/media") return json(res, 200, brain.threadMedia(q.key || ""))
       if (path === "/api/contact/profile") return json(res, 200, brain.contactProfile(q.key || ""))
       if (path === "/api/thread/targets") return json(res, 200, brain.threadTargets(q.key || ""))
-      if (path === "/api/send" && req.method === "POST") { const b = await body(req); const r = await brain.sendReply(b.key, b.text, { channel: b.channel, target: b.target }); return json(res, r && r.error ? 400 : 200, r) }
+      if (path === "/api/send" && req.method === "POST") { const b = await body(req); let text = b.text; if (b.covert) { try { text = brain.encodeCovertFor(b.key, b.text) } catch (e) { return json(res, 400, { error: e.message }) } } const r = await brain.sendReply(b.key, text, { channel: b.channel, target: b.target }); return json(res, r && r.error ? 400 : 200, b.covert && !(r && r.error) ? { ...r, cover: text } : r) } // covert: cifra→texto tapadera antes de mandar; devuelve el poema para "ver original"
+      // ── modo encubierto ("El Santo"): config por-contacto + preview en vivo ──
+      if (path === "/api/covert/config" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setCovert(b.key, b.pass, b.style)) }
+      if (path === "/api/covert/config") return json(res, 200, brain.getCovert(q.key || ""))
+      if (path === "/api/covert/preview" && req.method === "POST") { const b = await body(req); try { return json(res, 200, { cover: brain.previewCovert(b.text, b.pass, b.style) }) } catch (e) { return json(res, 400, { error: e.message }) } }
       // REENVIAR mensajes preservando el media (audio/imagen/archivo), no solo el texto
       if (path === "/api/forward" && req.method === "POST") { const b = await body(req); const r = await brain.forwardMessages(b.ids, b.key); return json(res, r && r.error ? 400 : 200, r) }
       // AUTO-TEST DE ENVÍO: último resultado (GET) o correr ahora (POST). El cron lo corre cada ~12h; verifica que el envío funciona de verdad.

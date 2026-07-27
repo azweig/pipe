@@ -1255,7 +1255,9 @@ function mediaHtml(it) { if (!it.media) return ""
   if (it.mediaType === "audio") return spdAudio(`<audio src="${it.media}" controls preload="metadata" style="max-width:200px;display:block"></audio>`)
   return `<a href="${it.media}" target="_blank" class="row" style="padding:9px 11px;background:#fff;border-radius:10px;text-decoration:none;color:inherit;gap:9px;min-width:180px"><span style="font-size:22px">📄</span><div style="min-width:0"><div class="sb small" style="word-break:break-word">${esc(it.filename || it.text || "Documento")}</div><div class="tiny" style="color:var(--accent)">Abrir / descargar</div></div></a>` }
 const audioSum = (it) => it.audioSummary && it.summary ? `<div class="aud-sum">${esc(it.summary)}</div>` : ""
-const convContent = (it) => it.mediaType === "call"
+const convContent = (it) => it.covert // modo encubierto: mostrás el texto DESCIFRADO + badge para ver el poema original (lo que ve WhatsApp)
+  ? `${fmtText(it.covert.text)}<div class="tiny" style="opacity:.7;margin-top:3px;cursor:pointer;color:var(--accent)" onclick='event.stopPropagation();covertReveal(${escj(it.id)})'>🕊️ descifrado · ver original</div>`
+  : it.mediaType === "call"
   ? `<div class="call-chip">${esc(it.text || "📞 Llamada")}<div class="tiny" style="opacity:.7;margin-top:2px">Contestá desde WhatsApp</div></div>`
   : (it.media ? mediaHtml(it) + audioSum(it) + (it.text && !/^(🖼|📹|🎤|📄|🌟|📎|📍|👤)/.test(it.text) ? `<div style="margin-top:5px">${fmtText(it.text)}</div>` : "") : fmtText(it.text))
 const hhmm = (ts) => { const d = new Date(ts); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0") }
@@ -1327,6 +1329,8 @@ function renderConv() {
     const dk = dayKey(it.ts); if (dk !== lastDay) { body += dateSep(it.ts); lastDay = dk } body += convBubble(it)
   }
   const canSend = d.key !== "self" // notas propias no se responden
+  if (window._covertKey !== d.key) { window._covertKey = d.key; window._covertOn = false; window._covertCfg = null } // reset modo encubierto al cambiar de chat
+  const covertBtn = canSend ? `<button id="covertBtn" onclick="covertToggle()" title="Modo encubierto: cifrá el mensaje como un poema (estilo El Santo)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:${window._covertOn ? "var(--accent)" : "var(--bg2)"};color:${window._covertOn ? "#fff" : ""};font-size:17px;cursor:pointer;flex-shrink:0">🕊️</button>` : ""
   const tg = d.target || {}
   const multi = (d.targets || []).length > 1
   const chanIcon = tg.channel === "email" ? "✉️" : "📱"
@@ -1344,6 +1348,7 @@ function renderConv() {
     <button id="aiBtn" onclick="aiMenu()" title="IA: sugerir respuesta / resumir chat" style="min-width:38px;height:38px;border-radius:50%;border:1.5px solid var(--accent);background:var(--bg2);font-size:15px;font-weight:800;color:var(--accent);cursor:pointer;flex-shrink:0">Ai</button>
     ${chanBtn}<textarea id="msgInput" rows="1" aria-label="Escribí tu mensaje" placeholder="${tg.channel === "email" ? "Email…" : "Mensaje…"}" autocomplete="off" spellcheck="${_spell}" oninput="growComposer(this)" onpaste="handlePaste(event)" style="flex:1;min-width:0;padding:9px 13px;border-radius:20px;border:1px solid var(--line);background:#fff;font-size:15px;resize:none;max-height:120px;overflow-y:auto;font-family:inherit;line-height:1.3;box-sizing:border-box" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}"></textarea>
     <button id="spellBtn" onclick="toggleSpell()" title="Corrección ortográfica: tocá para activar/desactivar" style="min-width:34px;height:38px;padding:0;border-radius:19px;border:1px solid var(--line);background:${_spell ? "var(--accent)" : "var(--bg2)"};color:${_spell ? "#fff" : ""};font-size:14px;font-weight:800;font-style:italic;cursor:pointer;flex-shrink:0">Aa</button>
+    ${covertBtn}
     ${tg.channel !== "email" ? `<input type="file" id="mediaInput" accept="image/*,video/*" multiple style="display:none" onchange="onMediaPick(this)"><button id="attachBtn" onclick="pickMedia()" title="Enviar fotos o videos (podés elegir varios)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:18px;cursor:pointer;flex-shrink:0">📎</button><button id="micBtn" onclick="recVoice()" title="Nota de voz (manda el audio)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:19px;cursor:pointer;flex-shrink:0">🎤</button><button id="micAiBtn" onclick="recVoice(true)" title="Dictar con IA: hablás y te lo paso a texto (tal cual · corregido · mejorado)" style="min-width:44px;height:38px;border-radius:19px;border:1.5px solid var(--accent);background:var(--bg2);color:var(--accent);cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:1px;font-weight:800"><span style="font-size:16px">🎤</span><span style="font-size:10px">IA</span></button>` : ""}
     <button id="sendBtn" onclick="sendMsg()" aria-label="Enviar mensaje" style="min-width:38px;height:38px;border-radius:50%;border:0;background:var(--accent);color:#fff;font-size:17px;cursor:pointer;flex-shrink:0">➤</button></div>`
   const composer = fwdSel ? fwdBar : (canSend ? `<div id="composer" style="position:fixed;bottom:82px;left:50%;transform:translateX(-50%);width:100%;max-width:480px;padding:8px 8px;background:var(--bg);border-top:1px solid var(--line);display:flex;flex-direction:column;align-items:stretch;z-index:26;box-sizing:border-box">${replyBar}${inputRow}</div>` : "")
@@ -1501,15 +1506,76 @@ window.doSend = async (text) => {
   const t = convState.target || {}
   const ch = t.channel || ((convState.key || "").startsWith("email:") ? "email" : "whatsapp")
   const optId = "opt-" + Date.now()
-  convState.items = [...(convState.items || []), { id: optId, channel: ch, dir: "out", name: hubName(), ts: Date.now(), text }]
+  const covert = !!window._covertOn // modo encubierto: mando el flag; el server cifra→tapadera antes de enviar. La burbuja muestra tu texto real + badge.
+  convState.items = [...(convState.items || []), { id: optId, channel: ch, dir: "out", name: hubName(), ts: Date.now(), text, ...(covert ? { covert: { text, style: window._covertStyle || "poema" } } : {}) }]
   convState.total = (convState.total || 0) + 1
   renderConv(); document.getElementById("msgInput")?.focus(); window.scrollTo(0, document.body.scrollHeight)
-  const r = await post("/api/send", { key: convState.key, text, channel: t.channel, target: t.target })
+  const r = await post("/api/send", { key: convState.key, text, channel: t.channel, target: t.target, covert })
   if (r && r.error) { convState.items = convState.items.filter((x) => x.id !== optId); convState.total = Math.max(0, (convState.total || 1) - 1); renderConv(); alert("No se pudo enviar: " + r.error) }
+  else if (covert && r && r.cover) { const it = (convState.items || []).find((x) => x.id === optId); if (it) it.text = r.cover } // guardá el poema real para "ver original"
 }
 window.pickSend = (enc) => { const inp = document.getElementById("msgInput"); if (inp) inp.value = ""; doSend(decodeURIComponent(enc)) }
 // tocar un hueco libre del calendario: agrega "a las HH:MM" al mensaje (no envía), para que el owner revise y mande
 window.insertSlot = (label) => { const inp = document.getElementById("msgInput"); if (!inp) return; const cur = inp.value.trim(); inp.value = (cur ? cur + " " : "") + "a las " + label; closeSheet(); growComposer(inp); inp.focus() }
+
+// ── MODO ENCUBIERTO ("El Santo"): cifra tu mensaje como un poema/cuento/etc.; la otra persona con Pipe + la misma clave lo revierte ──
+window.covertToggle = async () => {
+  if (!convState) return
+  if (!window._covertCfg) window._covertCfg = await fetch(`/api/covert/config?key=${encodeURIComponent(convState.key)}`).then((r) => r.json()).catch(() => null)
+  if (!window._covertCfg || !window._covertCfg.enabled) return covertConfigSheet() // sin configurar → abrir el sheet para poner la clave
+  window._covertOn = !window._covertOn
+  window._covertStyle = window._covertCfg.style
+  const b = document.getElementById("covertBtn"); if (b) { b.style.background = window._covertOn ? "var(--accent)" : "var(--bg2)"; b.style.color = window._covertOn ? "#fff" : "" }
+  const inp = document.getElementById("msgInput"); if (inp) inp.placeholder = window._covertOn ? "🕊️ Mensaje encubierto…" : "Mensaje…"
+}
+window.covertConfigSheet = async () => {
+  const cfg = window._covertCfg || (window._covertCfg = await fetch(`/api/covert/config?key=${encodeURIComponent(convState.key)}`).then((r) => r.json()).catch(() => ({ styles: [], style: "poema" })))
+  window._covertStyle = window._covertStyle || cfg.style || "poema"
+  const chips = (cfg.styles || []).map((s) => `<button class="chip" data-cs="${s.id}" onclick="covertPickStyle('${s.id}')" style="border:1.5px solid ${s.id === window._covertStyle ? "var(--accent)" : "var(--line)"};background:${s.id === window._covertStyle ? "var(--accent)" : "var(--bg2)"};color:${s.id === window._covertStyle ? "#fff" : ""}">${s.label}</button>`).join("")
+  openSheet(`<h2 style="margin:0 0 4px">🕊️ Modo encubierto</h2>
+    <p class="sub" style="margin:0 0 12px">Tu mensaje viaja <b>cifrado</b>, disfrazado de texto normal. Quien lo vea por WhatsApp lee un poema; <b>${esc(convState.name || "la otra persona")}</b>, con Pipe y la misma clave, lo ve descifrado. Acordá la clave por un canal seguro (en persona, llamada…).</p>
+    <input id="covPass" type="text" autocomplete="off" spellcheck="false" placeholder="Clave compartida (ej. nuestro café 2019)" oninput="covertPreview()" style="width:100%;box-sizing:border-box;padding:11px 13px;border-radius:12px;border:1px solid var(--line);font-size:15px;margin-bottom:10px">
+    <div id="covChips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${chips}</div>
+    <div class="tiny muted" style="margin-bottom:4px">Vista previa (así se verá el mensaje):</div>
+    <div id="covPrev" style="white-space:pre-wrap;background:var(--bg2);border-radius:12px;padding:11px 13px;font-size:13.5px;line-height:1.5;min-height:44px;max-height:180px;overflow:auto">Escribí una clave arriba…</div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button onclick="covertSave()" class="btn" style="flex:1">Activar modo encubierto</button>
+      ${cfg.enabled ? `<button onclick="covertDisable()" class="pill" style="flex-shrink:0">Desactivar</button>` : ""}
+    </div>`)
+}
+window.covertPickStyle = (id) => {
+  window._covertStyle = id
+  document.querySelectorAll("#covChips [data-cs]").forEach((el) => { const on = el.getAttribute("data-cs") === id; el.style.borderColor = on ? "var(--accent)" : "var(--line)"; el.style.background = on ? "var(--accent)" : "var(--bg2)"; el.style.color = on ? "#fff" : "" })
+  covertPreview()
+}
+let _covPrevT
+window.covertPreview = () => {
+  clearTimeout(_covPrevT)
+  _covPrevT = setTimeout(async () => {
+    const pass = document.getElementById("covPass")?.value || ""
+    const prev = document.getElementById("covPrev"); if (!prev) return
+    if (!pass) { prev.textContent = "Escribí una clave arriba…"; return }
+    const r = await post("/api/covert/preview", { text: "nos vemos mañana, avisá cuando salgas", pass, style: window._covertStyle }).catch(() => null)
+    prev.textContent = r && r.cover ? r.cover : "…"
+  }, 250)
+}
+window.covertSave = async () => {
+  const pass = (document.getElementById("covPass")?.value || "").trim()
+  if (pass.length < 4) return alert("Poné una clave de al menos 4 caracteres (tiene que ser la MISMA que la de la otra persona).")
+  const r = await post("/api/covert/config", { key: convState.key, pass, style: window._covertStyle || "poema" }).catch(() => null)
+  if (!r || !r.enabled) return alert("No se pudo guardar.")
+  window._covertCfg = r; window._covertOn = true; window._covertStyle = r.style
+  closeSheet(); renderConv()
+}
+window.covertDisable = async () => {
+  await post("/api/covert/config", { key: convState.key, pass: "", style: "poema" }).catch(() => null)
+  window._covertCfg = { enabled: false, style: "poema", styles: window._covertCfg?.styles || [] }; window._covertOn = false
+  closeSheet(); renderConv()
+}
+window.covertReveal = (id) => {
+  const it = (convState.items || []).find((x) => x.id === id); if (!it) return
+  openSheet(`<h2 style="margin:0 0 8px">🕊️ Texto original</h2><p class="sub" style="margin:0 0 10px">Esto es lo que ve cualquiera que NO tenga la clave (ej. por WhatsApp):</p><div style="white-space:pre-wrap;background:var(--bg2);border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.55">${esc(it.text || "")}</div>`)
+}
 
 // ── IMÁGENES / VIDEOS: adjuntar desde el dispositivo o PEGAR del portapapeles → enviar por el bridge ──
 window.pickMedia = () => document.getElementById("mediaInput")?.click()

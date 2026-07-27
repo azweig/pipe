@@ -10,6 +10,7 @@ import { promisify } from "util"
 import { tmpdir } from "os"
 import { threadsSummary as dbThreads, repliedThreads, getBody as dbGetBody, threadMediaGallery, threadPage as dbThreadPage, threadCount as dbThreadCount, threadMessagesTail as dbThreadMsgs, threadSince as dbThreadSince, threadUnreadCount as dbUnreadCount, search as dbSearch, threadMessagesSinceAll } from "../db.mjs"
 import { jidOfKey, canonOfKey, numOf, initials, stripWA, norm, plural, isContainerJid } from "./kernel/keys.mjs"
+import { enrichCovert } from "./covert.mjs"
 import { jf, waGroups, avatarMap, contactName, photoFor } from "./kernel/contacts.mjs"
 import { peopleNodes, cardFor, fm } from "./kernel/vault.mjs"
 import { cleanMsg } from "./kernel/convo.mjs"
@@ -172,6 +173,7 @@ export async function unifiedThread(key, ws, { before = 0, limit = 100 } = {}) {
   // notas IA (resúmenes guardados) intercaladas en la conversación por fecha — NO son mensajes, no se envían
   const aiN = (ws.aiNotes(key) || []).map((n) => ({ id: n.id, channel: "ai-summary", dir: "ai", name: "Resumen IA", ts: n.ts, text: n.text, aiRange: n.range }))
   const mergedItems = aiN.length ? [...items, ...aiN].sort((a, b) => (a.ts || 0) - (b.ts || 0)) : items
+  enrichCovert(key, mergedItems) // modo encubierto: si el contacto tiene clave, descifra los mensajes-tapadera y adjunta it.covert
   return { key, name, group: isGroup, channels: [...new Set(tail.map((m) => m.channel))], photo, items: mergedItems, hasMore, oldestTs, total, lastSeen, unread, email, account }
 }
 
