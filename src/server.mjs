@@ -54,6 +54,7 @@ const r=await fetch('${setup ? "/api/auth/setup" : "/api/auth"}',{method:'POST',
 if(r.ok)location.href='/';else e.textContent=r.error||'error';}</script></div></html>`
 }
 import { tts, stt, VOICES } from "./lib/voice.mjs"
+import { importWhatsApp } from "./lib/wa-import.mjs"
 import { runSelfTest, lastSelfTest } from "./send-selftest.mjs"
 
 // cargar .env
@@ -457,6 +458,15 @@ const server = createServer(async (req, res) => {
       if (path === "/api/covert/config" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setCovert(b.key, b.pass, b.style)) }
       if (path === "/api/covert/config") return json(res, 200, brain.getCovert(q.key || ""))
       if (path === "/api/covert/preview" && req.method === "POST") { const b = await body(req); try { return json(res, 200, { cover: brain.previewCovert(b.text, b.pass, b.style) }) } catch (e) { return json(res, 400, { error: e.message }) } }
+      // ── IMPORT de historial de WhatsApp (self-service desde la app: "Exportar chat" → subir el .txt) ──
+      if (path === "/api/import/whatsapp" && req.method === "POST") {
+        const buf = await rawBody(req, 64 * 1024 * 1024) // el export de un chat, hasta 64MB
+        if (!buf || !buf.length) return json(res, 400, { error: "archivo vacío o demasiado grande" })
+        let r; try { r = importWhatsApp(buf.toString("utf8"), { chatName: q.name || "", isGroup: q.group === "1", dateOrder: q.order || "auto", tzOffsetMin: +q.tz || 0 }) } catch (e) { return json(res, 500, { error: e.message }) }
+        if (r && r.error) return json(res, 400, r)
+        if (r.inserted > 0) spawn(process.execPath, ["src/resolve-identities.mjs"], { detached: true, stdio: "ignore" }).unref() // re-key el hilo importado a la identidad real
+        return json(res, 200, r)
+      }
       // REENVIAR mensajes preservando el media (audio/imagen/archivo), no solo el texto
       if (path === "/api/forward" && req.method === "POST") { const b = await body(req); const r = await brain.forwardMessages(b.ids, b.key); return json(res, r && r.error ? 400 : 200, r) }
       // AUTO-TEST DE ENVÍO: último resultado (GET) o correr ahora (POST). El cron lo corre cada ~12h; verifica que el envío funciona de verdad.
