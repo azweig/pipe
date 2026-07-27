@@ -40,6 +40,13 @@ export function insertTodo(id, text, thread, name, due, ts, created, cita) {
 export function insertPromesa(id, text, thread, name, due, ts, created, cita) {
   return withRetry(() => db().prepare("INSERT OR IGNORE INTO promesas(id,text,thread,name,due,ts,done,created,cita) VALUES(?,?,?,?,?,?,0,?,?)").run(id, text, thread, name, due, ts, created, cita || null))
 }
+// listados de PENDIENTES (para el server MCP read-only). Solo lo no-hecho, con la cita textual que respalda cada ítem.
+export function listTodos({ limit = 50 } = {}) {
+  return db().prepare("SELECT id, text, thread, name, due, cita, ts, created FROM todos WHERE done=0 ORDER BY created DESC LIMIT ?").all(Math.min(+limit || 50, 100))
+}
+export function listPromesas({ limit = 50 } = {}) {
+  return db().prepare("SELECT id, text, thread, name, due, cita, ts, created FROM promesas WHERE done=0 ORDER BY created DESC LIMIT ?").all(Math.min(+limit || 50, 100))
+}
 // ítems abiertos (done=0) de todos|promesas. kind por allowlist. Defensivo (nunca tira). (era home-brief.openActions)
 export function openActionItems(kind, { limit = 6 } = {}) {
   const tbl = _ACTION_TABLES[kind]; if (!tbl) return []
