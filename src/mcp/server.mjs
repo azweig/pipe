@@ -4,7 +4,15 @@
 // Spec objetivo: MCP 2025-06-18 (negocia la versión que pida el cliente). Uso: node src/mcp/server.mjs
 import { TOOLS } from "./tools.mjs"
 import { fence, UNTRUSTED_NOTE } from "../lib/safety.mjs"
-import { appendFileSync, mkdirSync } from "fs"
+import { appendFileSync, mkdirSync, readFileSync } from "fs"
+
+// Config por-hub (data/mcp-config.json, gitignoreada). Permite al self-hoster DESHABILITAR tools y GATEAR las privadas.
+// OSS: allowPrivate=false por defecto → las tools marcadas private:true NO se exponen. El hub privado la pone en true.
+let CFG = {}; try { CFG = JSON.parse(readFileSync("./data/mcp-config.json", "utf8")) } catch {}
+const DISABLED = new Set(CFG.disabled || [])
+const ALLOW_PRIVATE = CFG.allowPrivate === true
+// conjunto ACTIVO de tools (lo que realmente se lista y se puede llamar)
+const ACTIVE = TOOLS.filter((t) => !DISABLED.has(t.name) && (!t.private || ALLOW_PRIVATE))
 
 const PROTO = "2025-06-18"
 const SERVER_INFO = { name: "pipe", title: "Pipe — bandeja unificada", version: "1.0.0" }
@@ -42,10 +50,10 @@ async function handle(msg) {
   if (method === "initialize") { clientCaps = params?.capabilities || {}; return reply(id, { protocolVersion: params?.protocolVersion || PROTO, capabilities: { tools: {} }, serverInfo: SERVER_INFO }) }
   if (method === "notifications/initialized" || method === "notifications/cancelled") return // notificaciones: sin respuesta
   if (method === "ping") return reply(id, {})
-  if (method === "tools/list") return reply(id, { tools: TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) })
+  if (method === "tools/list") return reply(id, { tools: ACTIVE.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) })
   if (method === "tools/call") {
-    const t = TOOLS.find((x) => x.name === params?.name)
-    if (!t) return fail(id, -32602, `tool desconocida: ${params?.name}`)
+    const t = ACTIVE.find((x) => x.name === params?.name)
+    if (!t) return fail(id, -32602, `tool desconocida o deshabilitada: ${params?.name}`)
     const args = params?.arguments || {}
     const at = { ts: nowSafe(), tool: t.name, args }
     if (t.scope === "write") {
@@ -85,4 +93,4 @@ process.stdin.on("data", (chunk) => {
   }
 })
 process.stdin.on("end", () => process.exit(0))
-log("pipe MCP (stdio · SOLO LECTURA) listo · tools: " + TOOLS.map((t) => t.name).join(", "))
+log(`pipe MCP (stdio) listo · writes=${WRITES_ON ? "ON" : "OFF"} · tools: ${ACTIVE.map((t) => t.name).join(", ")}`)

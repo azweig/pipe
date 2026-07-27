@@ -1,0 +1,5 @@
+{
+  "_readme": "Config OPCIONAL del conector MCP. Copiala a data/mcp-config.json (gitignoreada) para ajustar por-hub. 'disabled': tools a NO exponer (ej ['send_reply'] para dejar solo lectura). 'allowPrivate': true expone tools marcadas private:true (solo en tu hub privado; el OSS va en false). Los writes se activan aparte con la env MCP_ALLOW_WRITES=1.",
+  "disabled": [],
+  "allowPrivate": false
+}

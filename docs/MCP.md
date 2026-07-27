@@ -25,6 +25,13 @@ Expone tu bandeja de Pipe a un cliente MCP (Claude Desktop, Claude Code, etc.) p
 | `forward_message(id, to_thread)` | Reenvía un mensaje (preserva media) a un hilo existente. | Sí (elicitation) |
 | `create_todo(text, cuando?)` | Crea un pendiente. Local, reversible. | No (no sale afuera) |
 
+## Config por-hub (opcional)
+Copiá `mcp-config.example.json` a `data/mcp-config.json` (gitignoreada) para ajustar:
+- `disabled`: tools a NO exponer (ej `["send_reply","forward_message"]` para dejar el conector **solo lectura** aunque `MCP_ALLOW_WRITES` esté activo).
+- `allowPrivate`: `true` expone tools marcadas `private:true` — solo en tu hub propio; en el OSS va en `false`.
+
+Los invariantes están cubiertos por `test/mcp.mjs`: **cero egress** (nada en `src/mcp/` hace `fetch`/importa red) y toda acción outward exige confirmación.
+
 ## Conectar
 
 ### A) Hub LOCAL (Pipe corre en tu misma máquina)
