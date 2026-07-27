@@ -14,6 +14,8 @@ Pipe is a self-hostable **unified inbox + AI second brain**. It merges WhatsApp,
 - **A real backup of everything** — a daily, encrypted, restore-tested backup of your whole history: every message, the WhatsApp bridge sessions, your OAuth tokens, and the irreplaceable media — photos, voice notes and PDFs from every channel. On your box, and offsite if you want it.
 - **Your keys, your box** — bring your own AI engine or run everything locally with Ollama. Single-tenant, self-hostable, secrets encrypted at rest. No data leaves your infrastructure.
 - **Bring your own AI assistant (MCP)** — connect Claude Desktop/Code (or any MCP client) straight to your inbox: search, read threads and pending items, and — if you turn it on — reply/forward with a confirmation step. Read-only by default, zero egress of its own, every call audited. See [docs/MCP.md](docs/MCP.md).
+- **Covert mode ("The Saint")** — send a message that reads as an innocuous poem, story, recipe or prayer to anyone who sees it (e.g. on WhatsApp), but decrypts back to the real text for the other person if they use Pipe with the same passphrase. Real authenticated encryption (AES-256-GCM) under a coherent-looking cover text. Per-contact key and style.
+- **Import your WhatsApp history** — bring old chats in without root and without a PC: WhatsApp's *Export chat* → upload the `.txt`, and Pipe parses and merges it into the right thread with content de-duplication. (Per-chat; WhatsApp itself has no "export everything".)
 
 ## Own your data
 
