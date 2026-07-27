@@ -8,6 +8,8 @@ import { appendFileSync, mkdirSync } from "fs"
 
 const PROTO = "2025-06-18"
 const SERVER_INFO = { name: "pipe", title: "Pipe — bandeja unificada", version: "1.0.0" }
+const WRITES_ON = process.env.MCP_ALLOW_WRITES === "1" // writes OFF por defecto (least privilege); se activan explícito
+let clientCaps = {} // capacidades declaradas por el cliente en initialize (p.ej. si soporta elicitation)
 mkdirSync("./data", { recursive: true })
 const AUDIT = "./data/mcp-audit.jsonl" // registro de TODA llamada (qué tool, qué args, ok/error) → auditable por el usuario
 const log = (...a) => process.stderr.write("[mcp] " + a.join(" ") + "\n")
@@ -17,19 +19,44 @@ const send = (o) => process.stdout.write(JSON.stringify(o) + "\n")
 const reply = (id, result) => send({ jsonrpc: "2.0", id, result })
 const fail = (id, code, message) => send({ jsonrpc: "2.0", id, error: { code, message } })
 
+// ── requests del SERVER hacia el cliente (para elicitation/confirmación) ──
+const pending = new Map(); let reqSeq = 0
+function serverRequest(mth, prms, timeoutMs = 120000) {
+  return new Promise((resolve) => {
+    const rid = "srv-" + (++reqSeq)
+    pending.set(rid, resolve)
+    send({ jsonrpc: "2.0", id: rid, method: mth, params: prms })
+    setTimeout(() => { if (pending.has(rid)) { pending.delete(rid); resolve(null) } }, timeoutMs) // sin respuesta → null (no confirmado)
+  })
+}
+// human-in-the-loop: si el cliente soporta elicitation, PIDE confirmación explícita antes de una acción outward.
+// Si no la soporta, se procede confiando en que el cliente ya aprueba cada tool-call (elicitation es defensa EXTRA).
+async function confirmWithUser(message) {
+  if (!clientCaps.elicitation) return true
+  const r = await serverRequest("elicitation/create", { message, requestedSchema: { type: "object", properties: { confirm: { type: "boolean", description: "Sí para confirmar" } }, required: ["confirm"] } })
+  return !!(r && r.action === "accept" && r.content && r.content.confirm === true)
+}
+
 async function handle(msg) {
   const { id, method, params } = msg || {}
-  if (method === "initialize") return reply(id, { protocolVersion: params?.protocolVersion || PROTO, capabilities: { tools: {} }, serverInfo: SERVER_INFO })
+  if (method === "initialize") { clientCaps = params?.capabilities || {}; return reply(id, { protocolVersion: params?.protocolVersion || PROTO, capabilities: { tools: {} }, serverInfo: SERVER_INFO }) }
   if (method === "notifications/initialized" || method === "notifications/cancelled") return // notificaciones: sin respuesta
   if (method === "ping") return reply(id, {})
   if (method === "tools/list") return reply(id, { tools: TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) })
   if (method === "tools/call") {
     const t = TOOLS.find((x) => x.name === params?.name)
     if (!t) return fail(id, -32602, `tool desconocida: ${params?.name}`)
-    if (t.scope !== "read") return fail(id, -32603, "este server MCP es SOLO LECTURA (Fase 1) — no ejecuta acciones") // guard duro anti-write
-    const at = { ts: nowSafe(), tool: t.name, args: params?.arguments || {} }
+    const args = params?.arguments || {}
+    const at = { ts: nowSafe(), tool: t.name, args }
+    if (t.scope === "write") {
+      if (!WRITES_ON) { audit({ ...at, ok: false, blocked: "writes-off" }); return fail(id, -32603, "writes deshabilitados — arrancá el server MCP con MCP_ALLOW_WRITES=1 para permitir enviar/reenviar/crear") }
+      if (t.confirm) { // acciones outward (enviar/reenviar) requieren confirmación humana explícita
+        const ok = await confirmWithUser(t.confirm(args))
+        if (!ok) { audit({ ...at, ok: false, cancelled: true }); return reply(id, { content: [{ type: "text", text: "Acción cancelada: el usuario no la confirmó." }] }) }
+      }
+    }
     try {
-      const data = await t.handler(params?.arguments || {})
+      const data = await t.handler(args)
       audit({ ...at, ok: true, bytes: JSON.stringify(data).length })
       // El resultado lleva contenido de TERCEROS → se envuelve con la nota anti-injection + fence, así el modelo lo trata como DATO, no órdenes.
       const text = UNTRUSTED_NOTE + "\n\n" + fence(JSON.stringify(data, null, 1), "RESULTADO")
@@ -53,7 +80,8 @@ process.stdin.on("data", (chunk) => {
     const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1)
     if (!line) continue
     let msg; try { msg = JSON.parse(line) } catch { log("json inválido, ignorado"); continue }
-    Promise.resolve(handle(msg)).catch((e) => log("handle:", e.message))
+    if (msg && msg.method) { Promise.resolve(handle(msg)).catch((e) => log("handle:", e.message)) } // request/notif del cliente
+    else if (msg && msg.id != null && pending.has(msg.id)) { const r = pending.get(msg.id); pending.delete(msg.id); r(msg.error ? null : msg.result) } // respuesta a nuestro elicitation
   }
 })
 process.stdin.on("end", () => process.exit(0))
