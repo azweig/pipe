@@ -240,17 +240,29 @@ Mantené el idioma original. Sin comillas de más ni explicaciones.
 Texto: """${t}"""`
   // CLOUD-OK: redactar/corregir borradores es INTERACTIVO (lo dispara el usuario y espera calidad+velocidad) y ve solo el hilo en
   // cuestión, no el corpus. Nube deliberada; local no da la voz. Con GPU: LLM_CHAIN_CORRECT=ollama.
+  // PRIMARIO: como lo tenga ruteado el hub (feature:"correct" → puede ser la GPU box local), pero ACOTADO EN TIEMPO. Si tarda más
+  // de CORRECT_TIMEOUT_MS (GPU fría/degradada) → FALLBACK INSTANTÁNEO a OpenAI (~1.5s). Así la corrección nunca se cuelga 60s.
+  const CORRECT_TIMEOUT_MS = Number(process.env.CORRECT_TIMEOUT_MS) || 6000
+  const primary = llm(prompt, {
+    json: true,
+    feature: "correct",
+    chain: process.env.LLM_CHAIN_CORRECT || "openai,ollama",
+    models: { ollama: process.env.OLLAMA_MODEL_CORRECT || "qwen2.5:3b" },
+    numPredict: 260,
+    temperature: 0.2,
+    task: "correct",
+    bypassCap: true, // interactivo + chico (se dispara al tocar enviar) → nunca cae a ollama-CPU por el tope diario
+  })
+  primary.catch(() => {}) // si lo abandonamos por timeout, no dejar una promesa rechazada suelta (unhandled rejection)
   try {
-    const r = await llm(prompt, {
-      json: true,
-      feature: "correct",
-      chain: process.env.LLM_CHAIN_CORRECT || "openai,ollama",
-      models: { ollama: process.env.OLLAMA_MODEL_CORRECT || "qwen2.5:3b" },
-      numPredict: 260,
-      temperature: 0.2,
-      task: "correct",
-      bypassCap: true, // interactivo + chico (se dispara al tocar enviar) → nunca cae a ollama-CPU por el tope diario
-    })
+    let r
+    try {
+      r = await Promise.race([primary, new Promise((_, rej) => setTimeout(() => rej(new Error("correct-timeout")), CORRECT_TIMEOUT_MS))])
+    } catch (e1) {
+      // fallback: SIN feature → no rutea a la GPU box; chain "openai" fuerza la nube (la key ya está validada). Solo si existe.
+      if (!process.env.OPENAI_API_KEY) throw e1
+      r = await llm(prompt, { json: true, chain: "openai", numPredict: 260, temperature: 0.2, task: "correct-fallback", bypassCap: true })
+    }
     const corrected = (r?.corregido || t).trim() || t
     let alternative = (r?.alternativo || "").trim()
     if (alternative === corrected || alternative === t) alternative = "" // no ofrecer una "alternativa" idéntica

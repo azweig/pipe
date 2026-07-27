@@ -83,11 +83,17 @@ export async function stt(buf, mime = "audio/webm") {
     form.append("language", "es")
     return fetch("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { Authorization: `Bearer ${OA()}` }, body: form, signal: AbortSignal.timeout(120000) }) // idem: sin timeout, un socket colgado nunca rechaza
   }
-  let res = await post(buf, mime, `audio.${ext}`)
+  // El webm/ogg de MediaRecorder (PWA) suele venir SIN cabecera de duración → OpenAI lo rechaza (400) y recién ahí transcodeábamos:
+  // eran 2 round-trips (~18s). Lo pasamos a mp3 ANTES (ffmpeg reescribe cabeceras) → una sola llamada (~5s). m4a/mp3/wav van directo.
+  let sendBuf = buf, sendMime = mime, sendName = `audio.${ext}`, pretranscoded = false
+  if (/^(webm|ogg|oga|opus)$/.test(ext)) {
+    try { sendBuf = await transcodeToMp3(buf, ext); sendMime = "audio/mpeg"; sendName = "audio.mp3"; pretranscoded = true } catch {} // si ffmpeg falla, mandamos el original y dejamos que el retry de abajo actúe
+  }
+  let res = await post(sendBuf, sendMime, sendName)
   if (!res.ok) {
     const err = await res.text()
-    // formato rechazado (ej. m4a/3GPP) → transcodificar a mp3 con ffmpeg y reintentar UNA vez
-    if (res.status === 400 && /file format|invalid|decode|could not/i.test(err)) {
+    // formato rechazado (ej. m4a/3GPP) → transcodificar a mp3 con ffmpeg y reintentar UNA vez (si no lo pre-transcodeamos ya)
+    if (res.status === 400 && !pretranscoded && /file format|invalid|decode|could not/i.test(err)) {
       const mp3 = await transcodeToMp3(buf, ext)
       res = await post(mp3, "audio/mpeg", "audio.mp3")
       if (!res.ok) throw new Error(`stt ${res.status} (post-ffmpeg): ${(await res.text()).slice(0, 150)}`)

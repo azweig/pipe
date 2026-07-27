@@ -1274,23 +1274,23 @@ function convBubble(it) {
     const rl = { day: "último día", week: "última semana", month: "último mes", all: "toda la historia" }[it.aiRange] || ""
     return `<div class="card" style="margin:10px 0;padding:14px;border:1.5px solid var(--accent);background:var(--bg2)">
     <div class="row spread" style="gap:8px;margin-bottom:6px"><span class="tag" style="background:#ece9ff;color:var(--accent)">✨ Resumen IA${rl ? ` · ${rl}` : ""}</span><span class="tiny muted">${hhmm(it.ts)}</span></div>
-    <div class="small" style="white-space:pre-wrap;line-height:1.5">${esc(it.text || "")}</div>
+    <div class="small" style="white-space:pre-wrap;line-height:1.5">${fmtText(it.text || "")}</div>
     <div class="tiny muted" style="margin-top:8px">🔒 Solo para vos — no se envió</div></div>`
   }
   if (it.channel === "meeting") {
     const proc = /^⏳/.test(it.text || "")
     return `<div class="card" style="margin:8px 0;padding:14px;border-left:3px solid var(--accent)">
     <div class="row spread" style="gap:8px;margin-bottom:6px"><span class="tag" style="background:#ece9ff;color:var(--accent)">🎙 Reunión</span><span class="tiny muted">${hhmm(it.ts)}</span></div>
-    ${it.summary ? `<div class="small" style="margin-bottom:6px"><span style="color:var(--accent)">💡</span> ${esc(it.summary)}</div>` : ""}
-    <div class="small" style="white-space:pre-wrap${proc ? ";color:var(--muted)" : ""}">${esc(it.text || "")}</div>
+    ${it.summary ? `<div class="small" style="margin-bottom:6px"><span style="color:var(--accent)">💡</span> ${fmtText(it.summary)}</div>` : ""}
+    <div class="small" style="white-space:pre-wrap${proc ? ";color:var(--muted)" : ""}">${fmtText(it.text || "")}</div>
     ${it.hasBody ? `<div class="small" style="color:var(--accent);margin-top:8px;cursor:pointer" onclick='showEmailFull(${escj(it.id)})'>📄 Ver transcripción completa →</div>` : ""}</div>`
   }
   if (it.channel === "email") {
     const subject = (it.text || "").split(" — ")[0] || "(sin asunto)"
     const preview = (it.text || "").slice(subject.length + 3).trim()
     const gist = it.summary
-      ? `<div class="small" style="margin-bottom:4px"><span style="color:var(--accent)">💡</span> ${esc(it.summary)}</div>`
-      : `<div class="small muted" style="max-height:60px;overflow:hidden">${esc(preview) || (it.hasBody ? "📄 Contenido en imágenes/HTML — abrilo para verlo" : "")}</div>`
+      ? `<div class="small" style="margin-bottom:4px"><span style="color:var(--accent)">💡</span> ${fmtText(it.summary)}</div>`
+      : `<div class="small muted" style="max-height:60px;overflow:hidden">${fmtText(preview) || (it.hasBody ? "📄 Contenido en imágenes/HTML — abrilo para verlo" : "")}</div>`
     return `<div class="card" style="margin:8px 0;padding:14px">
     <div class="row spread" style="gap:8px;margin-bottom:6px"><span class="tag email">✉️ ${it.dir === "out" ? "Enviado a" : "Email de"} ${esc(it.name || "")}</span><span class="tiny muted">${hhmm(it.ts)}</span></div>
     <div class="b small" style="margin-bottom:3px">${esc(subject)}</div>
@@ -1791,7 +1791,7 @@ window.loadOlder = async () => {
   } else { d.hasMore = false; renderConv() }
 }
 const emailIframe = (it) => {
-  const raw = it.body || `<pre style="white-space:pre-wrap;font-family:system-ui;font-size:14px">${(it.full || it.text || "").replace(/</g, "&lt;")}</pre>`
+  const raw = it.body || `<pre style="white-space:pre-wrap;font-family:system-ui;font-size:14px">${(it.full || it.text || "").replace(/</g, "&lt;").replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#4f46e5">$1</a>')}</pre>`
   // CSP dentro del email: bloquea TODO recurso remoto (img-src data: → sin imágenes remotas). Mata pixeles de tracking /
   // read-receipts (el remitente no se entera de que abriste ni tu IP). Las imágenes inline (data:) sí se ven. Como Gmail.
   const csp = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; font-src data:">'
