@@ -1538,6 +1538,7 @@ window.covertConfigSheet = async (keyEnc, name) => {
   const chips = (cfg.styles || []).map((s) => `<button class="chip" data-cs="${s.id}" onclick="covertPickStyle('${s.id}')" style="border:1.5px solid ${s.id === window._covertStyle ? "var(--accent)" : "var(--line)"};background:${s.id === window._covertStyle ? "var(--accent)" : "var(--bg2)"};color:${s.id === window._covertStyle ? "#fff" : ""}">${s.label}</button>`).join("")
   openSheet(`<h2 style="margin:0 0 4px">🕊️ Modo encubierto</h2>
     <p class="sub" style="margin:0 0 12px">Tus mensajes a <b>${esc(who)}</b> pueden ir <b>cifrados</b>, disfrazados de texto normal. Quien los vea por WhatsApp lee un poema; ${esc(who)}, con Pipe y la misma clave, los ve descifrados. Acordá la clave por un canal seguro (en persona, llamada…).</p>
+    <p class="sub" style="margin:-4px 0 12px;font-size:12.5px">¿La otra persona no tiene Pipe? Puede descifrar con la clave en <a href="https://pipe.one/decodificar" target="_blank" rel="noopener" style="color:var(--accent)">pipe.one/decodificar</a> 🕊️</p>
     <input id="covPass" type="text" autocomplete="off" spellcheck="false" placeholder="Clave compartida (ej. nuestro café 2019)" oninput="covertPreview()" style="width:100%;box-sizing:border-box;padding:11px 13px;border-radius:12px;border:1px solid var(--line);font-size:15px;margin-bottom:10px">
     <div id="covChips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${chips}</div>
     <div class="tiny muted" style="margin-bottom:4px">Vista previa (así se verá el mensaje):</div>
