@@ -10,6 +10,7 @@ Pipe is a self-hostable **unified inbox + AI second brain**. It merges WhatsApp,
 
 - **One inbox, every channel** — WhatsApp + email + Telegram… collapse into the same conversation per person. Stop tab-hopping between apps.
 - **AI that reads for you** — summaries of long threads and voice notes, a daily brief, "who needs a reply", and drafts written in your style. Multi-provider with fallback (OpenAI / Anthropic / Gemini / local Ollama).
+- **Transcribe & summarize any media** — long-press (app) or the ⋯ menu (web) on a video, voice note or image → it transcribes (auto-detecting the language) and gives you a **Spanish summary** even if the clip is in English, Japanese, etc. Fast **local** speech-to-text via [faster-whisper](deploy/whisper/README.md) — the audio never leaves your box.
 - **A second brain, built automatically** — a living knowledge graph of the people, companies and projects in your life, grown from your own activity. Your self-notes become ideas and reminders.
 - **A real backup of everything** — a daily, encrypted, restore-tested backup of your whole history: every message, the WhatsApp bridge sessions, your OAuth tokens, and the irreplaceable media — photos, voice notes and PDFs from every channel. On your box, and offsite if you want it.
 - **Your keys, your box** — bring your own AI engine or run everything locally with Ollama. Single-tenant, self-hostable, secrets encrypted at rest. No data leaves your infrastructure.
