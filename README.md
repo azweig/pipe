@@ -14,7 +14,7 @@ Pipe is a self-hostable **unified inbox + AI second brain**. It merges WhatsApp,
 - **A real backup of everything** — a daily, encrypted, restore-tested backup of your whole history: every message, the WhatsApp bridge sessions, your OAuth tokens, and the irreplaceable media — photos, voice notes and PDFs from every channel. On your box, and offsite if you want it.
 - **Your keys, your box** — bring your own AI engine or run everything locally with Ollama. Single-tenant, self-hostable, secrets encrypted at rest. No data leaves your infrastructure.
 - **Bring your own AI assistant (MCP)** — connect Claude Desktop/Code (or any MCP client) straight to your inbox: search, read threads and pending items, and — if you turn it on — reply/forward with a confirmation step. Read-only by default, zero egress of its own, every call audited. See [docs/MCP.md](docs/MCP.md).
-- **Covert mode ("The Saint")** — send a message that reads as an innocuous poem, story, recipe or prayer to anyone who sees it (e.g. on WhatsApp), but decrypts back to the real text for the other person if they use Pipe with the same passphrase. Real authenticated encryption (AES-256-GCM) under a coherent-looking cover text. Per-contact key and style.
+- **Covert mode ("The Saint")** — send a message that reads as an innocuous poem, story, recipe or prayer to anyone who sees it (e.g. on WhatsApp), but decrypts back to the real text for the other person if they use Pipe with the same passphrase. Real authenticated encryption (AES-256-GCM, per-message salt) under a coherent-looking cover text. Per-contact key and style; the recipient can also decrypt in the browser (your hub serves its own client-side decoder at `/decrypt`). Try it at [pipe.one/secret-messages](https://pipe.one/secret-messages). See [docs/COVERT.md](docs/COVERT.md).
 - **Import your WhatsApp history** — bring old chats in without root and without a PC: WhatsApp's *Export chat* → upload the `.txt`, and Pipe parses and merges it into the right thread with content de-duplication. (Per-chat; WhatsApp itself has no "export everything".)
 
 ## Own your data
@@ -101,6 +101,7 @@ Every step above is a plain, human-followable command — you never need an AI t
 - **[docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)** — full self-host walkthrough (install, config, connect every channel, WhatsApp bridge, ops, troubleshooting). **Start here.**
 - [docs/UNIPILE.md](docs/UNIPILE.md) — the managed WhatsApp/LinkedIn channel.
 - [docs/MCP.md](docs/MCP.md) — connect an AI assistant to your inbox via the Model Context Protocol (read/write tools, privacy-first, stdio or SSH; no open ports).
+- [docs/COVERT.md](docs/COVERT.md) — covert mode ("The Saint"): send encrypted messages disguised as natural text; per-hub client-side decoder at `/decrypt`.
 - [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md)
 
 ## Architecture & deployment
