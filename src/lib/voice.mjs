@@ -42,6 +42,17 @@ async function sttViaService(buf, mime) {
   if (!r.ok) throw new Error(`whisper-svc ${r.status}`)
   return ((await r.json()).text || "").trim()
 }
+// #5: transcribe audio O VIDEO con auto-detección de idioma (inglés/japonés/etc) → { text, lang }. ffmpeg extrae el audio del video.
+export async function transcribeMedia(buf, ext) {
+  if (!whisperSvc()) throw new Error("transcripción local no disponible (falta WHISPER_URL)")
+  const wav = await transcodeToWav(buf, ext || "bin")
+  const fd = new FormData()
+  fd.append("file", new Blob([wav], { type: "audio/wav" }), "audio.wav")
+  const r = await fetch(whisperSvc() + "/stt?language=", { method: "POST", headers: { Authorization: "Bearer " + (process.env.WHISPER_TOKEN || "") }, body: fd, signal: AbortSignal.timeout(180000) }) // language vacío = auto-detect
+  if (!r.ok) throw new Error(`whisper-svc ${r.status}`)
+  const j = await r.json()
+  return { text: (j.text || "").trim(), lang: j.lang || null }
+}
 const OA = () => providerKey("openai") // BYOK: la key sale de la config del hub (o del .env como fallback)
 
 export const VOICES = [

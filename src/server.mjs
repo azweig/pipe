@@ -464,6 +464,8 @@ const server = createServer(async (req, res) => {
       if (path === "/api/covert/config" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setCovert(b.key, b.pass, b.style)) }
       if (path === "/api/covert/config") return json(res, 200, brain.getCovert(q.key || ""))
       if (path === "/api/covert/preview" && req.method === "POST") { const b = await body(req); try { return json(res, 200, { cover: brain.previewCovert(b.text, b.pass, b.style) }) } catch (e) { return json(res, 400, { error: e.message }) } }
+      // #5: transcribir + resumir un video/audio/imagen on-demand (long-press/hover)
+      if (path === "/api/media/summarize" && req.method === "POST") { const b = await body(req); try { const r = await brain.summarizeMedia(b.id); return json(res, r && r.error ? 400 : 200, r) } catch (e) { return json(res, 500, { error: e.message }) } }
       // ── IMPORT de historial de WhatsApp (self-service desde la app: "Exportar chat" → subir el .txt) ──
       if (path === "/api/import/whatsapp" && req.method === "POST") {
         const buf = await rawBody(req, 64 * 1024 * 1024) // el export de un chat, hasta 64MB

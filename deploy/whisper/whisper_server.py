@@ -18,4 +18,4 @@ async def stt(file: UploadFile = File(...), language: str = "es", authorization:
     with tempfile.NamedTemporaryFile(suffix=".wav") as f:
         f.write(data); f.flush()
         segs, info = model().transcribe(f.name, language=(language or None), beam_size=1, vad_filter=True)
-        return {"text": "".join(s.text for s in segs).strip()}
+        return {"text": "".join(s.text for s in segs).strip(), "lang": getattr(info, "language", None)}

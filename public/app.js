@@ -1400,7 +1400,18 @@ window.msgMenu = (id) => {
   openSheet(`<div class="tiny muted" style="margin:0 0 12px"><b>${esc(who)}</b> · ${esc(_msgPreview(it).slice(0, 90)) || "mensaje"}</div>
     <button class="btn" style="width:100%;margin-bottom:8px;display:flex;gap:10px;align-items:center;justify-content:flex-start" onclick='startReply(${escj(id)})'>↩️ Responder</button>
     <button class="btn ghost" style="width:100%;margin-bottom:8px;display:flex;gap:10px;align-items:center;justify-content:flex-start" onclick='fwdOne(${escj(id)})'>↪ Reenviar</button>
+    ${(it.media && /^(video|audio|image)$/.test(it.mediaType || "")) ? `<button class="btn ghost" style="width:100%;margin-bottom:8px;display:flex;gap:10px;align-items:center;justify-content:flex-start" onclick='mediaSummarize(${escj(id)})'>🌐 Transcribir y resumir</button>` : ""}
     ${it.text ? `<button class="btn ghost" style="width:100%;display:flex;gap:10px;align-items:center;justify-content:flex-start" onclick='copyMsg(${escj(id)})'>📋 Copiar texto</button>` : ""}`)
+}
+// #5: transcribe + resume un video/audio/imagen (traducido al español si está en otro idioma). Lo dispara el usuario desde el menú ⋯.
+window.mediaSummarize = async (id) => {
+  openSheet(`<h2>🌐 Transcribiendo…</h2><div class="sub" style="margin-top:6px">Transcribo y resumo — puede tardar unos segundos.</div><div style="text-align:center;padding:26px;font-size:26px">⏳</div>`)
+  const r = await post("/api/media/summarize", { id }).catch(() => null)
+  if (!r || r.error) return openSheet(`<h2>No se pudo</h2><div class="sub" style="margin-top:6px">${esc((r && r.error) || "Error al procesar el archivo.")}</div>`)
+  const langLbl = r.lang && r.lang !== "es" ? ` <span class="tiny muted">· ${esc(r.lang)}→es</span>` : ""
+  openSheet(`<h2 style="margin:0 0 10px">🌐 Resumen${langLbl}</h2>
+    <div style="white-space:pre-wrap;line-height:1.6;font-size:15px">${fmtText(r.summary || "(sin resumen)")}</div>
+    ${r.transcript ? `<details style="margin-top:14px"><summary style="cursor:pointer;color:var(--accent);font-size:13px">Ver transcripción completa</summary><div style="white-space:pre-wrap;font-size:13.5px;color:var(--muted);margin-top:8px;max-height:42vh;overflow:auto">${esc(r.transcript)}</div></details>` : ""}`)
 }
 // Responder con CITA: fija la barra sobre el composer (mostrando a qué respondés) y enfoca el input. El texto propio se escribe aparte.
 window.startReply = (id) => {
