@@ -7,15 +7,16 @@
 // Seguridad: confidencialidad FUERTE (depende de la passphrase). Detectabilidad: MODERADA — un analista que conozca este esquema
 // puede notar que el texto usa nuestros diccionarios, pero igual NO puede descifrarlo. Es un feature de privacidad, no un canal militar.
 // Contra honesta: el texto tapadera es largo (la codificación coherente tiene poca densidad de bits) → ideal para notas cortas.
-import { scryptSync, randomBytes, createCipheriv, createDecipheriv } from "crypto"
+import { pbkdf2Sync, randomBytes, createCipheriv, createDecipheriv } from "crypto"
 
 // ── cripto (passphrase simétrica) ───────────────────────────────────────────────────────────────────────────────────────────
 const SALT = "pipe.one/covert/v1" // salt fijo del KDF: passphrase compartida → misma clave en ambos lados. El nonce (aleatorio por
-const _kc = new Map() //                                mensaje) es lo que da la seguridad GCM. Cache de claves derivadas (self-host).
-function keyFor(pass) {
+const PBKDF2_ITERS = 200000 //                          mensaje) es lo que da la seguridad GCM. Cache de claves derivadas (self-host).
+const _kc = new Map() // KDF = PBKDF2-SHA256 (NO scrypt) a propósito: el decodificador web (pipe.one/decodificar) lo replica con
+function keyFor(pass) { //   Web Crypto nativo (que no tiene scrypt) → misma clave en Node y en el navegador, sin libs externas.
   const s = String(pass || "")
   let k = _kc.get(s)
-  if (!k) { k = scryptSync(s, SALT, 32, { N: 16384, r: 8, p: 1 }); _kc.set(s, k) }
+  if (!k) { k = pbkdf2Sync(s, SALT, PBKDF2_ITERS, 32, "sha256"); _kc.set(s, k) }
   return k
 }
 function seal(text, pass) {
