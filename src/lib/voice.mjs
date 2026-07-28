@@ -19,6 +19,29 @@ function transcodeToMp3(buf, srcExt) {
     })
   })
 }
+// idem pero a WAV 16k mono — lo que espera whisper. Se manda al servicio local de la GPU box.
+function transcodeToWav(buf, srcExt) {
+  return new Promise((resolve, reject) => {
+    const base = `/tmp/stt_${Date.now()}_${Math.random().toString(36).slice(2)}`
+    const inF = `${base}.${srcExt || "bin"}`, outF = `${base}.wav`
+    try { writeFileSync(inF, buf) } catch (e) { return reject(e) }
+    execFile("ffmpeg", ["-y", "-i", inF, "-ac", "1", "-ar", "16000", outF], { maxBuffer: 1 << 24 }, (err) => {
+      try { if (err) reject(err); else resolve(readFileSync(outF)) }
+      catch (e) { reject(e) }
+      finally { try { unlinkSync(inF) } catch {}; try { unlinkSync(outF) } catch {} }
+    })
+  })
+}
+// STT LOCAL vía faster-whisper en la GPU box (~0.4s) — PRIVADO: el audio NO sale a la nube. Se activa con WHISPER_URL (+ WHISPER_TOKEN).
+const whisperSvc = () => (process.env.WHISPER_URL || "").replace(/\/$/, "")
+async function sttViaService(buf, mime) {
+  const wav = await transcodeToWav(buf, audioExt(mime)) // whisper quiere wav 16k; ffmpeg normaliza cualquier formato (incl. webm sin cabecera)
+  const fd = new FormData()
+  fd.append("file", new Blob([wav], { type: "audio/wav" }), "audio.wav")
+  const r = await fetch(whisperSvc() + "/stt?language=es", { method: "POST", headers: { Authorization: "Bearer " + (process.env.WHISPER_TOKEN || "") }, body: fd, signal: AbortSignal.timeout(60000) })
+  if (!r.ok) throw new Error(`whisper-svc ${r.status}`)
+  return ((await r.json()).text || "").trim()
+}
 const OA = () => providerKey("openai") // BYOK: la key sale de la config del hub (o del .env como fallback)
 
 export const VOICES = [
@@ -56,6 +79,11 @@ export function audioExt(mime = "") {
 
 // audio → texto. SELF-HOSTED primero si el hub lo pide (stt=local) o si no hay key OpenAI pero whisper.cpp está: el audio NUNCA sale.
 export async function stt(buf, mime = "audio/webm") {
+  // 1) servicio whisper LOCAL (GPU box, faster-whisper): rápido + PRIVADO. Preferido cuando el hub eligió stt=local (o no hay nube).
+  if ((sttMode() === "local" || !OA()) && whisperSvc()) {
+    try { const t = await sttViaService(buf, mime); if (t) return t } catch (e) { if (process.env.LLM_DEBUG) console.error("[stt] whisper-svc falló, sigo al fallback:", e.message) }
+  }
+  // 2) whisper.cpp local en el server (si está compilado con modelo real)
   if ((sttMode() === "local" || !OA()) && whisperAvailable()) {
     const ext = audioExt(mime)
     const f = `/tmp/stt_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
