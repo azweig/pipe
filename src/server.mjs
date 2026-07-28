@@ -159,6 +159,12 @@ const server = createServer(async (req, res) => {
       const full = normalize(join("public", path.replace(/^\//, "")))
       if (full.startsWith("public") && existsSync(full)) return serveFile(req, res, full, MIME[extname(full)] || "application/octet-stream", path === "/sw.js" ? "no-cache" : "public, max-age=86400")
     }
+    // Decodificador del modo encubierto ("El Santo"): PÚBLICO, sin PIN — el que recibe tu mensaje NO tiene acceso al hub. Es 100%
+    // client-side (la clave nunca sale del navegador; no toca el server), así que no revela nada. Cada hub sirve SU propio decoder.
+    if (path === "/decrypt" || path === "/decodificar") {
+      const f = join(process.cwd(), "public", "decrypt.html")
+      if (existsSync(f)) { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=300" }); return res.end(readFileSync(f)) }
+    }
     // ── AUTH: PIN gate para exponer en internet (hub.example.com). ──
     // Local (túnel SSH: conexión directa a 127.0.0.1 SIN X-Forwarded-For) = confiable (ya gateado por SSH) → sin PIN.
     // Remoto (vía Caddy: llega como 127.0.0.1 PERO con X-Forwarded-For) = requiere PIN. OJO: detrás de proxy remoteAddress SIEMPRE es local.

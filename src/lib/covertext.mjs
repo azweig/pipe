@@ -10,24 +10,20 @@
 import { pbkdf2Sync, randomBytes, createCipheriv, createDecipheriv } from "crypto"
 
 // ── cripto (passphrase simétrica) ───────────────────────────────────────────────────────────────────────────────────────────
-const SALT = "pipe.one/covert/v1" // salt fijo del KDF: passphrase compartida → misma clave en ambos lados. El nonce (aleatorio por
-const PBKDF2_ITERS = 200000 //                          mensaje) es lo que da la seguridad GCM. Cache de claves derivadas (self-host).
-const _kc = new Map() // KDF = PBKDF2-SHA256 (NO scrypt) a propósito: el decodificador web (pipe.one/decodificar) lo replica con
-function keyFor(pass) { //   Web Crypto nativo (que no tiene scrypt) → misma clave en Node y en el navegador, sin libs externas.
-  const s = String(pass || "")
-  let k = _kc.get(s)
-  if (!k) { k = pbkdf2Sync(s, SALT, PBKDF2_ITERS, 32, "sha256"); _kc.set(s, k) }
-  return k
-}
+// SALT ALEATORIO POR MENSAJE (8 bytes), embebido en el blob → mata el precómputo/rainbow-tables: cada mensaje obliga a recalcular
+// PBKDF2 desde cero, no hay tabla reutilizable contra "todas las cuentas". El salt NO es secreto (va en claro en el mensaje); el
+// secreto es la passphrase. KDF = PBKDF2-SHA256 (no scrypt) a propósito: el decoder web lo replica con Web Crypto nativo.
+const PBKDF2_ITERS = 200000, SALT_LEN = 8
+function keyFor(pass, salt) { return pbkdf2Sync(String(pass || ""), salt, PBKDF2_ITERS, 32, "sha256") } // salt = Buffer por-mensaje
 function seal(text, pass) {
-  const iv = randomBytes(12)
-  const c = createCipheriv("aes-256-gcm", keyFor(pass), iv, { authTagLength: 8 }) // tag de 8 bytes (64-bit) → más compacto; suficiente
-  const ct = Buffer.concat([c.update(Buffer.from(String(text), "utf8")), c.final()]) //                            para este caso de uso
-  return Buffer.concat([iv, c.getAuthTag(), ct]) // 12 + 8 + N
+  const salt = randomBytes(SALT_LEN), iv = randomBytes(12)
+  const c = createCipheriv("aes-256-gcm", keyFor(pass, salt), iv, { authTagLength: 8 }) // tag de 8 bytes (64-bit): compacto y suficiente
+  const ct = Buffer.concat([c.update(Buffer.from(String(text), "utf8")), c.final()])
+  return Buffer.concat([salt, iv, c.getAuthTag(), ct]) // salt(8) + iv(12) + tag(8) + ct(N)
 }
 function open(blob, pass) {
-  const iv = blob.subarray(0, 12), tag = blob.subarray(12, 20), ct = blob.subarray(20)
-  const d = createDecipheriv("aes-256-gcm", keyFor(pass), iv, { authTagLength: 8 })
+  const salt = blob.subarray(0, SALT_LEN), iv = blob.subarray(SALT_LEN, SALT_LEN + 12), tag = blob.subarray(SALT_LEN + 12, SALT_LEN + 20), ct = blob.subarray(SALT_LEN + 20)
+  const d = createDecipheriv("aes-256-gcm", keyFor(pass, salt), iv, { authTagLength: 8 })
   d.setAuthTag(tag)
   return Buffer.concat([d.update(ct), d.final()]).toString("utf8") // lanza si el auth falla (clave mala / texto ajeno)
 }
@@ -152,7 +148,7 @@ export function decodeCovert(coverText, pass) {
     if (!bits || bits.length < 16) continue
     let L = 0; for (let i = 0; i < 16; i++) L = (L << 1) | bits[i]
     const need = 16 + L * 8
-    if (L < 20 || bits.length < need) continue // blob mínimo = 12(iv)+8(tag) = 20 bytes
+    if (L < 28 || bits.length < need) continue // blob mínimo = 8(salt)+12(iv)+8(tag) = 28 bytes
     try { return { text: open(fromBits(bits.slice(16, need)), pass), style: styleId } } catch { /* auth falló → siguiente estilo */ }
   }
   return null

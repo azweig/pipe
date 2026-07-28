@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Pipe · Descifrar mensaje</title>
+<style>
+  :root { --bg:#0e0e14; --card:#16161f; --card2:#1d1d29; --ink:#ececf5; --muted:#9a9ab0; --line:#2a2a3a; --accent:#7c6cff; --grad:linear-gradient(135deg,#7c6cff,#a06cff); }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; line-height:1.5; }
+  .wrap { max-width:560px; margin:0 auto; padding:28px 18px 60px; }
+  .brand { display:flex; align-items:center; gap:9px; font-weight:800; font-size:19px; letter-spacing:-.02em; }
+  .brand .dot { width:26px;height:26px;border-radius:8px;background:var(--grad);display:flex;align-items:center;justify-content:center;font-size:15px }
+  h1 { font-size:clamp(24px,6vw,32px); font-weight:800; letter-spacing:-.03em; margin:26px 0 8px; }
+  .sub { color:var(--muted); font-size:15px; margin:0 0 22px; }
+  .tabs { display:flex; gap:6px; background:var(--card); border-radius:14px; padding:5px; margin-bottom:16px; }
+  .tab { flex:1; border:0; background:transparent; color:var(--muted); font-weight:700; font-size:15px; padding:11px; border-radius:10px; cursor:pointer; }
+  .tab.on { background:var(--grad); color:#fff; }
+  label { display:block; font-size:12px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); margin:16px 0 7px; }
+  textarea, input, select { width:100%; background:var(--card); border:1px solid var(--line); border-radius:13px; padding:13px 14px; color:var(--ink); font-size:16px; font-family:inherit; resize:vertical; }
+  textarea { min-height:120px; line-height:1.55; }
+  textarea:focus, input:focus, select:focus { outline:none; border-color:var(--accent); }
+  .btn { width:100%; border:0; background:var(--grad); color:#fff; font-weight:800; font-size:16px; padding:15px; border-radius:13px; cursor:pointer; margin-top:20px; }
+  .btn:disabled { opacity:.5; }
+  .out { margin-top:18px; background:var(--card2); border:1px solid var(--line); border-radius:14px; padding:16px; display:none; }
+  .out.show { display:block; }
+  .out.ok { border-color:#2e7d55; }
+  .out.err { border-color:#7d2e2e; }
+  .out .lbl { font-size:11px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); margin-bottom:7px; }
+  .out .msg { font-size:17px; white-space:pre-wrap; word-break:break-word; }
+  .out .copy { margin-top:12px; background:var(--card); border:1px solid var(--line); color:var(--ink); font-weight:700; font-size:13.5px; padding:9px 14px; border-radius:10px; cursor:pointer; }
+  .note { margin-top:26px; color:var(--muted); font-size:12.5px; border-top:1px solid var(--line); padding-top:16px; }
+  .note b { color:var(--ink); }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><span class="dot">🕊️</span> Pipe</div>
+  <h1>Descifrar un mensaje</h1>
+  <p class="sub">Alguien te mandó un mensaje que parece un poema (o un cuento, receta…) pero en realidad esconde otro. Pegá el texto y la <b>clave que te pasaron</b> — se descifra <b>acá, en tu navegador</b>. Nada se envía a ningún servidor.</p>
+
+  <div class="tabs">
+    <button class="tab on" id="tab-dec" onclick="setMode('dec')">Descifrar</button>
+    <button class="tab" id="tab-enc" onclick="setMode('enc')">Cifrar</button>
+  </div>
+
+  <div id="pane-dec">
+    <label>Texto que recibiste</label>
+    <textarea id="d-text" placeholder="Pegá acá el poema / cuento / mensaje…"></textarea>
+    <label>Clave compartida</label>
+    <input id="d-pass" type="text" autocomplete="off" autocapitalize="off" placeholder="La clave que te dieron (ej. nuestro café 2019)">
+    <button class="btn" onclick="doDecode()">Descifrar</button>
+    <div class="out" id="d-out"><div class="lbl" id="d-out-lbl">Mensaje</div><div class="msg" id="d-out-msg"></div></div>
+  </div>
+
+  <div id="pane-enc" style="display:none">
+    <label>Tu mensaje secreto</label>
+    <textarea id="e-text" placeholder="Escribí el mensaje real…"></textarea>
+    <label>Clave compartida</label>
+    <input id="e-pass" type="text" autocomplete="off" autocapitalize="off" placeholder="Acordá esta clave con la otra persona">
+    <label>Disfraz</label>
+    <select id="e-style"></select>
+    <button class="btn" onclick="doEncode()">Cifrar</button>
+    <div class="out" id="e-out"><div class="lbl">Mandá esto (parece inofensivo)</div><div class="msg" id="e-out-msg"></div><button class="copy" onclick="copyOut()">📋 Copiar</button></div>
+  </div>
+
+  <p class="note"><b>¿Qué es esto?</b> Parte de <a href="https://pipe.one" target="_blank">Pipe</a> — tu bandeja unificada + segundo cerebro, self-hosteable. El "modo encubierto" cifra de verdad (AES-256-GCM) y disfraza el resultado de texto natural. Si ambos usan Pipe, se descifra solo; si no, se usa esta página. <b>La seguridad está en la clave</b>, no en el disfraz — compartíla por un canal seguro.</p>
+</div>
+
+<script>
+// ===== motor covert (idéntico a src/lib/covertext.mjs del servidor, portado a Web Crypto) =====
+const ITERS = 200000, SALT_LEN = 8, TE = new TextEncoder(), TD = new TextDecoder() // salt ALEATORIO por mensaje (embebido en el blob)
+const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s
+function group(words, per, sep, end) { const L = []; for (let i=0;i<words.length;i+=per) L.push(cap(words.slice(i,i+per).join(" "))); return L.join(sep) + end }
+const GRAMMARS = {
+  poema: { label:"🕊️ Poema", lists:{
+    SUS:["luna","sombra","río","viento","fuego","mar","cielo","piedra","flor","noche","alba","niebla","estrella","camino","silencio","abismo"],
+    VER:["arde","cae","sueña","espera","canta","tiembla","huye","nace","vuela","calla","brilla","sangra","danza","respira","olvida","regresa"],
+    ADJ:["azul","eterno","roto","dorado","lejano","herido","salvaje","quieto","oscuro","tibio","desnudo","antiguo","frágil","inmenso","secreto","amargo"],
+    PRE:["sobre","bajo","entre","hacia","sin","tras","desde","contra"] },
+    seq:[{slot:"SUS"},{slot:"VER"},{lit:"y"},{slot:"ADJ"},{slot:"SUS"},{slot:"VER"},{slot:"PRE"},{slot:"SUS"}], fmt:(w)=>group(w,4,",\n",".") },
+  cuento: { label:"📖 Cuento", lists:{
+    QUI:["el viajero","la niña","un rey","la anciana","el lobo","la reina","un pastor","el herrero","la bruja","un marino","el monje","la hija","un ladrón","el juglar","la sombra","un niño"],
+    ACC:["caminó","encontró","perdió","buscó","guardó","temió","recordó","cruzó","soñó","escondió","abrió","siguió","olvidó","vendió","quemó","halló"],
+    OBJ:["la llave","un mapa","el anillo","la carta","un espejo","la moneda","el reloj","la espada","un frasco","la corona","el retrato","la lámpara","un dado","la aguja","el cofre","la vela"],
+    LUG:["el bosque","la aldea","el puerto","la torre","un desván","la feria","el molino","la cueva"] },
+    seq:[{lit:"entonces"},{slot:"QUI"},{slot:"ACC"},{slot:"OBJ"},{lit:"en"},{slot:"LUG"},{lit:"y"},{slot:"QUI"},{slot:"ACC"},{slot:"OBJ"}], fmt:(w)=>group(w,6,". ",".") },
+  receta: { label:"🍲 Receta", lists:{
+    ACT:["mezcla","corta","hierve","dora","sirve","bate","reposa","sazona","pica","funde","escurre","flambea","amasa","glasea","tuesta","marina"],
+    ING:["cebolla","harina","tomate","ajo","romero","canela","manteca","azúcar","laurel","queso","pimienta","limón","menta","jengibre","vainilla","comino"],
+    MOD:["a fuego lento","sin prisa","con cuidado","hasta dorar","en frío","al punto","muy fino","de a poco"] },
+    seq:[{slot:"ACT"},{lit:"la"},{slot:"ING"},{lit:"con"},{slot:"ING"},{slot:"MOD"},{lit:"y"},{slot:"ACT"},{lit:"el"},{slot:"ING"}], fmt:(w)=>group(w,6,", ",".") },
+  oracion: { label:"🙏 Oración", lists:{
+    LUZ:["luz","gracia","paz","fe","gloria","misericordia","esperanza","consuelo","perdón","fuerza","calma","sabiduría","dicha","amparo","fervor","bondad"],
+    ACO:["guía","protege","sostén","ilumina","acompaña","bendice","escucha","levanta","consuela","perdona","cuida","sana","abraza","sostiene","renueva","salva"],
+    ALM:["mi alma","tu siervo","el camino","la noche","mi voz","los tuyos","el débil","la casa","mi paso","el mundo","tu nombre","la herida","mi anhelo","el humilde","la vida","mi espera"],
+    HOR:["hoy","siempre","ahora","aquí","también","aún","todavía","ya"] },
+    seq:[{lit:"señor"},{slot:"ACO"},{slot:"ALM"},{lit:"con tu"},{slot:"LUZ"},{slot:"HOR"},{lit:"y danos"},{slot:"LUZ"}], fmt:(w)=>group(w,4,",\n",".") },
+}
+const log2 = (n) => Math.round(Math.log2(n))
+const toBits = (buf) => { const b=[]; for (const byte of buf) for (let i=7;i>=0;i--) b.push((byte>>i)&1); return b }
+const fromBits = (bits) => { const out=new Uint8Array(Math.floor(bits.length/8)); for (let i=0;i<out.length;i++){ let v=0; for (let j=0;j<8;j++) v=(v<<1)|bits[i*8+j]; out[i]=v } return out }
+
+async function deriveKey(pass, salt) { // salt = Uint8Array por-mensaje (viene embebido en el blob)
+  const km = await crypto.subtle.importKey("raw", TE.encode(String(pass||"")), "PBKDF2", false, ["deriveKey"])
+  return crypto.subtle.deriveKey({ name:"PBKDF2", salt, iterations:ITERS, hash:"SHA-256" }, km, { name:"AES-GCM", length:256 }, false, ["encrypt","decrypt"])
+}
+async function sealBlob(text, pass) { // → Uint8Array salt(8)+iv(12)+tag(8)+ct  (mismo layout que Node)
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_LEN)), iv = crypto.getRandomValues(new Uint8Array(12))
+  const key = await deriveKey(pass, salt)
+  const ctTag = new Uint8Array(await crypto.subtle.encrypt({ name:"AES-GCM", iv, tagLength:64 }, key, TE.encode(text)))
+  const ct = ctTag.slice(0, ctTag.length-8), tag = ctTag.slice(ctTag.length-8)
+  const blob = new Uint8Array(SALT_LEN+20+ct.length); blob.set(salt,0); blob.set(iv,SALT_LEN); blob.set(tag,SALT_LEN+12); blob.set(ct,SALT_LEN+20); return blob
+}
+async function openBlob(blob, pass) { // salt(8)+iv(12)+tag(8)+ct → texto (lanza si el tag no valida)
+  const salt = blob.slice(0,SALT_LEN), iv = blob.slice(SALT_LEN,SALT_LEN+12), tag = blob.slice(SALT_LEN+12,SALT_LEN+20), ct = blob.slice(SALT_LEN+20)
+  const key = await deriveKey(pass, salt)
+  const ctTag = new Uint8Array(ct.length+8); ctTag.set(ct,0); ctTag.set(tag,ct.length)
+  return TD.decode(await crypto.subtle.decrypt({ name:"AES-GCM", iv, tagLength:64 }, key, ctTag))
+}
+function parseWith(g, tokens) {
+  const bits=[]; let ti=0
+  while (ti < tokens.length) {
+    for (const el of g.seq) {
+      if (ti >= tokens.length) return bits
+      const w = tokens[ti++]
+      if (el.lit) { if (w !== el.lit && !el.lit.split(" ").includes(w)) return null; if (el.lit.includes(" ")) ti += el.lit.split(" ").length-1; continue }
+      const list = g.lists[el.slot], k = log2(list.length)
+      let idx = list.indexOf(w)
+      if (idx < 0 && w) { for (let n=2;n<=3 && idx<0;n++){ const j=[w,...tokens.slice(ti,ti+n-1)].join(" "); idx=list.indexOf(j); if(idx>=0) ti+=n-1 } }
+      if (idx < 0) return null
+      for (let j=k-1;j>=0;j--) bits.push((idx>>j)&1)
+    }
+  }
+  return bits
+}
+async function encodeCovert(text, pass, styleId) {
+  const g = GRAMMARS[styleId] || GRAMMARS.poema
+  if (!String(text||"").trim()) throw new Error("mensaje vacío")
+  const blob = await sealBlob(String(text), pass)
+  if (blob.length > 0xffff) throw new Error("mensaje demasiado largo (probá algo más corto)")
+  const bits=[]; for (let i=15;i>=0;i--) bits.push((blob.length>>i)&1); for (const b of toBits(blob)) bits.push(b)
+  const words=[]; let pos=0
+  do { for (const el of g.seq) {
+    if (el.lit) { words.push(el.lit); continue }
+    const list=g.lists[el.slot], k=log2(list.length); let idx=0
+    for (let j=0;j<k;j++){ idx=(idx<<1)|(pos<bits.length?bits[pos]:0); pos++ }
+    words.push(list[idx])
+  } } while (pos < bits.length)
+  return g.fmt(words)
+}
+async function decodeCovert(coverText, pass) {
+  const tokens = String(coverText||"").toLowerCase().normalize("NFC").replace(/[^\p{L}\p{N}\s'-]/gu," ").split(/\s+/).filter(Boolean)
+  if (tokens.length < 4) return null
+  for (const styleId of Object.keys(GRAMMARS)) {
+    const bits = parseWith(GRAMMARS[styleId], tokens)
+    if (!bits || bits.length < 16) continue
+    let L=0; for (let i=0;i<16;i++) L=(L<<1)|bits[i]
+    const need = 16 + L*8
+    if (L < 28 || bits.length < need) continue
+    try { return { text: await openBlob(fromBits(bits.slice(16, need)), pass), style: styleId } } catch (e) {}
+  }
+  return null
+}
+
+// ===== UI =====
+function setMode(m) {
+  document.getElementById("tab-dec").classList.toggle("on", m==="dec")
+  document.getElementById("tab-enc").classList.toggle("on", m==="enc")
+  document.getElementById("pane-dec").style.display = m==="dec" ? "" : "none"
+  document.getElementById("pane-enc").style.display = m==="enc" ? "" : "none"
+}
+const sel = document.getElementById("e-style")
+for (const [id,g] of Object.entries(GRAMMARS)) { const o=document.createElement("option"); o.value=id; o.textContent=g.label; sel.appendChild(o) }
+function showOut(id, lblId, lbl, msg, cls) { const o=document.getElementById(id); o.className="out show "+cls; if(lblId) document.getElementById(lblId).textContent=lbl; document.getElementById(id.replace("-out","-out-msg")).textContent=msg }
+async function doDecode() {
+  const text=document.getElementById("d-text").value, pass=document.getElementById("d-pass").value
+  if (!text.trim() || !pass) return showOut("d-out","d-out-lbl","",  "Pegá el texto y la clave.", "err")
+  try { const r = await decodeCovert(text, pass)
+    if (r) showOut("d-out","d-out-lbl","Mensaje descifrado", r.text, "ok")
+    else showOut("d-out","d-out-lbl","No se pudo", "La clave no coincide, o ese texto no es un mensaje encubierto de Pipe.", "err")
+  } catch (e) { showOut("d-out","d-out-lbl","Error", String(e.message||e), "err") }
+}
+let lastEnc=""
+async function doEncode() {
+  const text=document.getElementById("e-text").value, pass=document.getElementById("e-pass").value, style=document.getElementById("e-style").value
+  if (!text.trim() || !pass) return showOut("e-out",null,"", "Escribí el mensaje y la clave.", "err")
+  try { lastEnc = await encodeCovert(text, pass, style); showOut("e-out",null,"", lastEnc, "ok") }
+  catch (e) { showOut("e-out",null,"", String(e.message||e), "err") }
+}
+function copyOut() { if (lastEnc) navigator.clipboard.writeText(lastEnc).then(()=>{ const b=event.target; const t=b.textContent; b.textContent="✓ Copiado"; setTimeout(()=>b.textContent=t,1400) }).catch(()=>{}) }
+</script>
+</body>
+</html>
