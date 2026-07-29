@@ -3,7 +3,7 @@
 // Corre en el daemon cada ~4 min, throttled (pocos por corrida) para no gatillar bloqueos de IG/FB.
 // Estado por URL en data/video-fetch-state.json → no reintenta infinito. Cookies opcionales en auth/cookies.txt (contenido privado).
 import { execFileSync } from "child_process"
-import { readFileSync, writeFileSync, existsSync, readdirSync, mkdtempSync, rmSync } from "fs"
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdtempSync, rmSync, statSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import { videoCandidates, setVideoMedia } from "./lib/db.mjs"
@@ -13,6 +13,8 @@ import { shouldStoreMedia } from "./lib/media-policy.mjs"
 const STATE = "./data/video-fetch-state.json"
 const COOKIES = "./auth/cookies.txt"
 const YTDLP = "/usr/local/bin/yt-dlp"
+// Segundo motor de descarga: gallery-dl. Cubre casos donde yt-dlp falla (IG/TikTok/galerías de fotos) y también respeta auth/cookies.txt.
+const GALLERYDL = ["/usr/bin/gallery-dl", "/usr/local/bin/gallery-dl"].find((p) => existsSync(p)) || "gallery-dl"
 const MAX_PER_RUN = parseInt(process.env.VIDEO_MAX_PER_RUN || "6") // descargas reales por corrida (throttle)
 const MAX_ATTEMPTS = 3 // tras 3 fallos, se marca failed y no se reintenta
 const MAX_FILESIZE = process.env.VIDEO_MAX_FILESIZE || "300M"
@@ -48,11 +50,29 @@ function download(url) {
     args.push(url)
     execFileSync(YTDLP, args, { timeout: DL_TIMEOUT, stdio: "ignore" })
     const files = readdirSync(dir).filter((f) => f.startsWith("v.") && !f.endsWith(".part"))
-    if (!files.length) return null
+    if (!files.length) return downloadGallery(url, dir) // yt-dlp no sacó nada → probar gallery-dl
     const buf = readFileSync(join(dir, files[0]))
-    if (!buf.length) return null
+    if (!buf.length) return downloadGallery(url, dir)
     return { buf, ext: files[0].split(".").pop() || "mp4" }
-  } catch { return null } finally { try { rmSync(dir, { recursive: true, force: true }) } catch {} }
+  } catch { return downloadGallery(url, dir) } finally { try { rmSync(dir, { recursive: true, force: true }) } catch {} }
+}
+
+// Fallback con gallery-dl al MISMO dir temporal (el finally del caller lo limpia). Baja a plano con -D y agarra el archivo más grande.
+function downloadGallery(url, dir) {
+  try {
+    const args = ["-q", "--no-mtime", "-D", dir, "--range", "1-4"]
+    if (existsSync(COOKIES)) args.push("--cookies", COOKIES)
+    args.push(url)
+    execFileSync(GALLERYDL, args, { timeout: DL_TIMEOUT, stdio: "ignore" })
+    const media = readdirSync(dir).filter((f) => /\.(mp4|mov|webm|mkv|jpg|jpeg|png|webp|gif)$/i.test(f) && !f.endsWith(".part"))
+    if (!media.length) return null
+    // preferir video; si no hay, la imagen más grande
+    const pick = media.map((f) => ({ f, size: statSync(join(dir, f)).size, vid: /\.(mp4|mov|webm|mkv)$/i.test(f) }))
+      .sort((a, b) => (b.vid - a.vid) || (b.size - a.size))[0]
+    const buf = readFileSync(join(dir, pick.f))
+    if (!buf.length) return null
+    return { buf, ext: pick.f.split(".").pop().toLowerCase() || "mp4" }
+  } catch { return null }
 }
 
 const AUTH_HOST = /instagram\.com|tiktok\.com|twitter\.com|x\.com/i // suelen requerir login → reintentar cuando lleguen cookies
