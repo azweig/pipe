@@ -39,7 +39,7 @@ Don't want to run it yourself? There's a **managed version** — the whole stack
 
 - **Node.js 20 LTS** (not 25 — breaks the Baileys crypto path). See `.nvmrc`.
 - **ffmpeg** (voice notes / audio), **better-sqlite3** build toolchain (`python3`, `make`, `g++`).
-- Optional: **Ollama** (local models), **whisper** (`WHISPER_BIN`, local speech-to-text), **yt-dlp** (video fetch), **Docker + Matrix/mautrix** (WhatsApp & other bridges — see `deploy/PROVISIONING.md`).
+- Optional: **Ollama** (local models), **whisper** (`WHISPER_BIN`, local speech-to-text), **yt-dlp** + **gallery-dl** + **instaloader** (video/reel fetch — instaloader pulls public Instagram reels/posts without login), **Docker + Matrix/mautrix** (WhatsApp & other bridges — see `deploy/PROVISIONING.md`).
 
 > **Going to production?** See **[`docs/DEPLOY.md`](docs/DEPLOY.md)** — a go-live runbook (for a human or an AI agent) with the full **local-vs-server minimum requirements**, step-by-step, and a **"change before production"** checklist.
 
