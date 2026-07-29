@@ -26,12 +26,16 @@ before(async () => {
   proc = spawn(process.execPath, ["src/server.mjs"], {
     cwd: ROOT,
     env: { ...process.env, PORT: String(PORT), HOST: "127.0.0.1", MESSAGES_DB: join(dir, "messages.db"), HUB_CONFIG: hubCfg, LLM_CHAIN: "ollama" },
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
   })
+  let childOut = ""
+  proc.stdout.on("data", (b) => { childOut += b })
+  proc.stderr.on("data", (b) => { childOut += b })
+  proc.on("exit", (code, sig) => { if (code) childOut += `\n[server salió code=${code} sig=${sig}]` })
   const deadline = Date.now() + 20000
   for (;;) {
     try { const r = await fetch(`${base()}/api/auth/status`); if (r.ok) break } catch {}
-    if (Date.now() > deadline) throw new Error("el server no arrancó a tiempo")
+    if (Date.now() > deadline) throw new Error("el server no arrancó a tiempo. Salida del proceso:\n" + (childOut.slice(-2000) || "(sin salida)"))
     await new Promise((r) => setTimeout(r, 250))
   }
 })
