@@ -15,6 +15,10 @@ const COOKIES = "./auth/cookies.txt"
 const YTDLP = "/usr/local/bin/yt-dlp"
 // Segundo motor de descarga: gallery-dl. Cubre casos donde yt-dlp falla (IG/TikTok/galerías de fotos) y también respeta auth/cookies.txt.
 const GALLERYDL = ["/usr/bin/gallery-dl", "/usr/local/bin/gallery-dl"].find((p) => existsSync(p)) || "gallery-dl"
+// Motor específico de Instagram: instaloader. Baja reels/posts PÚBLICOS SIN login (anónimo) — a bajo volumen IG no lo bloquea, solo throttlea (429).
+// Como video-fetch ya está throttleado (MAX_PER_RUN + DELAY), encaja bien. Es el 1er intento para links de IG (antes que yt-dlp/gallery-dl que piden cookies).
+const INSTALOADER = ["/root/.local/bin/instaloader", "/usr/local/bin/instaloader"].find((p) => existsSync(p)) || "instaloader"
+const IG_SHORTCODE = /instagram\.com\/(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/i
 const MAX_PER_RUN = parseInt(process.env.VIDEO_MAX_PER_RUN || "6") // descargas reales por corrida (throttle)
 const MAX_ATTEMPTS = 3 // tras 3 fallos, se marca failed y no se reintenta
 const MAX_FILESIZE = process.env.VIDEO_MAX_FILESIZE || "300M"
@@ -40,10 +44,27 @@ function candidates() {
   return out
 }
 
+// Instagram público con instaloader (anónimo, sin cookies). Devuelve {buf, ext} o null.
+function downloadInstaloader(url, dir) {
+  const m = String(url).match(IG_SHORTCODE); if (!m) return null
+  try {
+    // el "-<shortcode>" (con guión) le dice a instaloader que es un POST por shortcode, no un perfil. --dirname-pattern fija el dir plano.
+    execFileSync(INSTALOADER, ["--quiet", "--no-metadata-json", "--no-captions", "--no-video-thumbnails", "--dirname-pattern=" + dir, "--", "-" + m[1]],
+      { timeout: DL_TIMEOUT, stdio: "ignore", env: { ...process.env, PATH: (process.env.PATH || "") + ":/root/.local/bin" } })
+    const vids = readdirSync(dir).filter((f) => /\.(mp4|mov|webm)$/i.test(f))
+    const pick = vids[0] || readdirSync(dir).filter((f) => /\.(jpg|jpeg|png|webp)$/i.test(f)).sort((a, b) => statSync(join(dir, b)).size - statSync(join(dir, a)).size)[0]
+    if (!pick) return null
+    const buf = readFileSync(join(dir, pick)); if (!buf.length) return null
+    return { buf, ext: pick.split(".").pop().toLowerCase() || "mp4" }
+  } catch { return null }
+}
+
 // baja UNA url a un dir temporal → {buf, ext} o null
 function download(url) {
   const dir = mkdtempSync(join(tmpdir(), "vf-"))
   try {
+    // Instagram → instaloader primero (baja público sin cookies); si no saca nada, sigue con yt-dlp/gallery-dl.
+    if (IG_SHORTCODE.test(url)) { const ig = downloadInstaloader(url, dir); if (ig) return ig }
     const args = ["--no-playlist", "--no-warnings", "--quiet", "--no-progress", "--max-filesize", MAX_FILESIZE,
       "-f", "best[ext=mp4]/best", "-o", join(dir, "v.%(ext)s")]
     if (existsSync(COOKIES)) args.push("--cookies", COOKIES) // desbloquea IG/FB/TikTok privados
