@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs"
 const PRE_GATE_OK = new Set([
   "/api/auth/status", "/api/auth/setup", "/api/auth", "/api/auth/logout", "/api/auth/revoke-all", "/api/auth/change-pin", "/api/health",
   "/api/webhook/kofi", // webhook público de Ko-fi: verifica su propio verification_token (KOFI_TOKEN), no puede usar PIN. Deliberado y revisado.
+  "/api/ingest/sms", // ingesta de SMS desde un forwarder de teléfono/Mac (chat.db): autentica con SMS_TOKEN por header, el forwarder no tiene PIN. Deliberado y revisado.
 ])
 
 const src = readFileSync("src/server.mjs", "utf8").split("\n")

@@ -16,6 +16,9 @@ const EGRESS_ALLOW = new Set([
   "src/lib/llm.mjs", "src/lib/voice.mjs", "src/calendar-outlook.mjs", "src/files-sharepoint.mjs", "src/holidays.mjs",
   "src/lib/briefing.mjs", "src/lib/calendar.mjs", "src/lib/mail-archive.mjs", "src/lib/research.mjs",
   "src/mail-backfill.mjs", "src/mail-outlook.mjs", "src/teams.mjs",
+  // Egress de canales de MENSAJERÍA (no IA): la API de Slack de TU propia cuenta conectada. Revisado y deliberado.
+  "src/lib/brain/reply.mjs", // chat.postMessage: envía TU respuesta a Slack
+  "src/lib/integrations.mjs", // auth.test: valida TU token de Slack antes de guardarlo
 ])
 const FETCH_HTTPS = /fetch\(\s*[`"']https:\/\//
 
