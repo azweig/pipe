@@ -11,6 +11,7 @@ import { unipileConfigured, unipileSend } from "../unipile-api.mjs"
 import { sendEmailReply } from "../mailer.mjs"
 import { casPutBuffer } from "../cas.mjs"
 import { llm } from "../llm.mjs"
+import { maskLinks, unmaskLinks, isOnlyLinks } from "../linkmask.mjs" // #1: los links nunca se corrigen
 import { harden, UNTRUSTED_NOTE } from "../safety.mjs"
 import { ownerFirst } from "../hub.mjs"
 import { buildStyleProfile, buildStyleProfiles, styleExamples, categoryOf } from "../style.mjs"
@@ -224,10 +225,14 @@ Devolvé SOLO el texto, como lo escribiría ${ownerFirst()}.`, { system: UNTRUST
 
 // ── COMPOSITOR: corrección rápida ANTES de enviar (los teclados son malos). Devuelve 3 opciones: original, corregido y
 // una alternativa mejor redactada del MISMO mensaje. LLM liviano y rápido (es solo corregir un texto corto).
+
 export async function composeCorrect(text, { channel } = {}) {
   const { scheduleSlots } = await import("./schedule.mjs") // huecos libres para el "momento de espera" del envío (runtime)
   const t = (text || "").trim()
   if (t.length < 2) return { original: t, corrected: t, alternative: "" }
+  // #1: si es puro link (o links), no lo mandamos a corregir — se envía idéntico.
+  if (isOnlyLinks(t)) return { original: t, corrected: t, alternative: "", ...scheduleSlots(t) }
+  const { masked: tMasked, urls } = maskLinks(t) // enmascarar links antes de que el LLM los vea
   // Corrección de texto: debe ser RÁPIDA (se dispara al tocar enviar). gpt-4o-mini (~1.5s, fiel) como primario;
   // fallback local qwen2.5:3b (más fiel que el 1.5b). Gemini queda fuera (free-tier 429). num_predict acota la salida.
   const prompt = `Sos un corrector de mensajes. Te doy un texto que ${ownerFirst()} va a enviar por ${channel || "chat"} y devolvés SOLO un JSON válido:
@@ -236,8 +241,9 @@ export async function composeCorrect(text, { channel } = {}) {
 "corregido": el MISMO texto corrigiendo únicamente ortografía, tildes, mayúsculas y puntuación. Reglas estrictas: NO cambies ninguna palabra por un sinónimo, NO reformules, NO agregues ni quites contenido, NO cambies el tono ni la jerga (dejá "pucha", "oe", "xfa", etc. tal cual). Solo arreglás cómo está escrito.
 "alternativo": una reformulación más clara y natural del MISMO mensaje, tono directo y humano, sin inventar datos ni cambiar la intención.
 
+Los tokens tipo LNK0X, LNK1X son enlaces: copialos EXACTAMENTE igual, no los toques ni los traduzcas.
 Mantené el idioma original. Sin comillas de más ni explicaciones.
-Texto: """${t}"""`
+Texto: """${tMasked}"""`
   // CLOUD-OK: redactar/corregir borradores es INTERACTIVO (lo dispara el usuario y espera calidad+velocidad) y ve solo el hilo en
   // cuestión, no el corpus. Nube deliberada; local no da la voz. Con GPU: LLM_CHAIN_CORRECT=ollama.
   // PRIMARIO: como lo tenga ruteado el hub (feature:"correct" → puede ser la GPU box local), pero ACOTADO EN TIEMPO. Si tarda más
@@ -263,8 +269,12 @@ Texto: """${t}"""`
       if (!process.env.OPENAI_API_KEY) throw e1
       r = await llm(prompt, { json: true, chain: "openai", numPredict: 260, temperature: 0.2, task: "correct-fallback", bypassCap: true })
     }
-    const corrected = (r?.corregido || t).trim() || t
-    let alternative = (r?.alternativo || "").trim()
+    // restaurar los links textualmente; safety net: si algún link se perdió en la salida, devolver el original (nunca romper un link)
+    const allLinksOk = (s) => urls.every((u) => s.includes(u))
+    let corrected = unmaskLinks((r?.corregido || t).trim() || t, urls)
+    if (!allLinksOk(corrected)) corrected = t
+    let alternative = unmaskLinks((r?.alternativo || "").trim(), urls)
+    if (!allLinksOk(alternative)) alternative = ""
     if (alternative === corrected || alternative === t) alternative = "" // no ofrecer una "alternativa" idéntica
     return { original: t, corrected, alternative, ...scheduleSlots(t) }
   } catch (e) { return { original: t, corrected: t, alternative: "", slots: [], failed: true, error: e.message } } // falló/timeout → el UI lo distingue de "sin errores"

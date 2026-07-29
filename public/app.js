@@ -1350,6 +1350,7 @@ function renderConv() {
   const inputRow = `<div style="display:flex;gap:6px;align-items:flex-end;width:100%">
     <button id="aiBtn" onclick="aiMenu()" title="IA: sugerir respuesta / resumir chat / corrección" style="min-width:38px;height:38px;border-radius:50%;border:1.5px solid var(--accent);background:var(--bg2);font-size:15px;font-weight:800;color:var(--accent);cursor:pointer;flex-shrink:0">Ai</button>
     ${multi ? chanBtn : ""}<textarea id="msgInput" rows="1" aria-label="Escribí tu mensaje" placeholder="${tg.channel === "email" ? "Email…" : (window._covertOn ? "🕊️ Mensaje encubierto…" : "Mensaje…")}" autocomplete="off" spellcheck="${_spell}" oninput="growComposer(this)" onpaste="handlePaste(event)" style="flex:1;min-width:0;padding:9px 14px;border-radius:20px;border:1px solid var(--line);background:#fff;font-size:15px;resize:none;max-height:120px;overflow-y:auto;font-family:inherit;line-height:1.3;box-sizing:border-box" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}"></textarea>
+    <button id="correctBtn" onclick="toggleCorrect()" title="${window._correctOn ? "Corregir con IA al enviar (tocá para enviar tal cual)" : "Enviar TAL CUAL, sin corregir (tocá para corregir)"}" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:${window._correctOn ? "var(--accent)" : "var(--bg2)"};color:${window._correctOn ? "#fff" : "var(--muted)"};font-size:16px;cursor:pointer;flex-shrink:0">✨</button>
     ${tg.channel !== "email" ? `<input type="file" id="mediaInput" accept="image/*,video/*" multiple style="display:none" onchange="onMediaPick(this)"><button id="attachBtn" onclick="pickMedia()" title="Enviar fotos o videos (podés elegir varios)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:18px;cursor:pointer;flex-shrink:0">📎</button><button id="micBtn" onclick="recVoice()" title="Nota de voz (manda el audio)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:19px;cursor:pointer;flex-shrink:0">🎤</button><button id="micAiBtn" onclick="recVoice(true)" title="Dictar con IA: hablás y te lo paso a texto (tal cual · corregido · mejorado)" style="min-width:44px;height:38px;border-radius:19px;border:1.5px solid var(--accent);background:var(--bg2);color:var(--accent);cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:1px;font-weight:800"><span style="font-size:16px">🎤</span><span style="font-size:10px">IA</span></button>` : ""}
     <button id="sendBtn" onclick="sendMsg()" aria-label="Enviar mensaje" style="min-width:38px;height:38px;border-radius:50%;border:0;background:var(--accent);color:#fff;font-size:17px;cursor:pointer;flex-shrink:0">➤</button></div>`
   const composer = fwdSel ? fwdBar : (canSend ? `<div id="composer" style="position:fixed;bottom:82px;left:50%;transform:translateX(-50%);width:100%;max-width:480px;padding:8px 8px;background:var(--bg);border-top:1px solid var(--line);display:flex;flex-direction:column;align-items:stretch;z-index:26;box-sizing:border-box">${replyBar}${inputRow}</div>` : "")
@@ -1675,12 +1676,20 @@ window.recVoice = async (ai = false) => {
 }
 window.cancelRec = () => { if (!_rec) return; _rec.cancelled = true; try { _rec.rec.stop() } catch {} }
 window.stopSendRec = () => { if (!_rec) return; try { _rec.rec.stop() } catch {} }
-// al tocar enviar: NO manda directo. Corrige el texto y muestra 3 opciones (corregido / original / alternativo). Elegís y recién ahí manda.
+// #2: corrección IA al enviar ON por defecto, pero se puede apagar (botón ✨ del composer). Se recuerda entre sesiones.
+window._correctOn = (localStorage.getItem("pipe_correct") !== "0")
+window.toggleCorrect = () => {
+  window._correctOn = !window._correctOn
+  localStorage.setItem("pipe_correct", window._correctOn ? "1" : "0")
+  const b = document.getElementById("correctBtn"); if (b) { b.style.background = window._correctOn ? "var(--accent)" : "var(--bg2)"; b.style.color = window._correctOn ? "#fff" : "var(--muted)"; b.title = window._correctOn ? "Corregir con IA al enviar (tocá para enviar tal cual)" : "Enviar TAL CUAL, sin corregir (tocá para corregir)" }
+}
+// al tocar enviar: si la corrección está ON, muestra las 3 opciones; si está OFF, manda TAL CUAL directo.
 window.sendMsg = async () => {
   const inp = document.getElementById("msgInput"); if (!inp) return
   const text = inp.value.trim(); if (!text || !convState) return
   const t = convState.target || {}
   const ch = t.channel || ((convState.key || "").startsWith("email:") ? "email" : "whatsapp")
+  if (!window._correctOn) { inp.value = ""; growComposer(inp); return doSend(text) } // enviar tal cual
   showSendOptions(text, ch)
 }
 // muestra las 3 opciones (corregido / tal cual / otra forma) para un texto — lo usa el composer Y el dictado por voz (mic IA).
