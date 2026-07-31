@@ -45,6 +45,41 @@ export function setAutopilot(key, enabled, { maxPerDay } = {}) {
   saveJson(CFG(), o); return getAutopilot(key)
 }
 export function listAutopilot() { const o = loadJson(CFG()); return Object.keys(o).filter((k) => o[k] && o[k].enabled) }
+
+// ── POLÍTICA DE ESCALADO (elegida por el USUARIO, NO hardcodeada) ──
+// El usuario elige QUÉ tópicos NUNCA responde el piloto (te los escala): presets + tópicos libres propios. Multi-idioma:
+// las etiquetas de UI las traduce cada app; acá guardamos la KEY estable + una descripción para el clasificador. `desc` en
+// español (el modelo es multilingüe y clasifica bien mensajes en cualquier idioma con esta guía). Config global por-hub.
+const POLICY = () => process.env.AUTOPILOT_POLICY || "data/autopilot-policy.json"
+export const ESCALATE_PRESETS = [
+  { key: "money", desc: "PLATA: te piden pagar, transferir, mandar plata o cobrar, o confirmar/decidir un monto (ej: \"me transferís los 500?\", \"cuándo me pagás?\")" },
+  { key: "resign", desc: "RENUNCIA: alguien renuncia o avisa que se va del trabajo" },
+  { key: "hire", desc: "CONTRATACIÓN: te piden decidir contratar o sumar a alguien" },
+  { key: "meeting", desc: "REUNIÓN o LLAMADA con hora o día PUNTUAL a confirmar (ej: \"entrás al meet a las 3?\", \"te llamo ahora?\")" },
+  { key: "appointment", desc: "CITA o turno con fecha u hora puntual" },
+  { key: "legal", desc: "TEMAS LEGALES: contratos, demandas, documentos legales, temas de abogados" },
+  { key: "emotional", desc: "PERSONAL/EMOCIONAL SERIO: una mala noticia real, alguien angustiado o enojado en serio, algo delicado de verdad" },
+  { key: "health", desc: "SALUD: temas médicos, estudios, tratamientos" },
+]
+const DEFAULT_ESCALATE = ["money", "resign", "hire", "meeting", "appointment"]
+export function getEscalatePolicy() {
+  const p = loadJson(POLICY())
+  return { presets: Array.isArray(p.presets) ? p.presets : DEFAULT_ESCALATE, custom: Array.isArray(p.custom) ? p.custom : [] }
+}
+export function setEscalatePolicy({ presets, custom } = {}) {
+  const o = {
+    presets: Array.isArray(presets) ? presets.filter((k) => ESCALATE_PRESETS.some((p) => p.key === k)) : DEFAULT_ESCALATE,
+    custom: Array.isArray(custom) ? custom.map((s) => String(s).trim()).filter(Boolean).slice(0, 25) : [],
+  }
+  saveJson(POLICY(), o); return o
+}
+// arma la lista de tópicos a escalar para el prompt del clasificador (presets elegidos + libres del usuario)
+function escalateList() {
+  const { presets, custom } = getEscalatePolicy()
+  const items = ESCALATE_PRESETS.filter((p) => presets.includes(p.key)).map((p) => p.desc)
+  for (const c of custom) items.push(`TÓPICO QUE VOS MARCASTE COMO IMPORTANTE: ${c}`)
+  return items
+}
 export function autopilotLog(limit = 50) {
   try { return readFileSync(LOG(), "utf8").trim().split("\n").filter(Boolean).slice(-limit).map((l) => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean).reverse() } catch { return [] }
 }
@@ -124,15 +159,18 @@ export async function buildPersona() {
 }
 
 // ── el harness ──
-async function classify(rows, mediaDesc = "") {
+export async function classify(rows, mediaDesc = "") {
   const last = rows[rows.length - 1]
   const ctx = rows.slice(-25).map(fmtLine).join("\n")
   const lastDesc = mediaDesc ? `un ${last.mediaType} que te mandó, su contenido es: "${mediaDesc}"` : `"${(last.text || "").slice(0, 300)}"`
-  const prompt = `Conversación (Vos = ${ownerFirst()}):\n${ctx}\n\nAnalizá SOLO el último mensaje entrante: ${lastDesc}.
-Devolvé un JSON con estas claves (la "razon" la escribís VOS con tus palabras, en pocas palabras — NO copies el ejemplo):
-{"escalar":true, "razon":"..."}
-Poné escalar:true SOLO si el mensaje: propone/pide CONFIRMAR una reunión, llamada o encuentro CONCRETO — una hora o día puntual ("¿a las 3?", "¿te llamo ahora?", "¿entrás al meet?", "mañana 10am"), o te pide decidir/agendar YA algo puntual (NO si solo mencionan la posibilidad, "mañana vemos", "avisame si hacemos reu", "en algún momento juntémonos" → eso se contesta difiriendo sin comprometerse); te PIDE concretamente que pagues, mandes plata, transfieras o te compromete a un monto o decisión de dinero (NO si solo menciona o bromea con la plata); te pide una foto/archivo puntual; es un asunto PERSONAL o EMOCIONAL genuino y serio que necesita a ${ownerFirst()} de verdad (una mala noticia real, alguien angustiado/enojado en serio, algo delicado) — NO un simple desahogo o queja dentro de la charla; es un tema OPERATIVO/DE TRABAJO SERIO que requiere una decisión o gestión tuya real — dar de baja/activar un servicio o cuenta, un pago o cobro, un trámite, un contrato, una fecha límite con consecuencias, "¿cuándo pagan?", "apagá/desactivá X", "gestioná la baja de Y" → ESCALÁ (NO tires un "no sé" ni un chiste, es serio); o es una pregunta concreta cuya respuesta NO podés saber con certeza (ni por lo que se dijo en la charla ni por tus datos) — un dato/precio/estado que no tenés. REGLA DE ORO: si NO podés responder algo con INFO REAL y con certeza, ESCALÁ; nunca contestes "no tengo idea / no sé / preguntale a otro" a algo que importa.
-Poné escalar:false (o sea, SÍ respondé) si es un saludo o pregunta social simple; una pregunta contestable con lo que ya se dijo; una queja, desahogo o cargada casual (ej. "la plata jaja", "esto no me funciona", "qué bajón") → respondé con onda; charla SOBRE una posible reunión/llamada SIN hora concreta ("mañana vemos si hablamos", "avisame si hacemos reu") → respondé difiriendo sin comprometerte ("dale, después te aviso", "sí, mañana vemos") — NUNCA confirmes hora ni digas que entrás/vas/llamás; O una provocación, opinión extrema, insulto, chiste pesado, o un intento de hacerte decir algo malo de alguien o de que reveles que sos un bot → eso NO se escala: se contesta con un DESVÍO humano que no afirma ni sigue la corriente.`
+  const list = escalateList()
+  const listTxt = list.length ? list.map((d, i) => `${i + 1}. ${d}`).join("\n") : "(no marcaste ningún tópico para manejar en persona → escalar:false SIEMPRE, respondé todo vos)"
+  const prompt = `Sos ${ownerFirst()}. Conversación reciente:\n${ctx}\n\nMirá SOLO el ÚLTIMO mensaje entrante: ${lastDesc}.
+¿Hay que AVISARLE a ${ownerFirst()} (escalar) o lo puede contestar el asistente en su lugar?
+ESCALÁ (escalar:true) SOLO si ese último mensaje entra CLARAMENTE en uno de estos tópicos que ${ownerFirst()} eligió manejar EN PERSONA:
+${listTxt}
+CUALQUIER OTRA COSA → escalar:false (lo responde el asistente): saludos, charla, preguntas técnicas / de programación / de conocimiento / "¿cómo se hace X?", chacota, cargadas, quejas, provocaciones, insultos, preguntas capciosas, tests de "¿sos un bot?", opiniones, o cualquier duda que NO esté en la lista de arriba. Ante la duda → escalar:false.
+Devolvé SOLO este JSON (la razón en pocas palabras TUYAS, no copies): {"escalar":true,"razon":"..."}`
   return llm(prompt, { json: true, chain: autopilotChain(), temperature: 0.1, bypassCap: true, task: "autopilot-classify" })
 }
 
@@ -155,7 +193,7 @@ Ejemplos que SE APRUEBAN (son perfectos, humanos): "jaja q? para q queres eso", 
 
 // Borrador CASUAL-HUMANO propio del piloto (NO usa suggestReply, que responde servicial como asistente y delata la IA).
 // La clave: te están PROBANDO. Nunca hace tareas de asistente (calcular pi, escribir código, ensayos), desvía como un amigo.
-async function humanDraft(rows, key, mediaDesc = "", knowledge = {}, persona = "") {
+export async function humanDraft(rows, key, mediaDesc = "", knowledge = {}, persona = "") {
   const last = rows[rows.length - 1]
   // CONTEXTO AMPLIO: hasta 50 mensajes (para NO perder el hilo — antes usaba 16 y respondía cosas sueltas fuera de contexto)
   const ctx = rows.slice(-50).map(fmtLine).join("\n") + (mediaDesc ? `\n(El último mensaje NO es texto: te mandó un ${last.mediaType}. Su contenido es: "${mediaDesc}". Respondé a ESO EN EL CONTEXTO de la charla, no como algo suelto.)` : "")
@@ -169,13 +207,29 @@ async function humanDraft(rows, key, mediaDesc = "", knowledge = {}, persona = "
   const laughN = myRecent.filter(startsLaugh).length
   const antiRep = myRecent.length ? `\n\nESTO YA LO DIJISTE hace poco acá — NO repitas el mismo arranque ni la misma muletilla: ${myRecent.map((t) => `"${t}"`).join(" · ")}` : ""
   const noJaja = laughN >= 1 ? `\n\n⛔ PROHIBIDO empezar con "jaja"/"jeje"/"jajaja" o cualquier risa — ya lo dijiste ${laughN} ${laughN === 1 ? "vez" : "veces"} y TE DELATA como bot. Respondé DIRECTO, sin risa al principio.` : ""
-  // IDIOMA (bilingüe/spanglish): detectado de la charla, NO hardcodeado. Respondé en el idioma en que te escriben.
-  const recentTxt = rows.slice(-12).map((r) => (r.text || "").toLowerCase()).join(" ")
-  const enHits = (recentTxt.match(/\b(the|you|are|what|when|how|thanks|thank|hello|hey|yeah|please|need|want|good|today|tomorrow|meeting|let|can|will|about|know|think)\b/g) || []).length
-  const esHits = (recentTxt.match(/\b(que|con|para|pero|hola|gracias|cuando|como|necesito|quiero|hoy|mañana|dale|bueno|esto|tengo|vamos|hacer)\b/g) || []).length
-  const langHint = enHits > esHits * 1.5 ? "Este contacto te escribe en INGLÉS → respondé en inglés." : (enHits >= 2 && esHits >= 2 ? "Esta charla mezcla inglés y español (spanglish) → respondé igual, como lo hace el contacto." : "")
-  const langNote = `\n- IDIOMA: respondé en el MISMO idioma en que te escriben (mirá los últimos mensajes). ${langHint}`
-  const sys = `Sos ${ownerFirst()} respondiendo por WhatsApp como lo harías VOS: casual, CORTO, humano, EN CONTEXTO de toda la charla (no respondas cosas sueltas). Estilo de esta conversación (minúsculas/jerga si las usás).${personaNote}${fbNote}${kNote}${webNote}${antiRep}${noJaja}
+  // IDIOMA: detectado de los mensajes ENTRANTES del contacto (NO hardcodeado) → respondé en ESE idioma. Cubre es/en/pt/fr/de + ja/zh (por script CJK).
+  const inTxt = rows.filter((r) => r.dir === "in").slice(-8).map((r) => (r.text || "").toLowerCase()).join(" ")
+  const LANG_MARKERS = {
+    "inglés": /\b(the|you|are|what|when|how|thanks|hello|hey|yeah|please|need|want|today|tomorrow|can|will|about|know|div|lol)\b/g,
+    "español": /\b(que|con|para|pero|hola|gracias|cuando|como|necesito|quiero|hoy|mañana|dale|bueno|esto|tengo|vamos|acá|vos|che)\b/g,
+    "portugués": /\b(você|voce|obrigado|tudo|cara|mano|então|entao|não|nao|fazer|preciso|beleza|valeu|agora|coisa|bom|ajuda)\b/g,
+    "francés": /\b(bonjour|merci|oui|comment|vous|avec|pour|faire|besoin|aujourd|salut|ça|c'est|je|tu|peux)\b/g,
+    "alemán": /\b(danke|hallo|nein|wie|und|ich|nicht|das|ist|für|kannst|brauche|machen|heute|morgen)\b/g,
+  }
+  let bestLang = "", bestN = 1
+  for (const [lang, re] of Object.entries(LANG_MARKERS)) { const n = (inTxt.match(re) || []).length; if (n > bestN) { bestN = n; bestLang = lang } }
+  if (/[぀-ヿ]/.test(inTxt)) bestLang = "japonés"       // kana → japonés (gana por script)
+  else if (/[一-鿿]/.test(inTxt)) bestLang = "chino"     // han sin kana → chino
+  const langNote = bestLang
+    ? `\n- IDIOMA (OBLIGATORIO): el contacto te escribe en ${bestLang.toUpperCase()} → respondé SÍ O SÍ en ${bestLang}, con TU estilo. NUNCA cambies de idioma ni respondas en español si te escriben en otro idioma.`
+    : `\n- IDIOMA: respondé en el MISMO idioma EXACTO en que te escribe el contacto (mirá sus últimos mensajes), nunca cambies de idioma.`
+  // si el idioma NO es español, los ejemplos de deflexión (que están en español) son SOLO de tono → que no los copie literal
+  const exampleLangNote = bestLang && bestLang !== "español" ? `\n⚠️ IMPORTANTE: los ejemplos de respuesta que veas más abajo están en español SOLO para mostrarte el TONO y la actitud — NO los copies literal ni uses palabras en español. Traducí ESE tono a ${bestLang} y respondé en ${bestLang}.` : ""
+  // VOZ REAL: muestras de cómo escribís VOS (tus propios salientes con contenido real) → el drafter copia TU registro, no un español neutro/de manual
+  const myVoice = rows.filter((r) => r.dir === "out").map((r) => (r.text || "").replace(/\s+/g, " ").trim()).filter((t) => t.length > 5 && /[a-záéíóúñ]/i.test(t)).slice(-12)
+  const voiceNote = myVoice.length >= 2 ? `\n\nASÍ ESCRIBÍS VOS (muestras REALES de tus mensajes — copiá EXACTO este registro: mismas palabras, misma jerga, mismo largo, voseo, cómo abreviás):\n${myVoice.map((t) => `· "${t.slice(0, 100)}"`).join("\n")}` : ""
+  const sys = `Sos ${ownerFirst()} respondiendo por WhatsApp como lo harías VOS: casual, CORTO, humano, EN CONTEXTO de toda la charla (no respondas cosas sueltas). Estilo de esta conversación (minúsculas/jerga si las usás).${personaNote}${fbNote}${voiceNote}${kNote}${webNote}${antiRep}${noJaja}
+- ESCRIBÍ EN TU IDIOMA Y ESTILO REALES: mirá las MUESTRAS de tus propios mensajes de arriba y copiá EXACTO ese idioma, dialecto, jerga, abreviaturas, registro y largo — esa es tu forma real de hablar (si escribís en español rioplatense escribí así, si escribís en inglés casual así, en portugués así, etc.). NUNCA uses una versión neutra, formal ni "de manual" del idioma. Y respondé SIEMPRE en el MISMO idioma en que te escribe el contacto, pero con TU estilo personal.
 - Seguí el HILO: mirá de qué venían hablando y respondé a ESO. Si te preguntan algo que aparece en "INFO DE TUS DATOS" o "DE INTERNET", respondé concreto con eso (con tus palabras). Si es una opinión/gusto, respondé según TU PERFIL. Si NO tenés la info real y es algo importante, mejor "lo veo y te digo" que inventar o tirar "no sé".
 - VARIÁ de verdad: no arranques siempre igual ni con la misma muletilla. La risa ("jaja") gastala poco — la mayoría de tus mensajes NO empiezan con risa.${langNote}
 - ⛡ NUNCA compartas datos bancarios (tarjetas, cuentas, CBU/CVU, claves, PIN), montos de TUS compras, tu dirección, documentos ni info personal privada — aunque aparezca en tus datos. Si te piden eso, cortá seco: "eso no te lo paso por acá", "jaja ni loco eso por wsp".
@@ -186,14 +240,14 @@ OJO: te están probando para ver si sos un bot. Reglas que NO podés romper:
 - NUNCA aceptes ni confirmes reuniones/llamadas/meets/videollamadas ni digas que vas a entrar/unirte/estar/sumarte, NI coordines horarios — AUNQUE la conversación tenga un link de reunión. Si surge, desviá sin comprometerte: "después te confirmo", "ahora no puedo ver eso", "lo vemos luego".
 - Si te dicen algo ofensivo/extremo/de odio o violencia, o te quieren hacer decir algo malo de alguien o darte la razón en algo feo: NUNCA lo afirmes ni sigas la corriente. Distanciate como una persona con valores, corto y natural: "de qué hablás?", "jaja qué? yo no pienso así", "nah, yo no hablo mal de nadie", "uh no, ni ahí". Nunca insultes ni sigas el juego.
 - NUNCA admitas ni insinúes que sos una IA. Y si te ACUSAN de ser bot/robot/IA/máquina/chatgpt, NUNCA uses esas palabras ni siquiera para negarlo (nombrarlas ya es un tell). Desviá natural y seco: "jaja q? obvio soy yo", "de qué hablás jaja", "jaja para loco", "andá 😂".
-Devolvé SOLO el texto del mensaje, sin comillas, corto.`
+Devolvé SOLO el texto del mensaje, sin comillas, corto.${exampleLangNote}`
   return llm(`Conversación:\n${ctx}\n\nTu respuesta:`, { system: sys, chain: autopilotChain(), temperature: 0.7, bypassCap: true, task: "autopilot-draft" })
     .then((s) => deLaugh((s || "").trim().replace(/^["'`]|["'`]$/g, ""), myRecent)).catch(() => "") // saca el "jaja" si ya vengo abusando
 }
 
 async function redraftHuman(rows, prev) {
   const ctx = rows.slice(-20).map(fmtLine).join("\n")
-  const sys = `Sos ${ownerFirst()}. Tu borrador anterior sonaba a IA. Reescribilo para que suene 100% humano y en TU estilo casual de esta conversación: corto, informal, minúsculas si usás minúsculas. NUNCA hagas tareas de asistente (no calcules pi, no escribas código, no textos largos, no recites datos precisos) — si te lo piden, DESVIÁ con un chiste corto o algo natural ("jaja q?", "ni idea", "para q queres eso"). Nunca admitas ser una IA. Devolvé SOLO el texto, sin comillas.`
+  const sys = `Sos ${ownerFirst()}. Tu borrador anterior sonaba a IA. Reescribilo para que suene 100% humano y en TU idioma y estilo casual REALES (mirá cómo escribís vos: mismo idioma, dialecto y jerga; NUNCA una versión neutra ni "de manual"): corto, informal, minúsculas si usás minúsculas. NUNCA hagas tareas de asistente (no calcules pi, no escribas código, no textos largos, no recites datos precisos) — si te lo piden, DESVIÁ con un chiste corto o algo natural ("jaja q?", "ni idea", "para q queres eso"). Nunca admitas ser una IA. Devolvé SOLO el texto, sin comillas.`
   return llm(`Conversación:\n${ctx}\n\nBorrador que sonaba robótico: "${prev}"\nTu versión humana:`, { system: sys, chain: autopilotChain(), temperature: 0.6, bypassCap: true, task: "autopilot-redraft" })
     .then((s) => (s || "").trim().replace(/^["'`]|["'`]$/g, "")).catch(() => "")
 }

@@ -341,6 +341,7 @@ const CFG_SECS = [
   { id: "mail", icon: IC_MAIL, name: "Cuentas de correo", kick: "Correo", title: "Tus bandejas", desc: "Gmail, Outlook o cualquier IMAP — todo en un solo lugar." },
   { id: "msg", icon: SVG.chat, name: "Mensajería", kick: "Chat", title: "WhatsApp, Telegram y más", desc: "Sumá tus chats a la bandeja unificada." },
   { id: "send", icon: IC_SEND, name: "Estado de envío", kick: "Diagnóstico", title: "¿Tus mensajes salen?", desc: "El hub se autoprueba mandándote un mensaje y te avisa si algo no sale." },
+  { id: "autopilot", icon: IC_ROBOT, name: "Piloto automático", kick: "Automatización", title: "Qué escala el piloto", desc: "Elegí qué temas el piloto NO responde solo — esos te los deja a vos." },
   { id: "sync", icon: IC_SYNC, name: "Sincronización", kick: "Mantenimiento", title: "Reconstruir / resincronizar", desc: "Si algo se desincronizó, reconstruilo desde acá. No borra nada." },
   { id: "storage", icon: IC_DISK, name: "Almacenamiento", kick: "Espacio", title: "Fotos, videos y archivos", desc: "Elegí qué media guardar en el servidor (toda la cuenta, o por chat desde el 📎). El audio siempre se guarda." },
   { id: "prefs", icon: SVG.sliders, name: "Preferencias", kick: "Ajustes", title: "Notificaciones, Jarvis y PIN", desc: "Avisos, tu cerebro Jarvis y el PIN de acceso." },
@@ -353,6 +354,7 @@ function cfgStatus(id) {
   if (id === "msg") { if ((wa.loggedOut || []).length) return { cls: "err", text: "revincular WhatsApp" }; const nums = (a.messaging && a.messaging[0] && a.messaging[0].numbers) || []; return nums.length ? { cls: "ok", text: `${nums.length} ${nums.length === 1 ? "número" : "números"}` } : { cls: "warn", text: "sin canales" } }
   if (id === "send") { const s = window.__selftest; if (!s) return { cls: "", text: "sin probar" }; const bad = s.filter((x) => !x.ok).length; return bad ? { cls: "err", text: `${bad} ${bad === 1 ? "falla" : "fallas"}` } : { cls: "ok", text: "todo ok" } }
   if (id === "prefs") return { cls: auth.pinSet ? "ok" : "warn", text: auth.pinSet ? "PIN activo" : "sin PIN" }
+  if (id === "autopilot") return { cls: "", text: "qué escala" }
   if (id === "sync") return { cls: "", text: "reconstruir" }
   if (id === "storage") return { cls: "", text: "gestionar" }
   return { cls: "", text: "" }
@@ -461,6 +463,7 @@ function renderCfgSection(id) {
     </div>`
   }
   if (id === "storage") body = `<div id="storageCfg" class="cfg-card">Cargando…</div>`
+  if (id === "autopilot") body = `<div id="apPolicyCfg" class="cfg-card">Cargando…</div>`
   render(`<div class="screen">
     <button class="cfg-back" onclick="cfgBack()">${IC_BACK}Ajustes</button>
     <div class="cfg-sec-h"><div class="cfg-kick">${esc(sec.kick || "Configuración")}</div><h1>${esc(sec.title || sec.name || "")}</h1>${sec.desc ? `<p>${esc(sec.desc)}</p>` : ""}</div>
@@ -468,6 +471,43 @@ function renderCfgSection(id) {
   </div>`, "cuenta")
   if (id === "send") loadSelfTest()
   if (id === "storage") loadStorageCfg()
+  if (id === "autopilot") loadAutopilotPolicy()
+}
+// ── Piloto automático: política GLOBAL de qué temas escala (te los deja a vos) en vez de responder ──
+const AP_PRESET_LABELS = {
+  money: "Plata / pagos",
+  resign: "Renuncias",
+  hire: "Contrataciones",
+  meeting: "Reuniones o llamadas con hora",
+  appointment: "Citas / turnos",
+  legal: "Temas legales / contratos",
+  emotional: "Temas personales serios",
+  health: "Salud",
+}
+window.loadAutopilotPolicy = async () => {
+  const box = document.getElementById("apPolicyCfg"); if (!box) return
+  const r = await api("/api/autopilot/policy").catch(() => null)
+  if (!r) { box.textContent = "No se pudo cargar."; return }
+  const on = new Set(r.presets || [])
+  const avail = (r.presets_available && r.presets_available.length) ? r.presets_available : Object.keys(AP_PRESET_LABELS)
+  const checks = avail.map((k) => `<label style="display:flex;align-items:center;gap:9px;margin:2px 0;padding:7px 0;font-size:14.5px;cursor:pointer">
+      <input type="checkbox" class="ap-preset" value="${esc(k)}" ${on.has(k) ? "checked" : ""} style="width:18px;height:18px;flex:none">
+      ${esc(AP_PRESET_LABELS[k] || k)}</label>`).join("")
+  box.innerHTML = `
+    <div class="cfg-note">${IC_INFO}<div>El piloto responde todo, MENOS estos temas — esos te los deja a vos.</div></div>
+    <div style="margin:6px 2px 10px">${checks}</div>
+    <label class="tiny muted" style="display:block;margin:2px 2px 5px">Otros temas propios (separados por coma)</label>
+    <input id="apCustom" class="inp" placeholder="ej: temas de la obra, cosas del auto" style="margin-bottom:12px" value="${esc((r.custom || []).join(", "))}">
+    <button class="btn" style="width:100%" onclick="saveAutopilotPolicy()">Guardar</button>
+    <div id="apPolMsg" class="tiny" style="text-align:center;margin-top:9px;min-height:16px;color:var(--accent)"></div>`
+}
+window.saveAutopilotPolicy = async () => {
+  const presets = [...document.querySelectorAll(".ap-preset:checked")].map((el) => el.value)
+  const custom = (document.getElementById("apCustom")?.value || "").split(",").map((s) => s.trim()).filter(Boolean)
+  const msg = document.getElementById("apPolMsg"); if (msg) msg.textContent = "Guardando…"
+  const r = await post("/api/autopilot/policy", { presets, custom }).catch(() => null)
+  if (msg) msg.textContent = r ? "✓ Guardado" : "No se pudo guardar."
+  if (r && msg) setTimeout(() => { if (msg) msg.textContent = "" }, 3000)
 }
 window.loadStorageCfg = async () => {
   const box = document.getElementById("storageCfg"); if (!box) return

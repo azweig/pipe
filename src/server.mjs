@@ -532,6 +532,9 @@ const server = createServer(async (req, res) => {
       // 🎭 PERSONA del owner (para que el piloto responda en personaje). GET = ver; POST {text} = editar; POST {rebuild:true} = regenerar de tus datos
       if (path === "/api/autopilot/persona" && req.method === "POST") { const b = await body(req); if (b.rebuild) return json(res, 200, { text: await brain.buildPersona() }); return json(res, 200, brain.setPersona(b.text || "")) }
       if (path === "/api/autopilot/persona") return json(res, 200, { text: brain.getPersona() })
+      // política de escalado: QUÉ tópicos escala el piloto (elegidos por el usuario, no hardcodeado). presets_available = catálogo para la UI.
+      if (path === "/api/autopilot/policy" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setEscalatePolicy({ presets: b.presets, custom: b.custom })) }
+      if (path === "/api/autopilot/policy") return json(res, 200, { ...brain.getEscalatePolicy(), presets_available: brain.ESCALATE_PRESETS.map((p) => p.key) })
       // #5: transcribir + resumir un video/audio/imagen on-demand (long-press/hover)
       if (path === "/api/media/summarize" && req.method === "POST") { const b = await body(req); try { const r = await brain.summarizeMedia(b.id); return json(res, r && r.error ? 400 : 200, r) } catch (e) { return json(res, 500, { error: e.message }) } }
       // ── IMPORT de historial de WhatsApp (self-service desde la app: "Exportar chat" → subir el .txt) ──
