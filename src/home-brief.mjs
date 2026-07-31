@@ -16,10 +16,10 @@ const isGroupKey = (k) => /@g\.us|@thread\.v2|@newsletter|@broadcast/.test(k) ||
 // franja del día (hora Lima) → la Home cambia de ángulo en cada regeneración (mañana/mediodía/tarde/noche)
 function limaPeriod() {
   const h = +new Date().toLocaleString("en-US", { hour: "2-digit", hour12: false, timeZone: tz() }).slice(0, 2)
-  if (h < 12) return { id: "manana", label: "arranque del día", ang: "Es la mañana: enfocá en qué ATACAR hoy y cómo ordenar el día." }
-  if (h < 15) return { id: "mediodia", label: "mediodía", ang: "Es el mediodía: enfocá en lo que quedó SIN RESPONDER y lo pendiente de la mañana." }
-  if (h < 20) return { id: "tarde", label: "cierre laboral", ang: "Es la tarde: enfocá en qué CERRAR antes de terminar el día." }
-  return { id: "noche", label: "cierre del día", ang: "Es la noche: hacé un cierre — qué se avanzó, qué queda para mañana — y bajá revoluciones." }
+  if (h < 12) return { id: "manana", label: "arranque del día", ang: "Enfocá en qué ATACAR hoy y cómo ordenar el día." }
+  if (h < 15) return { id: "mediodia", label: "mediodía", ang: "Enfocá en lo que quedó SIN RESPONDER y lo pendiente." }
+  if (h < 20) return { id: "tarde", label: "cierre laboral", ang: "Enfocá en qué CERRAR antes de terminar el día." }
+  return { id: "noche", label: "cierre del día", ang: "Hacé un cierre — qué se avanzó, qué queda para mañana — y bajá revoluciones." }
 }
 
 // ── tabla de métricas (historia diaria) para deltas REALES de los KPIs — el esquema lo crea db-core/initSchema ──
@@ -159,6 +159,7 @@ async function computeBrief(facts, period) {
 ${period.ang}
 CLAVE: NO enumeres los eventos, ni cuántos sin leer, ni los KPIs — eso ya lo ve en tarjetas aparte. En vez de listar, SINTETIZÁ: dá la lectura del día, conectá lo que importa y señalá LA cosa a la que apuntar ahora. Como un jefe de gabinete que te da el pulso, no un locutor que lee una lista.
 Nada de saludos ("hola"), nada de listas ni bullets: prosa fluida. NO inventes datos.
+NUNCA digas qué hora ni qué franja del día es ("es mediodía", "de mañana", "a esta hora"): el briefing se genera cada tanto y se puede leer más tarde → quedaría desactualizado.
 DATOS (materia prima, NO para copiar textual):
 ${facts}
 Devolvé SOLO el texto del briefing.`
