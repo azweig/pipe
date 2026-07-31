@@ -317,6 +317,7 @@ const IC_INFO = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d
 const IC_ALERT = '<svg viewBox="0 0 24 24"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v4M12 17h.01"/></svg>'
 const IC_BELL = '<svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 0 0 4 0"/></svg>'
 const IC_LOCK = '<svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>'
+const IC_LOGOUT = '<svg viewBox="0 0 24 24"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11"/></svg>'
 const IC_CHIP = '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>'
 const IC_MAIL = '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 7 8.5 6 8.5-6"/></svg>'
 const IC_PHONE = '<svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></svg>'
@@ -460,7 +461,9 @@ function renderCfgSection(id) {
       <div class="cfg-r tap" onclick="notifMenu()"><div class="ric">${IC_BELL}</div><div class="rm"><b>Notificaciones</b><span>Avisos y horas de silencio</span></div><div class="rv">${IC_CHEV}</div></div>
       <div class="cfg-r tap" onclick="go('#jarvis')"><div class="ric">${SVG.spark}</div><div class="rm"><b>Jarvis</b><span>Preguntá a tu cerebro</span></div><div class="rv">${IC_CHEV}</div></div>
       <div class="cfg-r tap" onclick="pinSheet()"><div class="ric">${IC_LOCK}</div><div class="rm"><b>PIN de acceso</b><span>${auth.pinSet ? "Cambiar tu PIN" : "Crear un PIN"}</span></div><div class="rv">${IC_CHEV}</div></div>
-    </div>`
+    </div>
+    <button class="btn ghost btn-danger" onclick="doLogout()"><span class="ei">${IC_LOGOUT}</span>Cerrar sesión</button>
+    <div class="cfg-note">${IC_INFO}<div>Cierra la sesión en este dispositivo y vuelve a pedir el PIN. Tus datos siguen en el servidor.</div></div>`
   }
   if (id === "storage") body = `<div id="storageCfg" class="cfg-card">Cargando…</div>`
   if (id === "autopilot") body = `<div id="apPolicyCfg" class="cfg-card">Cargando…</div>`
@@ -1054,6 +1057,17 @@ window.changePin = async () => {
   const r = await post("/api/auth/change-pin", { oldPin, newPin }).catch(() => null)
   if (r && r.ok) { closeSheet(); alert("✅ PIN cambiado.") }
   else if (e) e.textContent = (r && r.error) || "No se pudo cambiar el PIN."
+}
+// Cerrar sesión en este dispositivo: borra la cookie en el server + limpia cachés locales de esta sesión y vuelve al login (PIN).
+window.doLogout = async () => {
+  if (!confirm("¿Cerrar sesión en este dispositivo?")) return
+  try { await post("/api/auth/logout", {}) } catch {}
+  // limpiar estado/cachés locales para no dejar datos de la sesión en el equipo
+  try { Object.keys(localStorage).forEach((k) => { if (k.startsWith("c:")) localStorage.removeItem(k) }) } catch {}
+  try { indexedDB.deleteDatabase("pipe") } catch {}
+  try { if ("caches" in window) { const ks = await caches.keys(); await Promise.all(ks.map((k) => caches.delete(k))) } } catch {}
+  // el server ya no reconoce la cookie → al ir a "/" sirve la página de login (PIN)
+  location.replace("/")
 }
 
 // ══════════ NOTAS con IA (segundo cerebro) ══════════
