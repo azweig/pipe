@@ -6,6 +6,7 @@ import { jidOfKey, canonOfKey, isContainerJid, norm, stripWA, initials, channelI
 import { contactName, photoFor, avatarMap, aliases, idmap, nameToCanonMap, jf, waGroups } from "./kernel/contacts.mjs"
 import { peopleNodes, companyNodes, cardFor, fm } from "./kernel/vault.mjs"
 import { j } from "./kernel/jsonl.mjs"
+import { existsSync, readFileSync, writeFileSync } from "fs"
 import { phoneOf, MY_NUMBERS, nameExtends } from "../thread.mjs"
 import { ownerFirst, company } from "../hub.mjs"
 import { llm } from "../llm.mjs"
@@ -251,7 +252,23 @@ export async function personCard(nameOrKey, { force = false } = {}) {
 }
 
 // fusiona hilos: mueve <sources[]> al hilo <target>. Base del botón "es la misma persona".
-export function mergeThreadsInto(target, sources) { return dbMergeThreads(target, (sources || []).filter((s) => s !== target)) }
+export function mergeThreadsInto(target, sources) {
+  const srcs = (sources || []).filter((s) => s !== target)
+  const moved = dbMergeThreads(target, srcs)
+  // PERSISTIR la identidad: si el target es un NOMBRE canónico (no un jid crudo whatsapp:/email:…), mapeá el número de cada source
+  // → ese nombre en identity-manual.json. Sin esto, mover los mensajes no alcanza: el próximo mensaje del número re-parte el hilo.
+  try {
+    const targetName = /^(whatsapp|email|telegram|signal|sms):/.test(target) ? "" : String(target || "").trim()
+    if (targetName) {
+      const f = "./data/identity-manual.json"
+      const map = existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : {}
+      let changed = false
+      for (const s of srcs) { const num = phoneOf(jidOfKey(s)) || phoneOf(s); if (num && map[num] !== targetName) { map[num] = targetName; changed = true } }
+      if (changed) writeFileSync(f, JSON.stringify(map, null, 2))
+    }
+  } catch {}
+  return moved
+}
 // sugerencias de fusión PARA UN hilo dado: otros hilos con nombre igual/parecido (candidatos a "es la misma persona")
 export async function mergeSuggestions(ws, forKey = "") {
   const { listThreads } = await import("./inbox.mjs") // inbox ya es su propio módulo (M4b); people→inbox no tiene ciclo
