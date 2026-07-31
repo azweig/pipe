@@ -7,6 +7,7 @@ import { contactName, photoFor, avatarMap, aliases, idmap, nameToCanonMap, jf, w
 import { peopleNodes, companyNodes, cardFor, fm } from "./kernel/vault.mjs"
 import { j } from "./kernel/jsonl.mjs"
 import { existsSync, readFileSync, writeFileSync } from "fs"
+import { investigateProfiles } from "../apify.mjs" // enriquecimiento social (Apify BYOK multi-cuenta, anónimo)
 import { phoneOf, MY_NUMBERS, nameExtends } from "../thread.mjs"
 import { ownerFirst, company } from "../hub.mjs"
 import { llm } from "../llm.mjs"
@@ -269,6 +270,32 @@ export function mergeThreadsInto(target, sources) {
   } catch {}
   return moved
 }
+// ── ENRIQUECIMIENTO SOCIAL por contacto (el usuario pega los links; Apify trae lo público anónimo; el LLM lo estructura) ──
+const SOCIAL_FILE = () => process.env.CONTACT_SOCIAL || "data/contact-social.json"
+function socialStore() { try { return existsSync(SOCIAL_FILE()) ? JSON.parse(readFileSync(SOCIAL_FILE(), "utf8")) : {} } catch { return {} } }
+function saveSocial(o) { try { writeFileSync(SOCIAL_FILE(), JSON.stringify(o)) } catch {} }
+export function getContactSocial(key) { return socialStore()[key] || null }
+export function setContactLinks(key, links = {}) { const s = socialStore(); s[key] = { ...(s[key] || {}), links }; saveSocial(s); return s[key] }
+export async function investigateContact(key, links) {
+  const useLinks = links || (getContactSocial(key)?.links) || {}
+  const raw = await investigateProfiles(useLinks)
+  let structured = { summary: "", role: "", company: "", location: "", interests: [], relationships: [] }
+  const blob = JSON.stringify(raw.raw || {}).slice(0, 8000)
+  if (blob && blob !== "{}") {
+    try {
+      const prompt = `Tenés data PÚBLICA de los perfiles sociales de un contacto (LinkedIn/Instagram/Facebook/X). Resumí quién es en JSON:
+{"summary":"2-3 frases: quién es, a qué se dedica, algo útil para conocerlo mejor","role":"cargo actual","company":"empresa","location":"ciudad/país","interests":["temas/intereses"],"relationships":[{"name":"persona o empresa vinculada","type":"colega|empresa|socio|amigo|familia"}]}
+Usá SOLO lo que esté en la data. Lo que no esté, dejalo vacío. NO inventes.
+DATA:\n${blob}`
+      const r = await llm(prompt, { json: true, temperature: 0.2, task: "contact-enrich" })
+      if (r && typeof r === "object") structured = { ...structured, ...r }
+    } catch {}
+  }
+  const s = socialStore()
+  s[key] = { links: useLinks, profiles: structured, sources: Object.keys(raw.raw || {}), errors: raw.errors || {}, updatedAt: Date.now() }
+  saveSocial(s); return s[key]
+}
+
 // sugerencias de fusión PARA UN hilo dado: otros hilos con nombre igual/parecido (candidatos a "es la misma persona")
 export async function mergeSuggestions(ws, forKey = "") {
   const { listThreads } = await import("./inbox.mjs") // inbox ya es su propio módulo (M4b); people→inbox no tiene ciclo

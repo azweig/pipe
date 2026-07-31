@@ -6,6 +6,7 @@ import { loadEnv } from "./lib/env.mjs"
 import { spawn } from "child_process"
 import { extname, join, normalize } from "path"
 import * as brain from "./lib/brain.mjs"
+import * as apify from "./lib/apify.mjs"
 import * as briefing from "./lib/briefing.mjs"
 import * as ws from "./lib/workspace.mjs"
 import * as accounts from "./lib/accounts.mjs"
@@ -604,6 +605,12 @@ const server = createServer(async (req, res) => {
       if (path === "/api/espacio/exception/delete" && req.method === "POST") { const b = await body(req); return json(res, 200, ws.espacioRemoveException(b.id, b.idx)) }
       if (path === "/api/espacio/view") return json(res, 200, await brain.espacioView(ws, q.id || ""))
       if (path === "/api/contact/merge" && req.method === "POST") { const b = await body(req); const moved = brain.mergeThreadsInto(b.target || b.key, b.keys || b.channelIds || []); return json(res, 200, { moved }) }
+      // ── ENRIQUECIMIENTO SOCIAL: cuentas Apify (multi-cuenta, round-robin, cuota) + investigar un contacto por los links que pegaste ──
+      if (path === "/api/apify/accounts" && req.method === "POST") { const b = await body(req); if (b.remove) return json(res, 200, apify.removeApifyAccount(b.remove)); if (b.actors) return json(res, 200, apify.setApifyActors(b.actors)); return json(res, 200, apify.addApifyAccount({ name: b.name, token: b.token })) }
+      if (path === "/api/apify/accounts") return json(res, 200, apify.apifyAccounts())
+      if (path === "/api/contact/social") return json(res, 200, brain.getContactSocial(q.key || "") || { links: {}, profiles: null })
+      if (path === "/api/contact/links" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setContactLinks(b.key, b.links || {})) }
+      if (path === "/api/contact/investigate" && req.method === "POST") { const b = await body(req); try { return json(res, 200, await brain.investigateContact(b.key, b.links)) } catch (e) { return json(res, 400, { error: e.message }) } }
       if (path === "/api/contact/unmerge" && req.method === "POST") { ws.unmergeContact((await body(req)).channelId); return json(res, 200, { ok: true }) }
       if (path === "/api/contact/photo" && req.method === "POST") { const b = await body(req); ws.setContactPhoto(b.key, b.url); return json(res, 200, { ok: true }) }
       if (path === "/api/contact/category" && req.method === "POST") { const b = await body(req); ws.setContactCategory(b.key, b.category); return json(res, 200, { ok: true }) }
