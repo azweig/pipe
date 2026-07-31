@@ -87,7 +87,12 @@ export function listThreads({ limit = 200 } = {}, { cache = true } = {}) {
     const kind = self ? "self" : (isContainerJid(jid) ? "group" : "dm")
     let name = canon || r.name || numOf(jid), avatar = initials(name)
     if (kind === "self") { name = "Mis Notas"; avatar = "📝" }
-    else if (kind === "group") { name = r.grp || grpNames[jid] || `Grupo · ${plural(r.nsenders || 2, "persona")}`; avatar = "👥" }
+    else if (kind === "group") {
+      // casos especiales de WhatsApp que NO son grupos de verdad → nombre propio en vez del genérico "Grupo · N personas"
+      if (/status@broadcast/.test(jid)) { name = "Historias de WhatsApp"; avatar = "📸" }
+      else if (/@newsletter/.test(jid)) { name = r.grp || grpNames[jid] || "Canal de WhatsApp"; avatar = "📢" }
+      else { name = r.grp || grpNames[jid] || `Grupo · ${plural(r.nsenders || 2, "persona")}`; avatar = "👥" }
+    }
     else if (kind === "dm" && !canon) { const cn = contactName(jid) || contactName(name); if (cn) name = cn } // resolver número → nombre de la agenda
     const clean = stripWA(name)
     const photo = kind === "group" ? (AV[norm(clean)] || AV[norm(r.grp || "")] || null) : (kind === "dm" ? photoFor(clean, jid, r.key) : null)
