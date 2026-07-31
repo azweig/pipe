@@ -1197,10 +1197,21 @@ async function viewMensajes() {
   const g = await api("/api/groups").catch(() => null); ST.groups = (g && g.groups) || ST.groups || []; ST.contactGroups = (g && g.contactGroups) || ST.contactGroups || {}
   apiSWR("/api/threads?limit=600", (r) => paintMensajes(r || []))
 }
+// ── MODO UNIR CONTACTOS (multi-selección de hilos → fusionar duplicados) — mismo patrón que fwdSel de los mensajes ──
+let mergeSel = null // Set de KEYS seleccionadas (modo "unir"); null = fuera de modo. El 1º seleccionado es el que se conserva.
 const threadItem = (t) => {
   const chs = [...new Set([t.lastChannel, ...(t.channels || [])])].filter((c) => CHAN_ICON[c]).slice(0, 3)
   const prev = (t.lastDir === "out" ? "→ " : "") + (t.lastText || "")
   const isEsp = t.espacio
+  if (mergeSel) { // en modo "unir": checkbox por fila; espacios y filas sin clave no se pueden fusionar → se ocultan
+    if (isEsp || !t.key) return ""
+    const on = mergeSel.has(t.key)
+    return `<div class="thread${on ? " pinned" : ""}" style="cursor:pointer${on ? ";background:color-mix(in srgb, var(--accent) 14%, transparent)" : ""}" onclick="toggleMergeSel('${enck(t.key)}')">
+      <span style="font-size:20px;flex-shrink:0;align-self:center;margin-right:2px" aria-hidden="true">${on ? "☑️" : "⬜"}</span>
+      ${avatar(t.name, t.photo)}
+      <div class="th-main"><div class="th-top"><span class="th-name">${esc(t.name)}</span><span class="th-icons">${chs.map(chanIcon).join("")}</span></div><div class="th-prev">${esc(prev) || "…"}</div></div>
+    </div>`
+  }
   const nav = isEsp ? `go('#espacio/${t.espId}')` : `go('#conv/${enck(t.key)}')`
   const av = isEsp ? `<div class="av esp-av">${espIcon(t.icon)}</div>` : avatar(t.name, t.photo)
   const pinBtn = isEsp ? "" : `<button class="th-pin${t.pinned ? " on" : ""}" onclick="event.stopPropagation();togglePinThread('${enck(t.key)}',${t.pinned ? "false" : "true"})" title="${t.pinned ? "Quitar de arriba" : "Fijar arriba"}" aria-label="Fijar arriba" style="background:none;border:0;cursor:pointer;font-size:15px;padding:2px 4px;opacity:${t.pinned ? "1" : ".28"}">📌</button>`
@@ -1239,8 +1250,14 @@ function paintMensajes(rows) {
   const chips = active.map(([k, id, l]) => `<button class="gchip" onclick="rmFilter('${k}','${id}')">${esc(l)} <span>×</span></button>`).join("")
   const filterBar = `<div class="frow"><button class="filt-pill${active.length ? " on" : ""}" onclick="openFilters()">${SVG.sliders}<span>Filtros</span>${active.length ? `<b>${active.length}</b>` : ""}</button>${chips}</div>`
   const q = ST.q || ""
-  render(`<div class="screen inbox">
-    <div class="ibx-head"><h1>Bandeja</h1><button class="esp-btn" onclick="groupsSheet()">🗂 Grupos</button></div>
+  // barra fija (modo "unir"): mostrar qué contacto se conserva + acción 🔗 Unir (N). Reusa el look del fwdBar de mensajes.
+  const mergeTgt = mergeSel && mergeSel.size ? (inboxRows.find((x) => x.key === [...mergeSel][0]) || {}).name : ""
+  const mergeBar = mergeSel ? `<div id="mergebar" style="position:fixed;bottom:82px;left:50%;transform:translateX(-50%);width:100%;max-width:480px;padding:10px 12px;background:var(--bg);border-top:1px solid var(--line);display:flex;gap:8px;z-index:26;box-sizing:border-box;align-items:center">
+    <button class="pill" onclick="exitMergeMode()" style="flex-shrink:0">Cancelar</button>
+    <div style="flex:1;text-align:center;font-weight:700;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${mergeSel.size < 2 ? "Elegí 2 o más para unir" : `Se conserva <b>${esc(mergeTgt)}</b>`}</div>
+    <button class="pill on" style="flex-shrink:0;padding:9px 16px${mergeSel.size >= 2 ? "" : ";opacity:.5"}" ${mergeSel.size >= 2 ? 'onclick="doMergeSelected()"' : "disabled"}>🔗 Unir (${mergeSel.size})</button></div>` : ""
+  render(`<div class="screen inbox"${mergeSel ? ' style="padding-bottom:96px"' : ""}>
+    <div class="ibx-head"><h1>Bandeja</h1><div class="row" style="gap:6px;padding:0;background:none;box-shadow:none"><button class="esp-btn" onclick="mergeMode()" title="Unir contactos duplicados (la misma persona en varios hilos)">${mergeSel ? "✕ Unir" : "🔗 Unir"}</button><button class="esp-btn" onclick="groupsSheet()">🗂 Grupos</button></div></div>
     <div class="ibx-search${q ? " has-q" : ""}${_aiSearch ? " ai" : ""}">
       <span class="ibx-si">${SVG.search}</span>
       <input id="ibxq" value="${esc(q)}" placeholder="${_aiSearch ? "Preguntá con IA: “¿qué acordé con Juan?”" : "Buscar por nombre, teléfono o email…"}" autocomplete="off" autocapitalize="off" spellcheck="false" oninput="onInboxSearch(this.value)" onkeydown="onSearchKey(event)">
@@ -1253,7 +1270,7 @@ function paintMensajes(rows) {
     <div class="ibx-meta" id="ibxmeta"></div>
     <div class="threadlist" id="threadlist"></div>
     <div id="thmore" style="height:1px"></div>
-  </div>`, "mensajes")
+  </div>${mergeBar}`, "mensajes")
   renderInboxList()
   // swipe horizontal entre tabs de categoría (izq = siguiente, der = anterior)
   const tabIds = TABS.map((t) => t[0]), ci = tabIds.indexOf(curCat)
@@ -1296,6 +1313,17 @@ window.togglePinThread = async (keyEnc, pin) => {
   const key = decodeURIComponent(keyEnc); const t = (inboxRows || []).find((x) => x.key === key); if (t) t.pinned = !!pin // optimista → sube al toque
   renderInboxList()
   await post("/api/contact/pin", { key, pinned: !!pin }).catch(() => {})
+}
+// ── UNIR CONTACTOS desde la bandeja: seleccionar 2+ hilos duplicados → /api/contact/merge (el 1º seleccionado es el target) ──
+window.mergeMode = () => { if (mergeSel) return exitMergeMode(); mergeSel = new Set(); paintMensajes(inboxRows) } // toggle del modo (el 🔗 del header)
+window.exitMergeMode = () => { mergeSel = null; paintMensajes(inboxRows) }
+window.toggleMergeSel = (keyEnc) => { if (!mergeSel) return; const key = decodeURIComponent(keyEnc); mergeSel.has(key) ? mergeSel.delete(key) : mergeSel.add(key); paintMensajes(inboxRows) }
+window.doMergeSelected = async () => {
+  if (!mergeSel || mergeSel.size < 2) return
+  const keys = [...mergeSel]; const target = keys[0]; const rest = keys.slice(1); const n = keys.length // target = 1º seleccionado (se conserva); el resto se absorbe
+  const r = await post("/api/contact/merge", { target, keys: rest }).catch(() => null)
+  if (r && !r.error) { mergeSel = null; await viewMensajes(); alert(`✅ ${n} contactos unidos`) } // refresca la bandeja ya fusionada
+  else { paintMensajes(inboxRows); alert((r && r.error) || "No se pudo unir — probá de nuevo") } // deja el modo activo para reintentar
 }
 // ── GRUPOS: gestor (auto editables + custom) accesible desde la Bandeja ──
 window.groupsSheet = async () => {
