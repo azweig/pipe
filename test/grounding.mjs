@@ -30,7 +30,7 @@ test("grounding: anchored() acepta la entidad mencionada, descarta la fabricada"
   assert.equal(anchored("Globex", hay), false, "empresa inventada")
 })
 
-// ── IDENTIDAD: guard de homónimo + prioridad del mapa manual (bugs Milagros/Helmut) ──
+// ── IDENTIDAD: guard de homónimo + prioridad del mapa manual (bugs Ana/Beto) ──
 test("identity: safeName respeta homónimo y prioriza el mapa manual", () => {
   assert.equal(safeName({ "111": "Diego", "222": "Diego" }, "111"), null, "homónimo (2 números mismo nombre) → null, no fusiona")
   assert.equal(safeName({ "111": "Ana García", "222": "Otro" }, "111"), "Ana García", "nombre único → el nombre")

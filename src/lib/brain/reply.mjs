@@ -6,7 +6,7 @@ import { readFileSync } from "fs"
 import { join } from "path"
 import { getSlackToken, getSignal } from "../integrations.mjs" // config Slack/Signal conectada desde la Consola (cifrada) — para que los senders la vean, no solo el .env
 import { phoneOf, MY_NUMBERS } from "../thread.mjs"
-import { sendMatrix, sendMatrixAudio, sendMatrixMedia, startWhatsAppChat, roomLogin } from "../../matrix.mjs"
+import { sendMatrix, sendMatrixAudio, sendMatrixMedia, sendMatrixSticker, startWhatsAppChat, roomLogin } from "../../matrix.mjs"
 import { unipileConfigured, unipileSend } from "../unipile-api.mjs"
 import { sendEmailReply } from "../mailer.mjs"
 import { casPutBuffer } from "../cas.mjs"
@@ -125,7 +125,7 @@ export async function sendReply(key, text, { channel, target } = {}) {
 
 // ENVÍO DE NOTA DE VOZ: resuelve la sala del bridge (igual que sendReply) y manda el audio como voice message.
 // Solo canales de mensajería bridgeados por Matrix (WhatsApp/Telegram/Discord/Signal/IG/FB). Email/notas NO soportan voz.
-export async function sendReplyAudio(key, buffer, { channel, target, mime = "audio/ogg", durationMs = 0 } = {}) {
+export async function sendReplyAudio(key, buffer, { channel, target, mime = "audio/ogg", durationMs = 0, waveform = null } = {}) {
   if (!buffer || !buffer.length) return { error: "audio vacío" }
   if (key === "self" || channel === "email" || String(key).startsWith("email:")) return { error: "este canal no soporta notas de voz" }
   // sala del bridge: target explícito (mxid) → última sala del hilo → iniciar chat por número (contacto histórico)
@@ -137,7 +137,7 @@ export async function sendReplyAudio(key, buffer, { channel, target, mime = "aud
     if (histNum && !MY_NUMBERS.has(histNum)) room = await startWhatsAppChat(histNum)
   }
   if (!room) return { error: "No encuentro un chat de mensajería para mandar el audio (las notas de voz van por WhatsApp/Telegram/etc., no por email)." }
-  const r = await sendMatrixAudio(room, buffer, { mime, durationMs })
+  const r = await sendMatrixAudio(room, buffer, { mime, durationMs, waveform })
   if (!r.ok) return { error: r.error || "no se pudo enviar el audio (bridge)" }
   // el audio YA salió por el bridge. Guardamos copia local (CAS) para poder REPRODUCIRLO en la app y registramos el mensaje.
   // Si la DB está trabada (lock multi-proceso), NO fallamos el envío: el audio ya se entregó.
@@ -171,6 +171,27 @@ export async function sendReplyMedia(key, buffer, { channel, target, mime = "app
   let ins = {}
   try { ins = dbInsertSent(key, channel || "whatsapp", placeholder, { media, mediaType: kind, filename: kind === "file" ? filename : null }) } catch (e) { console.error("[send-media] guardado local falló (archivo ya enviado):", e.message) }
   return { ok: true, channel: channel || "whatsapp", media, mediaType: kind, ...ins }
+}
+
+// ENVÍO DE STICKER: misma resolución de sala; manda un evento m.sticker (webp). El server ya convirtió la imagen a webp 512×512.
+export async function sendReplySticker(key, buffer, { channel, target, mime = "image/webp" } = {}) {
+  if (!buffer || !buffer.length) return { error: "sticker vacío" }
+  if (key === "self" || channel === "email" || String(key).startsWith("email:")) return { error: "este canal no soporta stickers (van por WhatsApp/Telegram/etc.)." }
+  let room = (target && /^![^:]+:/.test(target)) ? target : null
+  if (!room) room = lastWhatsappRoom(key)?.jid
+  if (!room) {
+    const histJid = lastHistoricJid(key)?.jid
+    const histNum = histJid && phoneOf(histJid)
+    if (histNum && !MY_NUMBERS.has(histNum)) room = await startWhatsAppChat(histNum)
+  }
+  if (!room) return { error: "No encuentro un chat de mensajería para mandar el sticker." }
+  const r = await sendMatrixSticker(room, buffer, { mime })
+  if (!r.ok) return { error: r.error || "no se pudo enviar el sticker (bridge)" }
+  let media = null
+  try { media = casPutBuffer(buffer, "webp", `${channel || "whatsapp"}:sent`) } catch (e) { console.error("[send-sticker] CAS:", e.message) }
+  let ins = {}
+  try { ins = dbInsertSent(key, channel || "whatsapp", "🖼 Sticker", { media, mediaType: "image" }) } catch (e) { console.error("[send-sticker] guardado local falló (sticker ya enviado):", e.message) }
+  return { ok: true, channel: channel || "whatsapp", media, mediaType: "image", ...ins }
 }
 
 // ── REENVIAR mensajes (preservando el MEDIA) ── Antes se mandaba solo el texto → reenviar un audio mandaba el placeholder "audio".

@@ -8,7 +8,8 @@ import { join, basename } from "path"
 import { execFile } from "child_process"
 import { promisify } from "util"
 import { tmpdir } from "os"
-import { threadsSummary as dbThreads, repliedThreads, getBody as dbGetBody, threadMediaGallery, threadPage as dbThreadPage, threadCount as dbThreadCount, threadMessagesTail as dbThreadMsgs, threadSince as dbThreadSince, threadUnreadCount as dbUnreadCount, search as dbSearch, threadMessagesSinceAll } from "../db.mjs"
+import { threadsSummary as dbThreads, repliedThreads, getBody as dbGetBody, threadMediaGallery, threadPage as dbThreadPage, threadCount as dbThreadCount, threadMessagesTail as dbThreadMsgs, threadSince as dbThreadSince, threadUnreadCount as dbUnreadCount, search as dbSearch, threadMessagesSinceAll, threadDelta as dbThreadDelta, threadMaxRev as dbThreadMaxRev } from "../db.mjs"
+import { autopilotSentIds, listAutopilot, getAutopilot, listEscalations, clearEscalation } from "./autopilot.mjs" // 🤖 tag de mensajes/contactos del piloto automático
 import { jidOfKey, canonOfKey, numOf, initials, stripWA, norm, plural, isContainerJid } from "./kernel/keys.mjs"
 import { enrichCovert, getCovert } from "./covert.mjs"
 import { jf, waGroups, avatarMap, contactName, photoFor } from "./kernel/contacts.mjs"
@@ -42,6 +43,8 @@ export function listThreads({ limit = 200 } = {}, { cache = true } = {}) {
   const replied = new Set(repliedThreads().map((r) => r.thread)) // hilos donde YA respondí (correspondencia real)
   const arch = new Set(jf("archived.json") || []) // hilos archivados (ocultos)
   const sil = new Set(jf("silenced.json") || []) // hilos silenciados (ruido que no es spam) — NO se ocultan: se marcan y viven en su pestaña
+  const autoOn = new Set(listAutopilot()) // contactos con piloto automático → 🤖 en la foto (las 3 apps)
+  const esc = listEscalations() // hilos que el piloto escaló → fijar arriba + color hasta que respondas
   const spamS = new Set((jf("spam-senders.json") || []).map((x) => String(x).toLowerCase())) // remitentes marcados spam
   // hilos que caen en un ESPACIO → NO se muestran sueltos en la bandeja (viven DENTRO del espacio, como una carpeta). Misma semántica que las reglas (db.espacioMessages).
   const allEsp = jf("espacios.json") || []
@@ -104,7 +107,10 @@ export function listThreads({ limit = 200 } = {}, { cache = true } = {}) {
       && (r.lastChannel === "email" ? (replied.has(r.key) && !NOTIF_RE.test(`${emailAddr || ""} ${clean} ${lt}`) && !MY_EMAILS.has((emailAddr || "").toLowerCase())) : true)
     // ident buscable: nombre + número (del jid/sender) + email → permite filtrar por tel/email aunque el hilo esté keyeado por nombre
     const ident = [numOf(jid), r.ident].filter(Boolean).join(" ").toLowerCase() || null
-    return { key: r.key, canon, self, group: kind === "group", name: clean, photo, initials: avatar, channels: r.channels || [], lastChannel: r.lastChannel, count: r.count, unread: r.unread || 0, unseen, suggested, email: emailAddr, account: r.account || null, ident, ts: r.ts, lastText: lt.slice(0, 120) || "…", lastDir: r.lastDir, bucket, pinned: pinned.has(r.key), silenced: sil.has(r.key) }
+    // escalada del piloto: activa solo mientras NO respondiste (si tu último msg es saliente, ya lo atendiste → limpiar)
+    let escalated = false, escalatedReason = null
+    if (esc[r.key]) { if (r.lastDir === "out") clearEscalation(r.key); else { escalated = true; escalatedReason = esc[r.key].reason || null } }
+    return { key: r.key, canon, self, group: kind === "group", name: clean, photo, initials: avatar, channels: r.channels || [], lastChannel: r.lastChannel, count: r.count, unread: r.unread || 0, unseen, suggested, email: emailAddr, account: r.account || null, ident, ts: r.ts, lastText: lt.slice(0, 120) || "…", lastDir: r.lastDir, bucket, pinned: pinned.has(r.key), silenced: sil.has(r.key), autopilot: autoOn.has(r.key), escalated, escalatedReason }
   }).filter((t) => t.key !== "self" && !arch.has(t.key) && !inEspacio(t.key, t.name) && !/whatsapp status broadcast/i.test(t.name || "")) // self va en su pestaña; archivados ocultos; los de un espacio viven ahí; status no es conversación
   for (const er of espacioThreads(seen)) result.push(er) // los espacios entran como una conversación más
   result = result
@@ -130,6 +136,43 @@ export function searchMessages(query, { limit = 80 } = {}) {
   return rows.map((e) => ({ key: e.thread, who: stripWA(e.grp || e.name || ""), channel: e.channel, ts: e.ts || 0, dir: e.dir || "in", text: cleanMsg(e.text || "").slice(0, 240) }))
 }
 
+// transforma UNA fila de la DB en el item liviano que renderiza el cliente (mismo shape para el hilo completo y para el delta).
+// `text` opcional (ya limpio); si no viene se calcula. Adjunta `rev` para que el cliente sepa hasta dónde sincronizó.
+function msgToItem(e, AV, text) {
+  const t = text != null ? text : cleanMsg(e.text)
+  const nm = e.dir === "out" ? owner() : (contactName(e.sender) || contactName(e.name) || stripWA(e.name))
+  const item = { id: e.id || `${e.ts}`, channel: e.channel, dir: e.dir || "in", name: nm, photo: AV[norm(nm)] || null, ts: e.ts, text: t || "", media: e.media || null, mediaType: e.mediaType || null, filename: e.filename || null, rev: e.rev || 0 }
+  if (e.channel === "email") { item.full = e.text; if (e.body) item.hasBody = true; if (e.summary) item.summary = e.summary; if (e.attachments) item.attachments = e.attachments }
+  if (e.channel === "meeting") { item.meeting = true; if (e.body) item.hasBody = true; if (e.summary) item.summary = e.summary }
+  if (e.mediaType === "audio" && e.summary) { item.summary = e.summary; item.audioSummary = true }
+  return item
+}
+
+// DELTA edit-aware: items del hilo con rev > sinceRev (NUEVOS o editados). El cliente los mergea por id en su copia local.
+// Devuelve { items, maxRev } — maxRev es la revisión más alta del hilo (aunque el batch venga paginado por el limit).
+// SYNC de texto completo (para clientes que quieren TODO el historial local): página LIVIANA hacia atrás (items = texto + path de
+// media, SIN blobs). El cliente pagina por `before` hasta hasMore=false. Sin enrich de covert/ai-notes (velocidad para backfills grandes).
+export function threadSyncPage(key, before = 0, { limit = 800 } = {}) {
+  const rows = dbThreadPage(key, { before: before || 0, limit })
+  const AV = avatarMap()
+  const items = []
+  for (const e of rows) { const text = cleanMsg(e.text); if (!text && !e.media && !e.body) continue; items.push(msgToItem(e, AV, text)) }
+  return { items, oldestTs: rows.length ? rows[0].ts : 0, hasMore: rows.length >= limit }
+}
+export function threadDeltaItems(key, sinceRev = 0, { limit = 500 } = {}) {
+  const rows = dbThreadDelta(key, sinceRev, { limit })
+  const AV = avatarMap()
+  const items = []
+  for (const e of rows) {
+    const text = cleanMsg(e.text)
+    if (!text && !e.media && !e.body) continue // filas vacías (placeholders internos) no son items
+    items.push(msgToItem(e, AV, text))
+  }
+  const autoSet = autopilotSentIds(); items.forEach((it) => { if (it.dir === "out" && autoSet.has(it.id)) it.auto = true }) // 🤖
+  enrichCovert(key, items) // mismo tratamiento que el hilo completo: descifra los tapadera si el contacto tiene clave
+  return { items, maxRev: dbThreadMaxRev(key) }
+}
+
 export async function unifiedThread(key, ws, { before = 0, limit = 100 } = {}) {
   const rows = dbThreadPage(key, { before, limit }) // página de historial (paginable hacia atrás)
   const total = dbThreadCount(key)
@@ -145,12 +188,7 @@ export async function unifiedThread(key, ws, { before = 0, limit = 100 } = {}) {
     const isPlainOut = (e.dir || "in") === "out" && text && !e.media && !/^(🖼|📹|🎤|📄|🌟|📎|📍|👤)/.test(text)
     if (isPlainOut && text === lastOutText && e.ts - lastOutTs < 90000) continue
     if (isPlainOut) { lastOutText = text; lastOutTs = e.ts }
-    const nm = e.dir === "out" ? owner() : (contactName(e.sender) || contactName(e.name) || stripWA(e.name))
-    const item = { id: e.id || `${e.ts}`, channel: e.channel, dir: e.dir || "in", name: nm, photo: AV[norm(nm)] || null, ts: e.ts, text: text || "", media: e.media || null, mediaType: e.mediaType || null, filename: e.filename || null }
-    if (e.channel === "email") { item.full = e.text; if (e.body) item.hasBody = true; if (e.summary) item.summary = e.summary; if (e.attachments) item.attachments = e.attachments } // body on-demand; summary = pitch IA; attachments = JSON [{name,cas,mime,size}]
-    if (e.channel === "meeting") { item.meeting = true; if (e.body) item.hasBody = true; if (e.summary) item.summary = e.summary } // transcripción completa on-demand (body)
-    if (e.mediaType === "audio" && e.summary) { item.summary = e.summary; item.audioSummary = true } // resumen (no literal) de la nota de voz, bajo el player
-    items.push(item)
+    items.push(msgToItem(e, AV, text))
   }
   const oldestTs = rows.length ? rows[0].ts : 0
   const hasMore = total > items.length && rows.length >= limit // hay mensajes más antiguos
@@ -172,10 +210,11 @@ export async function unifiedThread(key, ws, { before = 0, limit = 100 } = {}) {
   const account = email ? (tail.find((m) => m.channel === "email" && m.account)?.account || null) : null // a qué cuenta MÍA llegó
   // notas IA (resúmenes guardados) intercaladas en la conversación por fecha — NO son mensajes, no se envían
   const aiN = (ws.aiNotes(key) || []).map((n) => ({ id: n.id, channel: "ai-summary", dir: "ai", name: "Resumen IA", ts: n.ts, text: n.text, aiRange: n.range }))
+  const autoSet = autopilotSentIds(); items.forEach((it) => { if (it.dir === "out" && autoSet.has(it.id)) it.auto = true }) // 🤖 marca lo que mandó el piloto
   const mergedItems = aiN.length ? [...items, ...aiN].sort((a, b) => (a.ts || 0) - (b.ts || 0)) : items
   enrichCovert(key, mergedItems) // modo encubierto: si el contacto tiene clave, descifra los mensajes-tapadera y adjunta it.covert
   const cv = getCovert(key) // el front usa esto para mostrar el toggle 🕊️ SOLO si este contacto tiene modo encubierto configurado
-  return { key, name, group: isGroup, channels: [...new Set(tail.map((m) => m.channel))], photo, items: mergedItems, hasMore, oldestTs, total, lastSeen, unread, email, account, covert: cv.enabled ? cv.style : null }
+  return { key, name, group: isGroup, channels: [...new Set(tail.map((m) => m.channel))], photo, items: mergedItems, hasMore, oldestTs, total, lastSeen, unread, email, account, covert: cv.enabled ? cv.style : null, autopilot: getAutopilot(key).enabled, maxRev: dbThreadMaxRev(key) }
 }
 
 // mime por extensión — para que Gemini sepa cómo interpretar cada adjunto del CAS

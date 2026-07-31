@@ -1,4 +1,4 @@
-// Cobertura de las funciones de RE-KEYING de identidad (donde vivieron los bugs de contactos duplicados Milagros/Helmut).
+// Cobertura de las funciones de RE-KEYING de identidad (donde vivieron los bugs de contactos duplicados Ana/Beto).
 // Harness con fixtures: DB en memoria + números FAKE (no colisionan con MY_NUMBERS ni el lid-map de prod → determinístico).
 // Las funciones reciben contactsMap/manual como PARÁMETROS, así que la agenda real de prod no influye.
 import { test } from "node:test"
@@ -9,32 +9,32 @@ import { rekeyBridge, unifyByNumber, rekeyManual, rekeyContacts, rebuildStats } 
 const NOW = Date.now()
 const countIn = (thread) => handle().prepare("SELECT COUNT(*) c FROM messages WHERE thread=?").get(thread).c
 
-// ── unifyByNumber: fusiona TODOS los hilos 1:1 del mismo número bajo el nombre del MAPA MANUAL (fix Milagros) ──
+// ── unifyByNumber: fusiona TODOS los hilos 1:1 del mismo número bajo el nombre del MAPA MANUAL (fix Ana) ──
 test("identity: unifyByNumber fusiona hilos del mismo número bajo el nombre manual", () => {
   resetDb(":memory:")
   const NUM = "15550009999"
   seed([
-    { thread: `whatsapp:${NUM}@s.whatsapp.net`, channel: "whatsapp", account: "matrix", jid: `${NUM}@s.whatsapp.net`, sender: `${NUM}@s.whatsapp.net`, dir: "in", name: "Mili", text: "hola", ts: NOW },
-    { thread: "Persona Vieja", channel: "whatsapp", account: "matrix", jid: `${NUM}@s.whatsapp.net`, sender: `${NUM}@s.whatsapp.net`, dir: "in", name: "Mili", text: "chau", ts: NOW + 1 },
+    { thread: `whatsapp:${NUM}@s.whatsapp.net`, channel: "whatsapp", account: "matrix", jid: `${NUM}@s.whatsapp.net`, sender: `${NUM}@s.whatsapp.net`, dir: "in", name: "Ana", text: "hola", ts: NOW },
+    { thread: "Persona Vieja", channel: "whatsapp", account: "matrix", jid: `${NUM}@s.whatsapp.net`, sender: `${NUM}@s.whatsapp.net`, dir: "in", name: "Ana", text: "chau", ts: NOW + 1 },
   ])
   rebuildStats() // unifyByNumber lee thread_stats
-  unifyByNumber({}, { [NUM]: "Milagros Manual" })
-  assert.equal(countIn("Milagros Manual"), 2, "los 2 hilos del mismo número → un solo hilo con el nombre manual")
+  unifyByNumber({}, { [NUM]: "Ana Manual" })
+  assert.equal(countIn("Ana Manual"), 2, "los 2 hilos del mismo número → un solo hilo con el nombre manual")
   assert.equal(countIn(`whatsapp:${NUM}@s.whatsapp.net`), 0)
   assert.equal(countIn("Persona Vieja"), 0)
 })
 
-// ── rekeyBridge: resuelve la SALA por su remitente ENTRANTE y arrastra los SALIENTES sueltos (fix Helmut) ──
+// ── rekeyBridge: resuelve la SALA por su remitente ENTRANTE y arrastra los SALIENTES sueltos (fix Beto) ──
 test("identity: rekeyBridge reancla los salientes sueltos de una sala DM", () => {
   resetDb(":memory:")
   const NUM = "15550008888"
   seed([
-    { thread: `whatsapp:${NUM}@s.whatsapp.net`, channel: "whatsapp", account: "matrix", jid: "!room1:test", sender: `@whatsapp_${NUM}:test`, dir: "in", name: "Helmut", text: "hola", ts: NOW },
-    { thread: "Helmut Stray", channel: "whatsapp", account: "matrix", jid: "!room1:test", sender: "@whatsapp_15550001111:test", dir: "out", name: "yo", text: "nop", ts: NOW + 1 }, // saliente huérfano
+    { thread: `whatsapp:${NUM}@s.whatsapp.net`, channel: "whatsapp", account: "matrix", jid: "!room1:test", sender: `@whatsapp_${NUM}:test`, dir: "in", name: "Beto", text: "hola", ts: NOW },
+    { thread: "Beto Stray", channel: "whatsapp", account: "matrix", jid: "!room1:test", sender: "@whatsapp_15550001111:test", dir: "out", name: "yo", text: "nop", ts: NOW + 1 }, // saliente huérfano
   ])
-  rekeyBridge({}, { [NUM]: "Helmut Manual" })
-  assert.equal(countIn("Helmut Manual"), 2, "entrante + saliente de la MISMA sala → juntos bajo el nombre manual")
-  assert.equal(countIn("Helmut Stray"), 0, "el saliente suelto dejó de estar huérfano")
+  rekeyBridge({}, { [NUM]: "Beto Manual" })
+  assert.equal(countIn("Beto Manual"), 2, "entrante + saliente de la MISMA sala → juntos bajo el nombre manual")
+  assert.equal(countIn("Beto Stray"), 0, "el saliente suelto dejó de estar huérfano")
 })
 
 // ── rekeyBridge NO toca grupos (sala con >1 número entrante distinto) ──

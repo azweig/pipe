@@ -3,8 +3,9 @@
 //         channels:read, users:read, y chat:write para responder). Sin token → reader inactivo. Uso: node src/slack.mjs
 import { mkdirSync, readFileSync, existsSync, writeFileSync } from "fs"
 import { appendMessage } from "./lib/lock.mjs"
+import { getSlackToken } from "./lib/integrations.mjs"
 
-const TOKEN = process.env.SLACK_TOKEN || ""
+const TOKEN = process.env.SLACK_TOKEN || getSlackToken() // .env o lo conectado desde la Consola (cifrado)
 if (!TOKEN) console.log("[slack] sin SLACK_TOKEN — reader inactivo (dormido)")
 const POLL = +process.env.SLACK_POLL_MS || 30000
 mkdirSync("./auth", { recursive: true })

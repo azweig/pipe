@@ -54,7 +54,7 @@ const r=await fetch('${setup ? "/api/auth/setup" : "/api/auth"}',{method:'POST',
 if(r.ok)location.href='/';else e.textContent=r.error||'error';}</script></div></html>`
 }
 import { tts, stt, VOICES } from "./lib/voice.mjs"
-import { importWhatsApp } from "./lib/wa-import.mjs"
+import { importWhatsApp, importWhatsAppZip } from "./lib/wa-import.mjs"
 import { runSelfTest, lastSelfTest } from "./send-selftest.mjs"
 
 // cargar .env
@@ -89,6 +89,47 @@ function toOggOpus(buf, inMime = "audio/webm") {
     const ff = spawn("ffmpeg", ["-y", "-i", inF, "-c:a", "libopus", "-b:a", "32k", "-ac", "1", "-application", "voip", outF])
     ff.on("error", (e) => done(e))
     ff.on("close", (code) => { if (code === 0 && existsSync(outF)) { try { done(null, readFileSync(outF)) } catch (e) { done(e) } } else done(new Error("ffmpeg code " + code)) })
+  })
+}
+
+// STICKER: WhatsApp exige webp 512×512. Convierte cualquier imagen a webp cuadrado (padding transparente, mantiene proporción).
+function toWebpSticker(buf, inMime = "image/jpeg") {
+  return new Promise((resolve, reject) => {
+    const ext = /png/.test(inMime) ? "png" : /webp/.test(inMime) ? "webp" : /gif/.test(inMime) ? "gif" : "jpg"
+    const inF = `/tmp/st_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`, outF = inF + ".webp"
+    try { writeFileSync(inF, buf) } catch (e) { return reject(e) }
+    const done = (err, out) => { for (const f of [inF, outF]) { try { if (existsSync(f)) unlinkSync(f) } catch {} } err ? reject(err) : resolve(out) }
+    const ff = spawn("ffmpeg", ["-y", "-i", inF, "-vf", "scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000", "-c:v", "libwebp", "-q:v", "80", outF])
+    ff.on("error", (e) => done(e))
+    ff.on("close", (code) => { if (code === 0 && existsSync(outF)) { try { done(null, readFileSync(outF)) } catch (e) { done(e) } } else done(new Error("ffmpeg code " + code)) })
+  })
+}
+
+// WAVEFORM de la nota de voz: WhatsApp/Matrix esperan msc1767.audio.waveform (64 amplitudes) para renderizar la nota de
+// voz reproducible. Sin él, algunos clientes la muestran como archivo que no suena. Decodifica el ogg a PCM mono y saca 64 RMS.
+function oggWaveform(buf, buckets = 64) {
+  return new Promise((resolve) => {
+    const inF = `/tmp/wf_${Date.now()}_${Math.random().toString(36).slice(2)}.ogg`
+    try { writeFileSync(inF, buf) } catch { return resolve(null) }
+    const chunks = []
+    const ff = spawn("ffmpeg", ["-v", "quiet", "-i", inF, "-ac", "1", "-ar", "8000", "-f", "s16le", "pipe:1"])
+    ff.stdout.on("data", (d) => chunks.push(d))
+    ff.on("error", () => { try { unlinkSync(inF) } catch {}; resolve(null) })
+    ff.on("close", () => {
+      try { unlinkSync(inF) } catch {}
+      try {
+        const pcm = Buffer.concat(chunks); const n = pcm.length >> 1
+        if (n < buckets) return resolve(null)
+        const per = Math.floor(n / buckets), wf = []
+        let peak = 1
+        for (let b = 0; b < buckets; b++) {
+          let sum = 0
+          for (let i = 0; i < per; i++) { const s = pcm.readInt16LE(((b * per) + i) << 1); sum += s * s }
+          const rms = Math.sqrt(sum / per); wf.push(rms); if (rms > peak) peak = rms
+        }
+        resolve(wf.map((v) => Math.round((v / peak) * 1024))) // normalizado 0..1024 (rango que usan Element/mautrix)
+      } catch { resolve(null) }
+    })
   })
 }
 
@@ -246,6 +287,24 @@ const server = createServer(async (req, res) => {
         try { appendMessage({ id, channel: "sms", account: "sms", jid: num, name, text, ts, dir }); n++ } catch {}
       }
       return json(res, 200, { ok: true, ingested: n })
+    }
+    // Salud del GPU box: el monitor gpu-health.sh (en el GPU box) postea su estado cada 5 min Y justo ANTES de auto-sanarse
+    // (restart ollama / reboot). Guardamos el último snapshot y pusheamos SOLO cuando el box ACTÚA o se recupera — nunca en los
+    // checks sanos (evita ruido). Así pipe.one "vigila" la GPU sin depender de que el box dependa del hub para sanarse.
+    if (path === "/api/gpu-health" && req.method === "POST") {
+      const tok = (process.env.GPU_HEALTH_TOKEN || "").trim()
+      const given = String(req.headers["x-token"] || (req.headers.authorization || "").replace(/^Bearer\s+/i, "")).trim()
+      if (!tok || given !== tok) return json(res, 401, { error: "token inválido" })
+      const b = await body(req)
+      try { (await import("fs")).writeFileSync("data/gpu-health.json", JSON.stringify({ ...b, at: Date.now() })) } catch {}
+      const act = String(b.action || "none")
+      if (act !== "none") {
+        const LBL = { reboot: "🔁 Reinicié el GPU box", "restart-ollama": "♻️ Reinicié ollama (GPU box)", "needs-reboot-cooldown": "⏳ GPU box necesita reboot (en cooldown)", recovered: "✅ GPU box se recuperó" }
+        const title = LBL[act] || "⚠️ GPU box: " + act
+        const detail = `${b.reason || ""} · gen ${b.genOk ? "ok" : "COLGADA"} · nvidia ${b.nvidiaOk ? "ok" : "FALLA"} · VRAM ${b.vramUsed || "?"}/${b.vramTotal || "?"}MB · ${b.temp || "?"}°C`.trim()
+        try { const { sendPush } = await import("./lib/push.mjs"); await sendPush({ title, body: detail, url: "/", tag: "gpu-health" }) } catch {}
+      }
+      return json(res, 200, { ok: true })
     }
     if (!authed) { // no autenticado y remoto → 401 para API, página de PIN para HTML
       if (path.startsWith("/api/")) return json(res, 401, { error: "no autorizado" })
@@ -464,6 +523,15 @@ const server = createServer(async (req, res) => {
       if (path === "/api/covert/config" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setCovert(b.key, b.pass, b.style)) }
       if (path === "/api/covert/config") return json(res, 200, brain.getCovert(q.key || ""))
       if (path === "/api/covert/preview" && req.method === "POST") { const b = await body(req); try { return json(res, 200, { cover: brain.previewCovert(b.text, b.pass, b.style) }) } catch (e) { return json(res, 400, { error: e.message }) } }
+      // PILOTO AUTOMÁTICO ("modo vacaciones"): config por-contacto, preview (dry-run, NO envía) y audit log
+      if (path === "/api/autopilot/config" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setAutopilot(b.key, !!b.enabled, { maxPerDay: b.maxPerDay })) }
+      if (path === "/api/autopilot/config") return json(res, 200, brain.getAutopilot(q.key || ""))
+      if (path === "/api/autopilot/preview" && req.method === "POST") { const b = await body(req); try { return json(res, 200, await brain.considerReply(b.key, { dryRun: true, force: true })) } catch (e) { return json(res, 400, { error: e.message }) } }
+      if (path === "/api/autopilot/log") return json(res, 200, { log: brain.autopilotLog(60) })
+      if (path === "/api/autopilot/feedback" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.autopilotFeedback(b.key, { good: b.good, correction: b.correction, original: b.original })) }
+      // 🎭 PERSONA del owner (para que el piloto responda en personaje). GET = ver; POST {text} = editar; POST {rebuild:true} = regenerar de tus datos
+      if (path === "/api/autopilot/persona" && req.method === "POST") { const b = await body(req); if (b.rebuild) return json(res, 200, { text: await brain.buildPersona() }); return json(res, 200, brain.setPersona(b.text || "")) }
+      if (path === "/api/autopilot/persona") return json(res, 200, { text: brain.getPersona() })
       // #5: transcribir + resumir un video/audio/imagen on-demand (long-press/hover)
       if (path === "/api/media/summarize" && req.method === "POST") { const b = await body(req); try { const r = await brain.summarizeMedia(b.id); return json(res, r && r.error ? 400 : 200, r) } catch (e) { return json(res, 500, { error: e.message }) } }
       // ── IMPORT de historial de WhatsApp (self-service desde la app: "Exportar chat" → subir el .txt) ──
@@ -473,6 +541,14 @@ const server = createServer(async (req, res) => {
         let r; try { r = importWhatsApp(buf.toString("utf8"), { chatName: q.name || "", isGroup: q.group === "1", dateOrder: q.order || "auto", tzOffsetMin: +q.tz || 0 }) } catch (e) { return json(res, 500, { error: e.message }) }
         if (r && r.error) return json(res, 400, r)
         if (r.inserted > 0) spawn(process.execPath, ["src/resolve-identities.mjs"], { detached: true, stdio: "ignore" }).unref() // re-key el hilo importado a la identidad real
+        return json(res, 200, r)
+      }
+      if (path === "/api/import/whatsapp-zip" && req.method === "POST") { // export CON multimedia (.zip): trae texto + fotos/audios/videos
+        const buf = await rawBody(req, 512 * 1024 * 1024) // los .zip con media pueden ser grandes (hasta 512MB)
+        if (!buf || !buf.length) return json(res, 400, { error: "archivo vacío o demasiado grande (máx 512MB)" })
+        let r; try { r = importWhatsAppZip(buf, { chatName: q.name || "", isGroup: q.group === "1", dateOrder: q.order || "auto", tzOffsetMin: +q.tz || 0 }) } catch (e) { return json(res, 500, { error: e.message }) }
+        if (r && r.error) return json(res, 400, r)
+        if (r.inserted > 0) spawn(process.execPath, ["src/resolve-identities.mjs"], { detached: true, stdio: "ignore" }).unref()
         return json(res, 200, r)
       }
       // REENVIAR mensajes preservando el media (audio/imagen/archivo), no solo el texto
@@ -488,7 +564,8 @@ const server = createServer(async (req, res) => {
         if (!q.key) return json(res, 400, { error: "falta key" })
         const durationMs = Math.max(0, parseInt(q.dur || "0", 10)) * 1000
         const ogg = await toOggOpus(raw, inMime).catch(() => null) // si ffmpeg falla, mandamos el original
-        const r = await brain.sendReplyAudio(q.key, ogg || raw, { channel: q.channel, target: q.target, mime: ogg ? "audio/ogg" : inMime, durationMs })
+        const waveform = ogg ? await oggWaveform(ogg).catch(() => null) : null // 64 amplitudes → PTT reproducible en WhatsApp
+        const r = await brain.sendReplyAudio(q.key, ogg || raw, { channel: q.channel, target: q.target, mime: ogg ? "audio/ogg" : inMime, durationMs, waveform })
         return json(res, r && r.error ? 400 : 200, r)
       }
       // IMAGEN / VIDEO / ARCHIVO: recibe el binario + params en la query y lo manda por el bridge (adjunto)
@@ -498,6 +575,15 @@ const server = createServer(async (req, res) => {
         if (!raw || !raw.length) return json(res, 400, { error: "archivo vacío o demasiado grande (máx 64MB)" })
         if (!q.key) return json(res, 400, { error: "falta key" })
         const r = await brain.sendReplyMedia(q.key, raw, { channel: q.channel, target: q.target, mime, filename: q.filename ? decodeURIComponent(q.filename) : "archivo" })
+        return json(res, r && r.error ? 400 : 200, r)
+      }
+      if (path === "/api/send-sticker" && req.method === "POST") {
+        const inMime = (req.headers["content-type"] || "image/jpeg").split(";")[0].trim()
+        const raw = await rawBody(req, 16 * 1024 * 1024)
+        if (!raw || !raw.length) return json(res, 400, { error: "imagen vacía o muy grande (máx 16MB)" })
+        if (!q.key) return json(res, 400, { error: "falta key" })
+        const webp = await toWebpSticker(raw, inMime).catch(() => null) // imagen → webp 512×512; si ffmpeg falla, mando el original
+        const r = await brain.sendReplySticker(q.key, webp || raw, { channel: q.channel, target: q.target, mime: webp ? "image/webp" : inMime })
         return json(res, r && r.error ? 400 : 200, r)
       }
       // ── Grupos de la bandeja (auto editables + custom) ──
@@ -522,6 +608,9 @@ const server = createServer(async (req, res) => {
       if (path === "/api/contact/suggestions") return json(res, 200, await brain.mergeSuggestions(ws, q.key || ""))
       if (path === "/api/thread") return json(res, 200, await brain.unifiedThread(q.key || "", ws, { before: +q.before || 0, limit: +q.limit || 100 }))
       if (path === "/api/thread/catchup") return json(res, 200, await brain.catchup(q.key || "", ws, +q.since || 0))
+      // SYNC edit-aware: solo los mensajes NUEVOS o editados (rev > sinceRev) → el cliente cachea el resto y no lo re-baja
+      if (path === "/api/thread/delta") return json(res, 200, brain.threadDeltaItems(q.key || "", +q.sinceRev || 0))
+      if (path === "/api/thread/sync") return json(res, 200, brain.threadSyncPage(q.key || "", +q.before || 0, { limit: Math.min(1500, +q.limit || 800) })) // backfill de texto completo hacia atrás
       if (path === "/api/thread/suggest-reply") return json(res, 200, await brain.suggestReply(q.key || "")) // borrador IA para el input (no envía)
       if (path === "/api/thread/summarize") return json(res, 200, await brain.summarizeChat(q.key || "", q.range || "all", ws)) // resumen guardado como nota IA
       if (path === "/api/thread/seen" && req.method === "POST") { const b = await body(req); return json(res, 200, { lastSeen: ws.markSeen(b.key, b.ts) }) }

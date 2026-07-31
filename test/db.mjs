@@ -58,7 +58,7 @@ test("seed() cubre TODAS las columnas de messages (sin drift silencioso)", () =>
   const h = resetDb(":memory:")
   const schemaCols = h.prepare("PRAGMA table_info(messages)").all().map((c) => c.name).sort()
   // un valor NO-null distinto por columna → si seed() dropea alguna, el readback la deja null y el test falla
-  const row = { id: "X1", channel: "ch", account: "ac", thread: "th", jid: "jd", sender: "sn", name: "nm", text: "tx", ts: 12345, dir: "out", grp: "gp", media: "md", mediaType: "mt", filename: "fn", unread: 1, body: "bd", summary: "sm", attachments: "at" }
+  const row = { id: "X1", channel: "ch", account: "ac", thread: "th", jid: "jd", sender: "sn", name: "nm", text: "tx", ts: 12345, dir: "out", grp: "gp", media: "md", mediaType: "mt", filename: "fn", unread: 1, body: "bd", summary: "sm", attachments: "at", rev: 1 }
   seed([row])
   const back = h.prepare("SELECT * FROM messages WHERE id=?").get("X1")
   for (const c of schemaCols) assert.ok(back[c] !== null && back[c] !== undefined, `columna '${c}' no round-trip-eó por seed()`)

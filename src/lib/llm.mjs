@@ -316,6 +316,7 @@ export const SENSITIVE_FEATURES = [
   { key: "enrich", label: "Enriquecer conversaciones" },
   { key: "meetings", label: "Resumen de reuniones" },
   { key: "learn", label: "Auto-modelo (aprendizaje)" },
+  { key: "autopilot", label: "Piloto automático (redactar respuestas)" },
 ]
 const SENSITIVE_KEYS = new Set(SENSITIVE_FEATURES.map((f) => f.key))
 function sensitivePolicyMap() { const c = llmConfig(); return (c && c.sensitivePolicy) || {} } // { extract: "cloud", graphify: "local", … }

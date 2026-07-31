@@ -1,6 +1,8 @@
 // Transcribe + RESUME (no literal) las notas de voz RECIBIDAS nuevas → columna `summary`. La app muestra el resumen bajo el player.
 // Solo audios NUEVOS (a partir del primer run; nada retroactivo). Corre desde el daemon cada ~2 min. Batch chico → costo acotado.
 // Uso: node src/audio-summarize.mjs
+import { loadEnv } from "./lib/env.mjs"
+loadEnv() // self-suficiente: sin esto, corrido standalone (o spawn sin env heredado) NO ve WHISPER_URL → stt saltea whisper LOCAL y cae a la nube (falla/leak).
 import { readFileSync, existsSync } from "fs"
 import { audioToSummarize, setMessageSummary, getMeta, setMeta } from "./lib/db.mjs"
 import { stt } from "./lib/voice.mjs"

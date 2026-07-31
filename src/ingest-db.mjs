@@ -31,3 +31,4 @@ if (offset < size) {
 // leímos hasta EOF (size capturado al inicio) → el offset ES size. Sin conteo de bytes → sin off-by-one.
 setMeta("jsonl_offset", size)
 console.log(`[ingest] +${added} mensajes (de ${seen} líneas${dropped ? `, ${dropped} DESCARTADAS por corrupción` : ""}) · total DB: ${count()}`)
+process.exit(added > 0 ? 10 : 0) // exit 10 = entraron mensajes NUEVOS → el daemon dispara el piloto automático al toque (event-driven, no espera el poll)

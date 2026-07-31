@@ -43,6 +43,16 @@ Don't want to run it yourself? There's a **managed version** — the whole stack
 
 > **Going to production?** See **[`docs/DEPLOY.md`](docs/DEPLOY.md)** — a go-live runbook (for a human or an AI agent) with the full **local-vs-server minimum requirements**, step-by-step, and a **"change before production"** checklist.
 
+## Choose your install
+
+| I want… | Path | Get started | Guide |
+|---|---|---|---|
+| **The simple one** — Pipe on my own Mac/Linux, for me | One command | `git clone https://github.com/azweig/pipe.git && cd pipe && bash install.sh` | [DEPLOY.md → Path A](docs/DEPLOY.md) |
+| **My own server** — one hub, my domain, always-on | Single server / VPS | Clone on the box → `bash install.sh` → systemd + Caddy (TLS) | [DEPLOY.md → Path B](docs/DEPLOY.md) · [SELF-HOSTING.md](docs/SELF-HOSTING.md) |
+| **A fleet** — one isolated instance per client | Multi-tenant (Docker) | `bash deploy/provision.sh <id> <subdomain> "<Owner>" <email>` | [deploy/PROVISIONING.md](deploy/PROVISIONING.md) · [DEPLOY.md → Path C](docs/DEPLOY.md) |
+
+Already installed? → **[How to use Pipe](docs/USER-GUIDE.md)**.
+
 ## Quick start
 
 **Easiest — guided installer.** Asks for your identity and keys (AI, Google, Microsoft…) over the terminal and writes `.env` + `data/hub-config.json`, generates your `SECRETS_KEY`, installs deps and runs the tests:
@@ -99,7 +109,9 @@ Every step above is a plain, human-followable command — you never need an AI t
 
 ## Documentation
 
-- **[docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)** — full self-host walkthrough (install, config, connect every channel, WhatsApp bridge, ops, troubleshooting). **Start here.**
+- **[docs/USER-GUIDE.md](docs/USER-GUIDE.md)** — **How to use Pipe** once it's installed: the inbox, search, the AI layer, autopilot, spaces, notes, covert mode, WhatsApp import and more. **Start here after installing.**
+- **[docs/README.md](docs/README.md)** — the docs index (use it → install it → run a fleet → extend it).
+- **[docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)** — full self-host walkthrough (install, config, connect every channel, WhatsApp bridge, ops, troubleshooting). **Start here to self-host.**
 - [docs/UNIPILE.md](docs/UNIPILE.md) — the managed WhatsApp/LinkedIn channel.
 - [docs/MCP.md](docs/MCP.md) — connect an AI assistant to your inbox via the Model Context Protocol (read/write tools, privacy-first, stdio or SSH; no open ports).
 - [docs/COVERT.md](docs/COVERT.md) — covert mode ("The Saint"): send encrypted messages disguised as natural text; per-hub client-side decoder at `/decrypt`.

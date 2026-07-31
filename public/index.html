@@ -437,6 +437,9 @@ h2{font-size:20px;font-weight:700;letter-spacing:-.3px;margin:0}
 .thread:active{background:var(--bg2)}
 .thread.unread{background:#f5f6fb}
 .thread.unread::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:3px;background:var(--accent)}
+.thread.escalated{background:rgba(224,135,43,.10)}
+.thread.escalated::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:3px;background:#e0872b}
+.th-esc{font-size:12.5px;color:#b5691a;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
 .thread .av{width:46px;height:46px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;color:#fff;background-size:cover;background-position:center}
 .th-main{flex:1;min-width:0}
 .th-top{display:flex;align-items:center;gap:1px;min-width:0}

@@ -26,6 +26,37 @@ window.toggleSpell = () => {
 // ── cache-first (SWR): última respuesta por URL en localStorage → apertura instantánea, revalida en bg ──
 const _lsGet = (k) => { try { return JSON.parse(localStorage.getItem("c:" + k) || "null") } catch { return null } }
 const _lsSet = (k, v) => { try { localStorage.setItem("c:" + k, JSON.stringify(v)) } catch {} }
+// ── CACHE PERSISTENTE (IndexedDB): guarda la HISTORIA COMPLETA de cada chat en el disco del navegador. De la red baja solo el
+// DELTA (mensajes con rev > el que ya tengo). Así los mensajes viejos NO se re-descargan nunca — abrir es instantáneo y offline. ──
+let _idbP
+function _idb() {
+  if (_idbP) return _idbP
+  _idbP = new Promise((res, rej) => {
+    let r; try { r = indexedDB.open("pipe", 1) } catch (e) { return rej(e) }
+    r.onupgradeneeded = () => { const db = r.result; if (!db.objectStoreNames.contains("msgs")) db.createObjectStore("msgs", { keyPath: ["t", "id"] }).createIndex("t", "t"); if (!db.objectStoreNames.contains("meta")) db.createObjectStore("meta", { keyPath: "t" }) }
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error)
+  })
+  return _idbP
+}
+const _idbReq = (req) => new Promise((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error) })
+const _txDone = (tx) => new Promise((res, rej) => { tx.oncomplete = () => res(); tx.onerror = tx.onabort = () => rej(tx.error) })
+async function idbLoad(key) { // → { items:[ordenados por ts], meta }
+  try {
+    const db = await _idb()
+    const items = (await _idbReq(db.transaction("msgs").objectStore("msgs").index("t").getAll(IDBKeyRange.only(key)))) || []
+    const meta = await _idbReq(db.transaction("meta").objectStore("meta").get(key))
+    items.sort((a, b) => (a.ts || 0) - (b.ts || 0))
+    return { items, meta: meta || null }
+  } catch { return { items: [], meta: null } }
+}
+async function idbSave(key, items, metaPatch) { // upsert de items (por id) + patch de la metadata del hilo
+  try {
+    const db = await _idb()
+    const real = (items || []).filter((it) => it && it.id && !String(it.id).startsWith("opt-")) // los optimistas no se persisten
+    if (real.length) { const tx = db.transaction("msgs", "readwrite"); const st = tx.objectStore("msgs"); for (const it of real) st.put({ ...it, t: key }); await _txDone(tx) }
+    if (metaPatch) { const cur = (await _idbReq(db.transaction("meta").objectStore("meta").get(key))) || { t: key }; const tx = db.transaction("meta", "readwrite"); tx.objectStore("meta").put({ ...cur, ...metaPatch, t: key }); await _txDone(tx) }
+  } catch {}
+}
 // identidad del hub (config por-hub) — cache local + default GENÉRICO (nunca la identidad de otro hub);
 // se refresca al arrancar desde /api/hub-config. El default usa el dominio actual → un hub nuevo no ve datos ajenos.
 window.__hub = _lsGet("hub") || { ownerName: "", ownerFirst: "", company: "", domain: location.host }
@@ -406,7 +437,9 @@ function renderCfgSection(id) {
     const nums = (a.messaging && a.messaging[0] && a.messaging[0].numbers) || []
     const card = nums.length ? `<div class="cfg-card"><div class="cfg-chips">${nums.map((n) => `<span class="cfg-chip">${IC_PHONE} +${esc(n)}</span>`).join("")}</div></div>` : `<div class="cfg-empty"><b>Sin canales de mensajería</b><p>Tocá “Agregar canal” para vincular tu primer chat.</p></div>`
     const warn = (wa.loggedOut || []).length ? `<div class="cfg-note warn">${IC_ALERT}<div>WhatsApp se desconectó. Volvé a vincularlo para seguir recibiendo y enviando.</div></div>` : ""
-    body = card + warn + `<button class="btn" onclick="addConnectionSheet('telefonia')">➕ Agregar canal de mensajería</button>`
+    body = card + warn + `<button class="btn" onclick="addConnectionSheet('telefonia')">➕ Agregar canal de mensajería</button>
+      <button class="btn ghost" onclick="waImportSheet()"><span class="ei">📤</span>Importar historial de WhatsApp</button>
+      <div class="cfg-note">${IC_INFO}<div>¿Tenés chats viejos de WhatsApp? Exportalos desde la app (“Exportar chat”) y traelos acá — se suman sin duplicar.</div></div>`
   } else if (id === "send") {
     body = `<div class="cfg-card"><div class="cfg-r"><div class="rm" style="width:100%"><div id="selftest-box" style="font-size:13.5px;line-height:1.6;color:var(--muted)">Cargando…</div></div></div></div>
     <div class="cfg-note">${IC_INFO}<div>Cada 12h pipe.one se manda una prueba a tu propio número y correo, y verifica que salió de verdad.</div></div>
@@ -496,6 +529,7 @@ const CONN_PROV = [
   { id: "outlook", name: "Outlook", cat: "correo", chan: "email", sub: "IMAP · app password", status: "ready" },
   { id: "imap", name: "Otro correo", cat: "correo", chan: "email", sub: "Cualquier IMAP", status: "ready" },
   { id: "whatsapp", name: "WhatsApp", cat: "telefonia", chan: "whatsapp", sub: "QR o código", status: "ready" },
+  { id: "wa-import", name: "Importar chat de WhatsApp", cat: "telefonia", emoji: "📤", sub: "Traé tu historial (.txt/.zip)", status: "ready" },
   { id: "telegram", name: "Telegram", cat: "telefonia", chan: "telegram", sub: "Teléfono + código", status: "ready" },
   { id: "sms", name: "SMS", cat: "telefonia", chan: null, emoji: "💬", sub: "Próximamente", status: "soon" },
   { id: "signal", name: "Signal", cat: "telefonia", chan: null, emoji: "🔒", sub: "signal-cli en tu server", status: "ready" },
@@ -573,6 +607,7 @@ window.connOpen = (id) => {
   if (id === "outlook") return emailForm({ name: "Outlook", host: "outlook.office365.com", help: "outlook", ph: "tu@outlook.com", hint: "Usá una <b>contraseña de aplicación</b> de Microsoft (no la de tu cuenta)." })
   if (id === "imap") return emailForm({ name: "Otro correo (IMAP)", host: "", help: "imap", ph: "tu@correo.com", hint: "Cualquier proveedor con IMAP + contraseña de aplicación." })
   if (id === "whatsapp") return waSheet()
+  if (id === "wa-import") return waImportSheet()
   if (id === "discord") return discordSheet()
   if (id === "telegram") return tgSheet()
   if (id === "slack") return slackSheet()
@@ -771,6 +806,63 @@ window.netPoll = async (net, outSel) => {
   setTimeout(() => netPoll(net, outSel), 3000)
 }
 window.waPoll = () => netPoll("whatsapp", "waOut")
+// ── Importar historial de WhatsApp (.txt / .zip) — self-service, sin PC ni root ──
+// El usuario exporta un chat en WhatsApp ("Exportar chat"), lo elige acá, y el server lo parsea y mergea al hilo sin duplicar.
+// .txt = solo texto → POST /api/import/whatsapp · .zip = con fotos/audios → POST /api/import/whatsapp-zip
+let _waImpFile = null
+// deriva el nombre del chat del filename del export ("Chat de WhatsApp con Ana.txt" / "WhatsApp Chat with Ana.txt" → "Ana")
+const waChatName = (fn = "") => String(fn).replace(/\.(txt|zip)$/i, "").replace(/^_?chat( de whatsapp con| de whatsapp)?\s*/i, "").replace(/^whatsapp chat( -| with)?\s*/i, "").replace(/^chat -\s*/i, "").trim()
+// detecta si el teléfono usa día/mes (DMY) o mes/día (MDY) para parsear bien las fechas del export
+const waDateOrder = () => { try { const p = new Intl.DateTimeFormat().formatToParts(new Date(2000, 0, 2)).filter((x) => x.type === "day" || x.type === "month").map((x) => x.type); return p[0] === "month" ? "MDY" : "DMY" } catch { return "auto" } }
+window.waImportSheet = () => {
+  _waImpFile = null
+  const steps = [
+    "Abrí en WhatsApp el chat o grupo que querés traer.",
+    "Tocá el menú <b>⋮</b> (arriba a la derecha) → <b>Más → Exportar chat</b>.",
+    "Elegí <b>«Con multimedia»</b> (trae fotos y audios, archivo .zip) o <b>«Sin multimedia»</b> (solo texto, .txt, llega a más historial).",
+    "Guardalo o compartilo a este dispositivo y elegilo abajo.",
+  ]
+  openSheet(`<button class="cfg-back" onclick="addConnectionSheet('telefonia')">${IC_BACK}Conexiones</button>
+  <h2 style="margin:6px 0 4px">📤 Importar historial de WhatsApp</h2>
+  <div class="sub" style="margin:0 0 14px">WhatsApp guarda tus chats cifrados y no deja que otra app los lea. Traelos vos con <b>«Exportar chat»</b> — se agrega a tu bandeja sin duplicar lo que ya tenés.</div>
+  <ol style="padding-left:20px;font-size:13.5px;line-height:1.7;margin:0 0 14px">${steps.map((s) => `<li style="margin:6px 0">${s}</li>`).join("")}</ol>
+  <input type="file" id="waImpFile" accept=".txt,.zip,text/plain,application/zip" style="display:none" onchange="waImpPick(this)">
+  <button class="btn ghost" style="width:100%" onclick="document.getElementById('waImpFile').click()">Elegir archivo (.txt o .zip)</button>
+  <div id="waImpForm" style="display:none;margin-top:14px">
+    <div class="b small" style="margin:0 0 4px">Nombre del chat o contacto</div>
+    <input class="inp" id="waImpName" placeholder="ej: Ana Pérez / Equipo Ventas" style="${CINP}">
+    <label style="display:flex;align-items:center;gap:9px;margin:2px 0 12px;font-size:14px;cursor:pointer"><input type="checkbox" id="waImpGroup" style="width:18px;height:18px;flex:none"> Es un grupo (varias personas)</label>
+    <button class="btn" style="width:100%" onclick="waImpRun()">Importar</button>
+  </div>
+  <div id="waImpOut" style="margin-top:14px;text-align:center;min-height:22px;font-size:13.5px"></div>
+  <div class="cfg-note" style="margin:14px 0 0">${IC_INFO}<div>«Con multimedia» trae fotos/audios (hasta ~10.000 mensajes). «Sin multimedia» es solo texto pero llega a ~40.000. Podés traer todos los chats que quieras; no se duplica lo que ya tenés.</div></div>`)
+}
+// al elegir archivo: precargá el nombre desde el filename y mostrá el formulario de confirmación
+window.waImpPick = (inp) => {
+  const f = inp.files && inp.files[0]; if (!f) return
+  _waImpFile = f
+  const form = document.getElementById("waImpForm"); if (form) form.style.display = "block"
+  const nm = document.getElementById("waImpName"); if (nm && !nm.value) nm.value = waChatName(f.name)
+  const out = document.getElementById("waImpOut"); if (out) out.innerHTML = `<span class="tiny muted">${esc(f.name)} · ${(f.size / 1048576).toFixed(1)} MB</span>`
+}
+window.waImpRun = async () => {
+  const f = _waImpFile, out = document.getElementById("waImpOut")
+  if (!f) { if (out) out.innerHTML = '<span class="tiny muted">Elegí primero el archivo exportado.</span>'; return }
+  if (f.size > 64 * 1024 * 1024) { if (out) out.innerHTML = '<span style="color:#e0663a">El archivo es muy grande (máx 64 MB). Probá exportar «Sin multimedia».</span>'; return }
+  const name = (document.getElementById("waImpName").value || "").trim() || waChatName(f.name)
+  const group = document.getElementById("waImpGroup").checked ? 1 : 0
+  const isZip = /\.zip$/i.test(f.name || "") // .zip = export con multimedia; cualquier otra cosa la tratamos como .txt
+  if (out) out.innerHTML = '<span class="muted">Importando… no cierres esto.</span>'
+  const qs = new URLSearchParams({ name, group: String(group), order: waDateOrder(), tz: String(-new Date().getTimezoneOffset()) })
+  const url = (isZip ? "/api/import/whatsapp-zip" : "/api/import/whatsapp") + "?" + qs.toString()
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": isZip ? "application/zip" : "text/plain" }, body: f }).then((x) => x.json()).catch(() => null)
+  if (!r || r.error) { if (out) out.innerHTML = `<span style="color:#e0663a">${esc((r && r.error) || "No se pudo importar. Revisá que sea un export de WhatsApp (.txt o .zip).")}</span>`; return }
+  const added = r.inserted ?? r.imported ?? 0
+  const media = r.media ? ` · ${r.media} con foto/audio` : ""
+  const dup = r.skipped ? ` (${r.skipped} ya estaban)` : ""
+  if (out) out.innerHTML = `<b style="color:var(--ok,#16a34a)">✓ ${added} mensajes agregados${media}${dup}</b>`
+  setTimeout(() => { closeSheet(); go("#mensajes") }, 1800) // refrescá la bandeja para ver el hilo importado
+}
 window.imapHostFor = (email) => { const d = ((email || "").split("@")[1] || "").toLowerCase(); return /gmail|googlemail/.test(d) ? "imap.gmail.com" : /outlook|hotmail|live|office365/.test(d) ? "outlook.office365.com" : /zoho/.test(d) ? "imap.zoho.com" : /yahoo/.test(d) ? "imap.mail.yahoo.com" : /icloud|me\.com/.test(d) ? "imap.mail.me.com" : d ? "imap." + d : "" }
 // autofill el servidor mientras se escribe el correo, SALVO que el usuario lo haya editado a mano (dataset.touched)
 window.acHost = (email) => { const h = document.getElementById("acHostF"); if (!h || h.dataset.touched) return; h.value = imapHostFor(email) }
@@ -1058,10 +1150,11 @@ const threadItem = (t) => {
   const nav = isEsp ? `go('#espacio/${t.espId}')` : `go('#conv/${enck(t.key)}')`
   const av = isEsp ? `<div class="av esp-av">${espIcon(t.icon)}</div>` : avatar(t.name, t.photo)
   const pinBtn = isEsp ? "" : `<button class="th-pin${t.pinned ? " on" : ""}" onclick="event.stopPropagation();togglePinThread('${enck(t.key)}',${t.pinned ? "false" : "true"})" title="${t.pinned ? "Quitar de arriba" : "Fijar arriba"}" aria-label="Fijar arriba" style="background:none;border:0;cursor:pointer;font-size:15px;padding:2px 4px;opacity:${t.pinned ? "1" : ".28"}">📌</button>`
-  return `<div class="thread${t.unseen ? " unread" : ""}${isEsp ? " isesp" : ""}${t.pinned ? " pinned" : ""}" onclick="${nav}">
+  return `<div class="thread${t.unseen ? " unread" : ""}${isEsp ? " isesp" : ""}${t.pinned ? " pinned" : ""}${t.escalated ? " escalated" : ""}" onclick="${nav}">
     ${av}
     <div class="th-main">
-      <div class="th-top"><span class="th-name">${esc(t.name)}</span>${isEsp ? '<span class="esp-badge">Espacio</span>' : ""}<span class="th-icons">${chs.map(chanIcon).join("")}</span></div>
+      <div class="th-top"><span class="th-name">${esc(t.name)}</span>${t.escalated ? '<span title="' + esc(t.escalatedReason || "El piloto te lo pasó — revisá vos") + '" style="font-size:12.5px;flex-shrink:0">🏖️⚠️</span>' : (t.autopilot ? '<span title="Piloto automático activo" style="font-size:12.5px;flex-shrink:0">🤖</span>' : "")}${isEsp ? '<span class="esp-badge">Espacio</span>' : ""}<span class="th-icons">${chs.map(chanIcon).join("")}</span></div>
+      ${t.escalated ? `<div class="th-esc">🏖️ El piloto te lo pasó${t.escalatedReason ? " · " + esc(t.escalatedReason) : ""}</div>` : ""}
       <div class="th-prev">${esc(prev) || "…"}</div>
     </div>
     <div class="th-side" style="align-items:center">${pinBtn}<span class="th-time">${ago(t.ts)}</span>${t.unseen ? '<span class="th-dot"></span>' : ""}</div>
@@ -1131,7 +1224,7 @@ function renderInboxList() {
     return (!cats.length || cats.some((gid) => inGroup(t, gid))) && (!chans.length || chans.includes(chanOf(t))) && (!statuses.length || statuses.some((s) => statusPred(s, t)))
   }
   const shown = inboxRows.filter(matchAll)
-  if (!q) shown.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)) // fijados arriba (sort estable → mantiene la recencia dentro de cada grupo); en búsqueda no reordena
+  if (!q) shown.sort((a, b) => (b.escalated ? 1 : 0) - (a.escalated ? 1 : 0) || (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)) // escalados por el piloto arriba de todo, luego fijados (sort estable mantiene recencia); en búsqueda no reordena
   const meta = document.getElementById("ibxmeta")
   if (meta) meta.innerHTML = q ? `<span>${shown.length} ${shown.length === 1 ? "resultado" : "resultados"} para “${esc(ST.q.trim())}”</span>` : ""
   const FIRST = 50
@@ -1299,8 +1392,10 @@ function convBubble(it) {
     ${gist}
     <div class="small" style="color:var(--accent);margin-top:8px;cursor:pointer" onclick='showEmailFull(${escj(it.id)})'>${it.hasBody ? "📖 Abrir email completo →" : "Ver email completo →"}</div></div>`
   }
+  // 🤖 respondido por el piloto automático → badge clickeable para calificar (como el "ver original" de la paloma)
+  const autoBadge = it.auto ? `<div class="tiny" style="opacity:.75;margin-top:3px;cursor:pointer;color:var(--accent)" onclick='event.stopPropagation();autopilotFeedbackSheet(${escj(it.id)}, ${escj(it.text || "")})'>🤖 lo respondió el piloto · calificar</div>` : ""
   const bubble = it.dir === "out"
-    ? `<div class="bubble out">${convContent(it)}${timeEl(it)}</div>`
+    ? `<div class="bubble out">${convContent(it)}${autoBadge}${timeEl(it)}</div>`
     : `<div class="row" style="align-items:flex-end;gap:8px;margin:5px 0">${avatar(it.name, it.photo, "sm")}<div style="min-width:0"><div class="tiny sb" style="color:${color(it.name)};margin:0 4px 2px">${esc(it.name || "")}</div><div class="bubble in" style="margin:0">${convContent(it)}${timeEl(it)}</div></div></div>`
   if (!fwdSel) { // fuera de modo selección: burbuja + botón ⋯ (Responder / Reenviar / Copiar), como WhatsApp
     const menuBtn = `<button onclick='msgMenu(${escj(it.id)})' aria-label="Opciones del mensaje" title="Responder · Reenviar · Copiar" style="border:0;background:transparent;color:var(--muted2);font-size:19px;line-height:1;padding:2px 5px;cursor:pointer;opacity:.5;flex-shrink:0;align-self:center">⋯</button>`
@@ -1351,7 +1446,7 @@ function renderConv() {
     <button id="aiBtn" onclick="aiMenu()" title="IA: sugerir respuesta / resumir chat / corrección" style="min-width:38px;height:38px;border-radius:50%;border:1.5px solid var(--accent);background:var(--bg2);font-size:15px;font-weight:800;color:var(--accent);cursor:pointer;flex-shrink:0">Ai</button>
     ${multi ? chanBtn : ""}<textarea id="msgInput" rows="1" aria-label="Escribí tu mensaje" placeholder="${tg.channel === "email" ? "Email…" : (window._covertOn ? "🕊️ Mensaje encubierto…" : "Mensaje…")}" autocomplete="off" spellcheck="${_spell}" oninput="growComposer(this)" onpaste="handlePaste(event)" style="flex:1;min-width:0;padding:9px 14px;border-radius:20px;border:1px solid var(--line);background:#fff;font-size:15px;resize:none;max-height:120px;overflow-y:auto;font-family:inherit;line-height:1.3;box-sizing:border-box" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}"></textarea>
     <button id="correctBtn" onclick="toggleCorrect()" title="${window._correctOn ? "Corregir con IA al enviar (tocá para enviar tal cual)" : "Enviar TAL CUAL, sin corregir (tocá para corregir)"}" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:${window._correctOn ? "var(--accent)" : "var(--bg2)"};color:${window._correctOn ? "#fff" : "var(--muted)"};font-size:16px;cursor:pointer;flex-shrink:0">✨</button>
-    ${tg.channel !== "email" ? `<input type="file" id="mediaInput" accept="image/*,video/*" multiple style="display:none" onchange="onMediaPick(this)"><button id="attachBtn" onclick="pickMedia()" title="Enviar fotos o videos (podés elegir varios)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:18px;cursor:pointer;flex-shrink:0">📎</button><button id="micBtn" onclick="recVoice()" title="Nota de voz (manda el audio)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:19px;cursor:pointer;flex-shrink:0">🎤</button><button id="micAiBtn" onclick="recVoice(true)" title="Dictar con IA: hablás y te lo paso a texto (tal cual · corregido · mejorado)" style="min-width:44px;height:38px;border-radius:19px;border:1.5px solid var(--accent);background:var(--bg2);color:var(--accent);cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:1px;font-weight:800"><span style="font-size:16px">🎤</span><span style="font-size:10px">IA</span></button>` : ""}
+    ${tg.channel !== "email" ? `<input type="file" id="mediaInput" accept="image/*,video/*" multiple style="display:none" onchange="onMediaPick(this)"><input type="file" id="stickerInput" accept="image/*" style="display:none" onchange="onStickerPick(this)"><button id="attachBtn" onclick="pickMedia()" title="Enviar fotos o videos (podés elegir varios)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:18px;cursor:pointer;flex-shrink:0">📎</button><button id="stickerBtn" onclick="pickSticker()" title="Mandar una imagen como sticker" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:17px;cursor:pointer;flex-shrink:0">🩷</button><button id="micBtn" onclick="recVoice()" title="Nota de voz (manda el audio)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:19px;cursor:pointer;flex-shrink:0">🎤</button><button id="micAiBtn" onclick="recVoice(true)" title="Dictar con IA: hablás y te lo paso a texto (tal cual · corregido · mejorado)" style="min-width:44px;height:38px;border-radius:19px;border:1.5px solid var(--accent);background:var(--bg2);color:var(--accent);cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:1px;font-weight:800"><span style="font-size:16px">🎤</span><span style="font-size:10px">IA</span></button>` : ""}
     <button id="sendBtn" onclick="sendMsg()" aria-label="Enviar mensaje" style="min-width:38px;height:38px;border-radius:50%;border:0;background:var(--accent);color:#fff;font-size:17px;cursor:pointer;flex-shrink:0">➤</button></div>`
   const composer = fwdSel ? fwdBar : (canSend ? `<div id="composer" style="position:fixed;bottom:82px;left:50%;transform:translateX(-50%);width:100%;max-width:480px;padding:8px 8px;background:var(--bg);border-top:1px solid var(--line);display:flex;flex-direction:column;align-items:stretch;z-index:26;box-sizing:border-box">${replyBar}${inputRow}</div>` : "")
   render(`<div class="screen" style="padding-top:6px;padding-bottom:${canSend || fwdSel ? "150px" : "20px"}">
@@ -1360,6 +1455,7 @@ function renderConv() {
       <button class="back" onclick="go('#mensajes')" style="margin-bottom:4px">‹ Bandeja</button>
       <div class="row"><div class="row itemtap" style="flex:1;min-width:0;gap:10px" onclick="viewPerson('${enck(d.key)}')">${avatar(d.name, d.photo)}<div style="min-width:0"><div class="b" style="font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.name)} <span class="tiny muted">›</span></div>${d.email ? `<div class="tiny" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span class="muted">${esc(d.email)}</span>${d.account ? ` <span style="color:var(--accent)">→ ${esc(d.account)}</span>` : ""}</div>` : ""}<div class="sub">${(d.channels || []).map((c) => CH[c] || c).join(" · ") || ""} ${(d.channels || []).length > 1 ? "· unificados" : ""} · ${d.total} msgs</div></div></div>
         ${(canSend && d.covert) ? `<button id="covertBtn" onclick="covertToggle()" class="pill" title="Modo encubierto ON/OFF · la clave se configura en el perfil del contacto" style="flex-shrink:0;background:${window._covertOn ? "var(--accent)" : ""};color:${window._covertOn ? "#fff" : ""}">🕊️</button>` : ""}
+        ${(canSend && !d.group) ? `<button onclick="autopilotSheet()" class="pill" title="Piloto automático — responder solo por este contacto" style="flex-shrink:0;background:${d.autopilot ? "var(--accent)" : ""};color:${d.autopilot ? "#fff" : ""}">🤖</button>` : ""}
         <button class="pill" onclick="selMode()" style="flex-shrink:0" title="Seleccionar mensajes para reenviar" aria-label="Seleccionar mensajes">↪</button>
         <button class="pill" onclick="viewMedia('${enck(d.key)}')" style="flex-shrink:0" title="Adjuntos">📎</button>
         <button class="pill" onclick="openContactSettings('${enck(d.key)}')" style="flex-shrink:0" title="Ajustes del contacto" aria-label="Ajustes del contacto">⚙︎</button></div>
@@ -1561,6 +1657,63 @@ window.covertConfigSheet = async (keyEnc, name) => {
       ${cfg.enabled ? `<button onclick="covertDisable()" class="pill" style="flex-shrink:0">Desactivar</button>` : ""}
     </div>`)
 }
+// ── PILOTO AUTOMÁTICO ("modo vacaciones"): activá/ajustá por contacto + probá qué respondería SIN enviar ──
+window.autopilotSheet = async (keyEnc, name) => {
+  const key = keyEnc ? decodeURIComponent(keyEnc) : (convState && convState.key)
+  if (!key) return
+  window._apKey = key
+  const cfg = await fetch(`/api/autopilot/config?key=${encodeURIComponent(key)}`).then((r) => r.json()).catch(() => ({ enabled: false, maxPerDay: 5 }))
+  const who = name || (convState && convState.name) || "esta persona"
+  openSheet(`<h2 style="margin:0 0 4px">🏖️ Piloto automático · ${esc(who)}</h2>
+    <p class="sub" style="margin:0 0 12px">La IA responde <b>en tu voz</b> las <b>preguntas simples</b> de ${esc(who)}. Antes de mandar revisa que <b>no suene a IA</b>, que <b>no dé datos que vos no diste</b> y que <b>no acepte reuniones, llamadas, verse, plata ni mandar fotos</b>. Cualquier otra cosa te la <b>escala a vos</b>. Ante la duda, no envía.</p>
+    <label class="tiny muted">Límite de respuestas por día — dejalo vacío para <b>sin límite</b> (son conversaciones)</label>
+    <input id="apMax" type="number" min="1" max="500" placeholder="sin límite" value="${cfg.maxPerDay > 0 ? cfg.maxPerDay : ""}" style="width:100%;box-sizing:border-box;padding:11px 13px;border-radius:12px;border:1px solid var(--line);font-size:15px;margin:4px 0 12px">
+    <button onclick="autopilotPreview()" class="btn ghost" style="width:100%;margin-bottom:8px">👀 Ver qué respondería ahora (sin enviar)</button>
+    <div id="apPrev" class="tiny" style="display:none;background:var(--bg2);border-radius:12px;padding:11px 13px;line-height:1.55;margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px;margin-top:6px">
+      <button onclick="autopilotSave()" class="btn" style="flex:1">${cfg.enabled ? "Guardar cambios" : "Activar piloto automático"}</button>
+      ${cfg.enabled ? `<button onclick="autopilotDisable()" class="pill" style="flex-shrink:0">Desactivar</button>` : ""}
+    </div>`)
+}
+window.autopilotPreview = async () => {
+  const box = document.getElementById("apPrev"); if (!box) return
+  box.style.display = "block"; box.innerHTML = "Pensando qué respondería…"
+  const r = (await post("/api/autopilot/preview", { key: window._apKey }).catch(() => null)) || {}
+  if (r.action === "would-send") box.innerHTML = `<b style="color:var(--accent)">✓ Respondería:</b><div style="margin-top:6px;white-space:pre-wrap">${esc(r.text || "")}</div>`
+  else if (r.action === "escalate") box.innerHTML = `<b>⤴ Te escalaría a vos</b> (no responde solo): ${esc(r.reason || "")}`
+  else if (r.action === "skip") box.innerHTML = `Ahora mismo no haría nada: ${esc(r.reason || "")}`
+  else box.innerHTML = esc(r.reason || JSON.stringify(r))
+}
+window.autopilotSave = async () => {
+  const raw = (document.getElementById("apMax")?.value || "").trim()
+  const max = raw ? Math.max(1, Math.min(500, parseInt(raw, 10) || 0)) : 0 // vacío = 0 = sin límite
+  await post("/api/autopilot/config", { key: window._apKey, enabled: true, maxPerDay: max })
+  closeSheet(); if (convState && convState.key === window._apKey) viewConv(window._apKey); else if (window._personKey) viewPerson(window._personKey)
+}
+window.autopilotDisable = async () => {
+  await post("/api/autopilot/config", { key: window._apKey, enabled: false })
+  closeSheet(); if (convState && convState.key === window._apKey) viewConv(window._apKey); else if (window._personKey) viewPerson(window._personKey)
+}
+// feedback de un mensaje que respondió el piloto: 👍 bien, o 👎 mal + "qué hubieras dicho" → retroalimenta al respondedor
+window.autopilotFeedbackSheet = (id, original) => {
+  window._apFbKey = convState && convState.key; window._apFbOrig = decodeURIComponent(original || "")
+  openSheet(`<h2 style="margin:0 0 4px">🤖 ¿Cómo respondió el piloto?</h2>
+    <div class="sub" style="margin:0 0 12px">"${esc(window._apFbOrig).slice(0, 140)}"</div>
+    <div id="apFbBtns" style="display:flex;gap:8px;margin-bottom:14px">
+      <button class="btn" style="flex:1" onclick="autopilotFbSend(true)">👍 Estuvo bien</button>
+      <button class="pill" style="flex:1" onclick="document.getElementById('apFbBtns').style.display='none';document.getElementById('apFbBad').style.display='block'">👎 Estuvo mal</button>
+    </div>
+    <div id="apFbBad" style="display:none">
+      <div class="tiny muted" style="margin-bottom:6px">¿Qué hubieras dicho vos? (así aprende a responder como vos)</div>
+      <textarea id="apFbText" rows="3" style="width:100%;box-sizing:border-box;padding:11px 13px;border-radius:12px;border:1px solid var(--line);font-size:14px;font-family:inherit" placeholder="Lo que vos habrías respondido…"></textarea>
+      <button class="btn" style="width:100%;margin-top:10px" onclick="autopilotFbSend(false)">Guardar corrección</button>
+    </div>`)
+}
+window.autopilotFbSend = async (good) => {
+  const correction = good ? "" : (document.getElementById("apFbText")?.value || "").trim()
+  await post("/api/autopilot/feedback", { key: window._apFbKey, good, correction, original: window._apFbOrig }).catch(() => {})
+  closeSheet()
+}
 window.covertPickStyle = (id) => {
   window._covertStyle = id
   document.querySelectorAll("#covChips [data-cs]").forEach((el) => { const on = el.getAttribute("data-cs") === id; el.style.borderColor = on ? "var(--accent)" : "var(--line)"; el.style.background = on ? "var(--accent)" : "var(--bg2)"; el.style.color = on ? "#fff" : "" })
@@ -1604,6 +1757,20 @@ window.covertReveal = (id) => {
 // ── IMÁGENES / VIDEOS: adjuntar desde el dispositivo o PEGAR del portapapeles → enviar por el bridge ──
 window.pickMedia = () => document.getElementById("mediaInput")?.click()
 window.onMediaPick = (input) => { const files = [...(input.files || [])]; input.value = ""; if (files.length) sendMediaFiles(files) }
+window.pickSticker = () => document.getElementById("stickerInput")?.click()
+window.onStickerPick = (input) => { const f = (input.files || [])[0]; input.value = ""; if (f) sendSticker(f) }
+async function sendSticker(file) { // 🩷 mandar una imagen como sticker (el server la convierte a webp 512×512)
+  if (!convState || convState.key === "self") return
+  const t = convState.target || {}
+  if (t.channel === "email") return alert("Los stickers van por WhatsApp/Telegram/etc., no por email.")
+  const optId = "opt-" + Date.now(), localUrl = URL.createObjectURL(file)
+  convState.items = [...(convState.items || []), { id: optId, channel: t.channel || "whatsapp", dir: "out", name: hubName(), ts: Date.now(), text: "🖼 Sticker", media: localUrl, mediaType: "image" }]
+  renderConv(); window.scrollTo(0, document.body.scrollHeight)
+  const qs = new URLSearchParams({ key: convState.key }); if (t.channel) qs.set("channel", t.channel); if (t.target) qs.set("target", t.target)
+  const r = await fetch("/api/send-sticker?" + qs.toString(), { method: "POST", headers: { "Content-Type": file.type || "image/jpeg" }, body: file }).then((x) => x.json()).catch(() => null)
+  if (!r || r.error) { convState.items = (convState.items || []).filter((x) => x.id !== optId); renderConv(); alert("No se pudo enviar el sticker: " + ((r && r.error) || "error")) }
+  else if (r.media) { const it = (convState.items || []).find((x) => x.id === optId); if (it) { it.media = r.media; renderConv() } }
+}
 // varios archivos de una: los mando en orden, uno tras otro (secuencial → no satura el bridge ni desordena las burbujas)
 async function sendMediaFiles(files) { for (const f of files) { await sendMediaFile(f) } }
 window.handlePaste = (e) => { // pegar una imagen del portapapeles (Cmd/Ctrl+V) → enviarla
@@ -1722,43 +1889,61 @@ async function showSendOptions(text, ch) {
 }
 async function viewConv(key) {
   const startHash = location.hash
-  // SWR: si tengo el chat cacheado, lo pinto AL INSTANTE y revalido en background (apertura ~0ms con RTT Perú→Alemania)
-  const cached = _lsGet("conv:" + key)
-  if (cached && cached.items && cached.items.length) { convState = { ...cached, key }; renderConv(); window.scrollTo(0, document.body.scrollHeight) } else render(skel(5))
+  // 1) pintar la HISTORIA COMPLETA cacheada en IndexedDB al instante (no solo 40 msgs; funciona offline)
+  const local = await idbLoad(key)
+  const lm = local.meta || {}, haveLocal = local.items.length > 0
+  if (haveLocal) { convState = { key, items: local.items, name: lm.name, photo: lm.photo, email: lm.email, account: lm.account, channels: lm.channels || [], total: lm.total, hasMore: lm.hasMore, oldestTs: lm.oldestTs, targets: lm.targets || [], target: (lm.targets || [])[0] || null, maxRev: lm.maxRev || 0, covert: lm.covert || null }; renderConv(); window.scrollTo(0, document.body.scrollHeight) } else render(skel(5))
+  // 2) de la red: si ya tengo cache → solo el DELTA (rev > maxRev); si es la 1ra vez → carga completa (últimos 60)
   const [d, tg] = await Promise.all([
-    api("/api/thread?key=" + enck(key) + "&limit=60").then((x) => x || { items: [], channels: [] }),
+    (haveLocal ? api("/api/thread/delta?key=" + enck(key) + "&sinceRev=" + (lm.maxRev || 0)) : api("/api/thread?key=" + enck(key) + "&limit=60")).then((x) => x || { items: [] }),
     api("/api/thread/targets?key=" + enck(key)).then((x) => x || { targets: [] }),
   ])
   if (location.hash !== startHash) return // navegaste a otra pantalla mientras cargaba → no pisar
-  convState = { key, items: d.items || [], name: d.name, photo: d.photo, email: d.email, account: d.account, channels: d.channels || [], total: d.total || (d.items || []).length, hasMore: d.hasMore, oldestTs: d.oldestTs, targets: tg.targets || [], target: (tg.targets || [])[tg.default || 0] || null, unread: d.unread || 0, lastSeen: d.lastSeen || 0, covert: d.covert || null }
-  _lsSet("conv:" + key, { items: (d.items || []).slice(-40), name: d.name, photo: d.photo, email: d.email, account: d.account, channels: d.channels || [], total: d.total, hasMore: d.hasMore, targets: tg.targets || [], target: (tg.targets || [])[tg.default || 0] || null, covert: d.covert || null }) // cache liviano
+  const targets = tg.targets || [], target = targets[tg.default || 0] || null
+  if (haveLocal) {
+    // DELTA: upsert por id sobre lo local + reuso la metadata del hilo cacheada (nombre/foto no cambian seguido)
+    const byId = new Map(local.items.map((i) => [i.id, i])); for (const it of (d.items || [])) byId.set(it.id, it)
+    const items = [...byId.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0))
+    const maxRev = d.maxRev != null ? d.maxRev : (lm.maxRev || 0)
+    convState = { key, items, name: lm.name, photo: lm.photo, email: lm.email, account: lm.account, channels: lm.channels || [], total: lm.total, hasMore: lm.hasMore, oldestTs: lm.oldestTs, targets, target, maxRev, covert: lm.covert || null }
+    idbSave(key, d.items || [], { maxRev, targets })
+  } else {
+    // FULL (primer open): guardo items + metadata del hilo para las próximas veces
+    convState = { key, items: d.items || [], name: d.name, photo: d.photo, email: d.email, account: d.account, channels: d.channels || [], total: d.total || (d.items || []).length, hasMore: d.hasMore, oldestTs: d.oldestTs, targets, target, unread: d.unread || 0, lastSeen: d.lastSeen || 0, maxRev: d.maxRev || 0, covert: d.covert || null }
+    idbSave(key, d.items || [], { maxRev: d.maxRev || 0, name: d.name, photo: d.photo, email: d.email, account: d.account, channels: d.channels || [], total: d.total, hasMore: d.hasMore, oldestTs: d.oldestTs, targets, covert: d.covert || null })
+  }
   renderConv()
   const jb = app.querySelector(".screen"); if (jb) window.scrollTo(0, document.body.scrollHeight)
   // marcar visto hasta el último mensaje (para el resumen "lo que me perdí" la próxima vez)
-  const lastTs = (d.items || []).reduce((m, x) => Math.max(m, x.ts || 0), 0)
+  const lastTs = (convState.items || []).reduce((m, x) => Math.max(m, x.ts || 0), 0)
   if (lastTs && key !== "self") post("/api/thread/seen", { key, ts: lastTs }).catch(() => {})
   if (pendingDraft) { const inp = document.getElementById("msgInput"); if (inp) { inp.value = pendingDraft; growComposer(inp); inp.focus() } pendingDraft = null } // borrador de la IA proactiva
 }
-// trae mensajes nuevos y los APPENDea (sin re-render completo → no molesta el scroll ni lo que estás escribiendo)
+// poll incremental: pide SOLO el DELTA (rev > maxRev) → payload chico. Appendea sin re-render (no molesta el scroll ni lo que escribís)
 async function refreshConv(key) {
   const scr = app.querySelector(".screen"); if (!scr || convState.key !== key) return
-  const d = await api("/api/thread?key=" + enck(key) + "&limit=100")
-  if (!d || convState.key !== key) return
-  // DEDUP del envío optimista: un mensaje "opt-…" queda visible hasta que el server devuelve su ECO (mismo texto, ~mismo momento).
-  // Ahí se reemplaza por el real (re-render), en vez de appendear el eco encima → adiós burbuja duplicada.
-  const opts = (convState.items || []).filter((x) => String(x.id).startsWith("opt-"))
-  const serverOut = (d.items || []).filter((x) => x.dir === "out")
-  const stillPending = opts.filter((o) => !serverOut.some((s) => (s.text || "") === (o.text || "") && Math.abs((s.ts || 0) - (o.ts || 0)) < 120000))
-  const resolved = opts.length - stillPending.length
+  const d = await api("/api/thread/delta?key=" + enck(key) + "&sinceRev=" + (convState.maxRev || 0))
+  if (!d || convState.key !== key || !Array.isArray(d.items)) return
+  if (d.maxRev != null) convState.maxRev = d.maxRev
+  if (!d.items.length) return // nada nuevo ni editado → no toca nada
+  idbSave(key, d.items, { maxRev: convState.maxRev })
+  const byId = new Map((convState.items || []).map((i) => [i.id, i]))
   const curNewest = (convState.items || []).filter((x) => !String(x.id).startsWith("opt-")).reduce((m, x) => Math.max(m, x.ts || 0), 0)
-  const fresh = (d.items || []).filter((x) => (x.ts || 0) > curNewest)
-  if (!fresh.length && !resolved) return
+  let needRender = false; const appended = []
+  for (const it of d.items) {
+    if (byId.has(it.id)) needRender = true       // una fila que ya tenía cambió (media backfilleada, resumen…) → re-render
+    else if ((it.ts || 0) <= curNewest) needRender = true // llegó una vieja fuera de orden → re-render para insertarla bien
+    else appended.push(it)                        // mensaje nuevo al final → se puede appendear sin re-render
+    byId.set(it.id, it)
+    // DEDUP optimista: el eco del server reemplaza la burbuja "opt-…" (mismo texto out, ~mismo momento)
+    if (it.dir === "out") for (const [id, o] of [...byId]) if (String(id).startsWith("opt-") && (o.text || "") === (it.text || "") && Math.abs((o.ts || 0) - (it.ts || 0)) < 120000) { byId.delete(id); needRender = true }
+  }
   const nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 280
-  convState.items = [...(d.items || []), ...stillPending]; convState.total = d.total || convState.total
-  if (resolved) renderConv() // un optimista se confirmó → re-pintar deduplicado
-  else { let html = ""; for (const it of fresh) html += convBubble(it); scr.insertAdjacentHTML("beforeend", html) }
+  convState.items = [...byId.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0))
+  if (needRender) renderConv()
+  else { let html = ""; for (const it of appended) html += convBubble(it); scr.insertAdjacentHTML("beforeend", html) }
   if (nearBottom) window.scrollTo(0, document.body.scrollHeight)
-  const lastTs = fresh.reduce((m, x) => Math.max(m, x.ts || 0), 0)
+  const lastTs = d.items.reduce((m, x) => Math.max(m, x.ts || 0), 0)
   if (lastTs && key !== "self") post("/api/thread/seen", { key, ts: lastTs }).catch(() => {}) // marcar visto los nuevos
 }
 // ── Calendarizador por chat: chip flotante + modal ──
@@ -1885,8 +2070,9 @@ window.loadOlder = async () => {
   const older = await api(`/api/thread?key=${enck(d.key)}&before=${d.oldestTs}&limit=100`)
   if (older && older.items && older.items.length) {
     d.items = [...older.items, ...d.items]; d.oldestTs = older.oldestTs; d.hasMore = older.hasMore
+    idbSave(d.key, older.items, { oldestTs: d.oldestTs, hasMore: d.hasMore }) // persistir la página vieja → no se re-baja nunca más
     renderConv()
-  } else { d.hasMore = false; renderConv() }
+  } else { d.hasMore = false; idbSave(d.key, [], { hasMore: false }); renderConv() }
 }
 const emailIframe = (it) => {
   const raw = it.body || `<pre style="white-space:pre-wrap;font-family:system-ui;font-size:14px">${(it.full || it.text || "").replace(/</g, "&lt;").replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#4f46e5">$1</a>')}</pre>`
@@ -1952,6 +2138,7 @@ async function viewPersonScreen(nameOrKey) {
   const nm = p.name || decodeURIComponent(nameOrKey), ini = esc(_ini(nm))
   window._personKey = nameOrKey // para refrescar este perfil tras configurar el modo encubierto
   const cov = (p.key && !p.isGroup) ? await api("/api/covert/config?key=" + enck(p.key)).catch(() => null) : null // estado del modo encubierto de este contacto
+  const ap = (p.key && !p.isGroup) ? await api("/api/autopilot/config?key=" + enck(p.key)).catch(() => null) : null // estado del piloto automático
   const covLbl = cov?.styles?.find((s) => s.id === cov.style)?.label || cov?.style || ""
   const convKey = p.canon || nm
   const people = (p.shared?.people || []), groups = (p.shared?.groups || [])
@@ -2003,6 +2190,10 @@ async function viewPersonScreen(nameOrKey) {
     ${(p.key && !p.isGroup) ? `<div class="mtg-card"><div class="mtg-eyebrow">🕊️ Modo encubierto</div>
       <div class="sub" style="margin:6px 0 10px">${cov && cov.enabled ? `<b style="color:var(--accent)">Activo</b> · estilo <b>${esc(covLbl)}</b>. Los mensajes que le mandes pueden ir cifrados como texto normal; ${esc(nm)} los ve descifrados con la clave.` : `Cifrá tus mensajes disfrazados de poema/cuento/receta — solo ${esc(nm)}, con la clave compartida, los puede leer (como en la película El Santo).`}</div>
       <button class="btn" style="width:100%" onclick='covertConfigSheet(${escj(enck(p.key))}, ${escj(nm)})'>${cov && cov.enabled ? "Cambiar clave o estilo · desactivar" : "🕊️ Configurar"}</button>
+    </div>` : ""}
+    ${(p.key && !p.isGroup) ? `<div class="mtg-card"><div class="mtg-eyebrow">🏖️ Piloto automático</div>
+      <div class="sub" style="margin:6px 0 10px">${ap && ap.enabled ? `<b style="color:var(--accent)">Activo</b> · la IA responde <b>en tu voz</b> las preguntas simples de ${esc(nm)}${ap.maxPerDay > 0 ? ` (máx ${ap.maxPerDay}/día)` : ""}. Todo lo demás (reuniones, verse, plata, fotos, dudas) te lo escala. Nunca suena a IA ni da datos que no diste.` : `Dejá que la IA conteste sola las preguntas simples de ${esc(nm)}, en tu estilo con esta persona. Con filtro estricto: no acepta reuniones ni compromisos, no manda fotos, no inventa datos, y ante la duda te avisa a vos.`}</div>
+      <button class="btn" style="width:100%" onclick='autopilotSheet(${escj(enck(p.key))}, ${escj(nm)})'>${ap && ap.enabled ? "Ajustar · desactivar" : "🏖️ Activar para " + esc(nm)}</button>
     </div>` : ""}
     ${p.pending && !p.stats?.messages ? `<div class="hb-empty" style="text-align:center">Sin historial de conversación con este contacto.</div>` : ""}
     </div>

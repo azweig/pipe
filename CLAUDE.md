@@ -2,6 +2,8 @@
 
 You're helping someone **run, install, or deploy Pipe** — a self-hostable unified inbox + AI second brain (Node 20 + SQLite + a vanilla-JS PWA, no framework). This file orients you; the authoritative step-by-step runbook is **[`docs/DEPLOY.md`](docs/DEPLOY.md)** — read it before acting.
 
+> **Orientation:** `CLAUDE.md`/`AGENTS.md` orient you; **[`docs/DEPLOY.md`](docs/DEPLOY.md)** is the authoritative install runbook; to *use* the app see **[`docs/USER-GUIDE.md`](docs/USER-GUIDE.md)**.
+
 ## When they ask to "install / set up / deploy / run Pipe"
 
 1. **Pick the target and confirm it with them:**

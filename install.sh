@@ -41,7 +41,7 @@ to_arr(){ local IFS=','; local out=""; for x in $1; do x="$(echo "$x" | xargs)";
 
 # ── 3. SECRETS_KEY (cifra tus tokens en reposo) ─────────────────
 if grep -qE '^SECRETS_KEY=.+' .env; then c_g "✓ SECRETS_KEY ya configurada";
-else KEY="$(openssl rand -hex 32 2>/dev/null || head -c32 /dev/urandom | xxd -p -c256)"; set_env SECRETS_KEY "$KEY"; c_g "✓ SECRETS_KEY generada (guardala: está en .env)"; fi
+else KEY="$(openssl rand -base64 32 2>/dev/null || head -c32 /dev/urandom | base64)"; set_env SECRETS_KEY "$KEY"; c_g "✓ SECRETS_KEY generada (openssl rand -base64 32 — guardala: está en .env)"; fi
 hr
 
 # ── 4. Identidad del hub ────────────────────────────────────────

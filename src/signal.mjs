@@ -3,9 +3,11 @@
 // Config: SIGNAL_CLI_URL (ej http://localhost:8080) + SIGNAL_NUMBER (tu número registrado, +51…). Sin eso → reader inactivo.
 // Registro (una vez): seguí el README de signal-cli-rest-api (vincular como dispositivo o registrar el número). Uso: node src/signal.mjs
 import { appendMessage } from "./lib/lock.mjs"
+import { getSignal } from "./lib/integrations.mjs"
 
-const URL_ = (process.env.SIGNAL_CLI_URL || "").replace(/\/+$/, "")
-const ME = (process.env.SIGNAL_NUMBER || "").trim()
+const _stored = getSignal() || {} // lo conectado desde la Consola (URL cifrada) — fallback tras el .env
+const URL_ = (process.env.SIGNAL_CLI_URL || _stored.url || "").replace(/\/+$/, "")
+const ME = (process.env.SIGNAL_NUMBER || _stored.number || "").trim()
 if (!URL_ || !ME) console.log("[signal] sin SIGNAL_CLI_URL/SIGNAL_NUMBER — reader inactivo (dormido)")
 const POLL = +process.env.SIGNAL_POLL_MS || 15000
 const digits = (s) => String(s || "").replace(/[^\d]/g, "")

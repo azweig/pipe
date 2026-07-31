@@ -102,7 +102,7 @@ No vayas a prod sin recorrer esto. Un agente debe **detenerse y pedir** los valo
 
 - [ ] **Node 20** confirmado (`node -v` → v20.x). Nunca 25.
 - [ ] **`data/hub-config.json`** con la identidad real (no los defaults genéricos). 👤
-- [ ] **`SECRETS_KEY`** seteada en `.env` (AES-256, 32 bytes). **En Docker es OBLIGATORIA** — si falta, se genera `./.secret-key` que NO persiste entre rebuilds → romperías todos los tokens BYOK cifrados. 👤 (generá una y guardala fuera del repo)
+- [ ] **`SECRETS_KEY`** seteada en `.env` (AES-256, 32 bytes; generala con `openssl rand -base64 32`). **En Docker es OBLIGATORIA** — si falta, se genera `./data/.secret-key` que NO persiste entre rebuilds → romperías todos los tokens BYOK cifrados. 👤 (generá una y guardala fuera del repo)
 - [ ] **PIN de acceso** creado (detrás de Caddy nadie es `isLocal`; en multi-tenant `provision.sh` lo setea desde dentro del container y lo imprime). 👤
 - [ ] **Keys de IA** (BYOK) — al menos una de `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`/`GEMINI_API_KEY`, o un Ollama accesible. 👤
 - [ ] **Correo** (si lo usás): OAuth Google (`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` + redirect URI `https://<dominio>/oauth/google/callback` por subdominio) 👤, o IMAP con contraseña de aplicación desde la UI.

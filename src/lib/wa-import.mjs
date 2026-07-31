@@ -5,6 +5,11 @@ import { handle as db, withRetry } from "./db-core.mjs"
 import { insertMany } from "./ingest-repo.mjs"
 import { owner as hubOwner } from "./hub.mjs"
 import { createHash } from "crypto"
+import { writeFileSync, readFileSync, readdirSync, existsSync, mkdtempSync, rmSync } from "fs"
+import { spawnSync } from "child_process"
+import { tmpdir } from "os"
+import { join, extname } from "path"
+import { casPutBuffer } from "./cas.mjs"
 
 // Inicio de mensaje. iOS: "[dd/mm/yy, hh:mm:ss a. m.] Sender: text". Android: "dd/mm/yy, hh:mm - Sender: text". El ‎ (LTR mark) aparece a veces.
 const RE_IOS = /^‎?\[(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?)\s*(?:([ap])\.?\s?m\.?)?\]\s?‎?([\s\S]*)$/i
@@ -48,12 +53,18 @@ export function parseWhatsAppExport(text, { owner = "", dateOrder = "auto", tzOf
       const sm = rest.match(/^([^:\n]{1,80}?):\s([\s\S]*)$/) // "Sender: text" vs línea de sistema (sin "sender: ")
       if (!sm) { cur = null; continue } // sistema (cifrado E2E, "creó el grupo", "cambió el asunto"…) → ignorar
       const sender = sm[1].trim(); let body = sm[2]
-      let mediaType = null
-      if (MEDIA_ANY.test(body)) { for (const [re, t] of MEDIA_KIND) { if (re.test(body)) { mediaType = t; break } } mediaType = mediaType || "document" }
+      let mediaType = null, mediaFile = null
+      if (MEDIA_ANY.test(body)) {
+        for (const [re, t] of MEDIA_KIND) { if (re.test(body)) { mediaType = t; break } }
+        mediaType = mediaType || "document"
+        // export CON multimedia: el archivo real viaja en el .zip. Capturamos su nombre para linkearlo. iOS/Android nuevo: "<attached: FILE>"; Android viejo: "FILE (file attached)".
+        const att = body.match(/<attached:\s*([^>]+?)\s*>/i) || body.match(/^‎?\s*(.+?)\s*\((?:file attached|archivo adjunto|arquivo anexado)\)\s*$/i)
+        if (att) mediaFile = att[1].trim()
+      }
       const dir = (OWNER_ALIASES.test(sender) || (ownerN && norm(sender) === ownerN)) ? "out" : "in"
-      // el export "Sin multimedia" no trae el archivo → sin `media` URL. Ponemos un marcador limpio como texto (el placeholder crudo es feo).
+      // el export "Sin multimedia" no trae el archivo → marcador limpio como texto. Con multimedia, el resolver adjunta el archivo real.
       const MARK = { image: "🖼 Imagen", video: "📹 Video", audio: "🎤 Audio", document: "📎 Multimedia" }
-      cur = { ts, sender, dir, text: mediaType ? MARK[mediaType] : body.trim(), mediaType }
+      cur = { ts, sender, dir, text: mediaType ? MARK[mediaType] : body.trim(), mediaType, mediaFile }
     } else if (cur) {
       cur.text += "\n" + line // continuación multi-línea del mensaje actual
     }
@@ -73,23 +84,54 @@ function resolveThread(chatName, msgs, isGroup) {
 }
 
 // ── IMPORT: parsea + mergea al hilo con dedup por contenido (ts±90s + texto). Devuelve stats. ──
-export function importWhatsApp(text, { owner = "", chatName = "", isGroup = false, dateOrder = "auto", tzOffsetMin = 0 } = {}) {
+export function importWhatsApp(text, { owner = "", chatName = "", isGroup = false, dateOrder = "auto", tzOffsetMin = 0, mediaResolver = null } = {}) {
   owner = owner || hubOwner() // el nombre del owner (hub-config) es cómo aparecen TUS mensajes salientes en el export → detecta dir:out
   const msgs = parseWhatsAppExport(text, { owner, dateOrder, tzOffsetMin })
   if (!msgs.length) return { parsed: 0, inserted: 0, skipped: 0, thread: null, error: "no pude leer mensajes en el archivo (¿es un export de WhatsApp?)" }
   const { thread, name, matched } = resolveThread(chatName, msgs, isGroup)
   const dupe = db().prepare("SELECT 1 FROM messages WHERE thread=? AND ts BETWEEN ? AND ? AND text=? LIMIT 1")
   const records = []
-  let skipped = 0
+  let skipped = 0, mediaN = 0
   for (const m of msgs) {
     if (dupe.get(thread, m.ts - 90000, m.ts + 90000, m.text)) { skipped++; continue } // ya está (lo trajo el bridge o un import previo)
-    const id = "waimp:" + createHash("sha1").update(thread + "|" + m.ts + "|" + m.dir + "|" + m.text).digest("hex").slice(0, 20)
+    let media = null, filename = null, mediaType = m.mediaType
+    if (m.mediaFile && mediaResolver) { const r = mediaResolver(m.mediaFile); if (r && r.media) { media = r.media; if (r.mediaType) mediaType = r.mediaType; filename = m.mediaFile; mediaN++ } } // export CON media → adjunta el archivo real del zip
+    const id = "waimp:" + createHash("sha1").update(thread + "|" + m.ts + "|" + m.dir + "|" + m.text + "|" + (filename || "")).digest("hex").slice(0, 20)
     records.push({
       id, channel: "whatsapp", account: "import", thread, jid: null,
       sender: m.dir === "out" ? null : m.sender, name: isGroup ? m.sender : name, text: m.text, ts: m.ts, dir: m.dir,
-      grp: isGroup ? name : null, media: null, mediaType: m.mediaType, filename: null, unread: 0, body: null, attachments: null,
+      grp: isGroup ? name : null, media, mediaType, filename, unread: 0, body: null, attachments: null,
     })
   }
   const inserted = records.length ? withRetry(() => insertMany(records)) : 0
-  return { parsed: msgs.length, inserted, skipped, thread, name, matched, isGroup }
+  return { parsed: msgs.length, inserted, skipped, media: mediaN, thread, name, matched, isGroup }
 }
+
+// IMPORT desde el .zip "Exportar chat CON multimedia": descomprime (python3 zipfile), lee el .txt, y adjunta CADA foto/audio/video
+// del zip al mensaje correspondiente (guardándolo en el CAS = tu backup). Así traés el historial COMPLETO, no solo el texto.
+const _extKind = (fn) => { const e = extname(fn || "").toLowerCase(); if (/\.(jpe?g|png|webp|gif|heic|bmp)$/.test(e)) return "image"; if (/\.(mp4|mov|3gp|webm|mkv|avi)$/.test(e)) return "video"; if (/\.(opus|ogg|m4a|mp3|aac|wav|amr)$/.test(e)) return "audio"; return "document" }
+export function importWhatsAppZip(zipBuf, { chatName = "", isGroup = false, dateOrder = "auto", tzOffsetMin = 0 } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), "waimp-")); const zipPath = join(dir, "export.zip")
+  try {
+    writeFileSync(zipPath, zipBuf)
+    const un = spawnSync("python3", ["-c", "import sys,zipfile\nz=zipfile.ZipFile(sys.argv[1])\nz.extractall(sys.argv[2])", zipPath, dir], { timeout: 180000 })
+    if (un.status !== 0) return { error: "no pude descomprimir el .zip (¿es un export de WhatsApp con multimedia?)" }
+    const files = readdirSync(dir)
+    const txtName = files.find((f) => /_chat\.txt$/i.test(f)) || files.find((f) => /\.txt$/i.test(f) && /chat|whatsapp/i.test(f)) || files.find((f) => /\.txt$/i.test(f))
+    if (!txtName) return { error: "el .zip no tiene el archivo de chat (.txt)" }
+    const text = readFileSync(join(dir, txtName), "utf8")
+    // resolver: nombre de archivo del export → blob del zip → CAS. Cache por nombre para no re-guardar.
+    const cache = new Map()
+    const mediaResolver = (fname) => {
+      if (cache.has(fname)) return cache.get(fname)
+      let out = null
+      try {
+        const p = join(dir, fname)
+        if (existsSync(p)) { const buf = readFileSync(p); if (buf.length) { const kind = _extKind(fname); const media = casPutBuffer(buf, extname(fname).slice(1).toLowerCase() || "bin", "whatsapp:import"); out = { media, mediaType: kind } } }
+      } catch {}
+      cache.set(fname, out); return out
+    }
+    return importWhatsApp(text, { chatName: chatName || chatNameFromTxt(txtName), isGroup, dateOrder, tzOffsetMin, mediaResolver })
+  } finally { try { rmSync(dir, { recursive: true, force: true }) } catch {} }
+}
+const chatNameFromTxt = (fn = "") => String(fn).replace(/\.txt$/i, "").replace(/^_?chat( de whatsapp con| de whatsapp)?\s*/i, "").replace(/^whatsapp chat( -| with)?\s*/i, "").replace(/^chat -\s*/i, "").trim()

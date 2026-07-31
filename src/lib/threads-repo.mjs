@@ -58,6 +58,14 @@ export function threadSince(thread, ts, { limit = 300 } = {}) {
 export function threadUnreadCount(thread, ts) {
   return db().prepare("SELECT COUNT(*) c FROM messages WHERE thread=? AND ts > ? AND dir!='out'").get(thread, Number(ts) || 0).c
 }
+// SYNC edit-aware: filas del hilo con rev > sinceRev (NUEVAS o editadas), en orden de revisión. El cliente hace upsert por id.
+export function threadDelta(thread, sinceRev = 0, { limit = 500 } = {}) {
+  return db().prepare("SELECT * FROM messages WHERE thread=? AND rev > ? ORDER BY rev ASC LIMIT ?").all(thread, Number(sinceRev) || 0, limit)
+}
+// rev máxima actual del hilo (para que el cliente sepa hasta dónde llegó, aunque el delta venga vacío/paginado)
+export function threadMaxRev(thread) {
+  return db().prepare("SELECT COALESCE(MAX(rev),0) r FROM messages WHERE thread=?").get(thread).r
+}
 
 // ── absorbidas en Wave 2 (antes SQL crudo en crons/libs) ──
 // hilos ENTRANTES recientes SIN respuesta, un mensaje representativo (el último) por hilo: excluye grupos, 'self',

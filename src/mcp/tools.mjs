@@ -32,7 +32,7 @@ export const TOOLS = [
   {
     name: "get_thread",
     scope: "read",
-    description: "Devuelve los últimos mensajes de UNA conversación por su clave de hilo (la que aparece en 'thread' de search_inbox, ej 'Milagros Núñez' o 'whatsapp:519...@s.whatsapp.net'). SOLO LECTURA.",
+    description: "Devuelve los últimos mensajes de UNA conversación por su clave de hilo (la que aparece en 'thread' de search_inbox, ej 'Ana Pérez' o 'whatsapp:519...@s.whatsapp.net'). SOLO LECTURA.",
     inputSchema: { type: "object", properties: {
       thread: { type: "string", description: "clave del hilo (campo 'thread' de search_inbox)" },
       limit: { type: "integer", description: "cuántos mensajes recientes (default 30, tope 60)" },

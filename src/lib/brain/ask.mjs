@@ -16,24 +16,44 @@ function ragIndex() {
   if (!existsSync(f)) return []
   const m = statSync(f).mtimeMs
   if (_rag && m === _ragMtime) return _rag
-  _rag = readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean)
+  // LEER POR BUFFER, no como un string: rag.jsonl puede pasar los ~512MB del límite de string de Node (ERR_STRING_TOO_LONG) → el
+  // RAG semántico se caía en silencio (todo el cerebro degradado a FTS). Los Buffers SÍ superan ese límite; parseamos línea por línea.
+  const out = []
+  try {
+    const buf = readFileSync(f) // Buffer (sin límite de 512MB)
+    let start = 0
+    for (let i = 0; i < buf.length; i++) {
+      if (buf[i] === 10) { // '\n'
+        if (i > start) { try { const o = JSON.parse(buf.toString("utf8", start, i)); if (o) out.push(o) } catch {} }
+        start = i + 1
+      }
+    }
+    if (start < buf.length) { try { const o = JSON.parse(buf.toString("utf8", start)); if (o) out.push(o) } catch {} }
+  } catch (e) { console.warn("[rag] no pude cargar rag.jsonl:", e.message) }
+  _rag = out
   _ragMtime = m
   return _rag
 }
 
-export async function ask(question) {
-  const fmt = (ts) => new Date(ts).toISOString().slice(0, 16).replace("T", " ")
-  // RAG semántico (primario): pedazos más relevantes por SIGNIFICADO (mensajes + notas del vault)
+// RETRIEVAL CRUDO (sin la síntesis LLM): trae los fragmentos más relevantes de TODA la data del owner — RAG semántico (mensajes +
+// notas del vault Obsidian) + FTS sobre los 2M msgs + cuerpos de email. Reusable por el piloto (cruce con el cerebro) sin gastar un LLM.
+export async function retrieveContext(question, { limit = 14, semantic: useSemantic = true } = {}) {
   let semantic = [], semanticOk = false
-  try { const qv = await embed(question); if (qv) { semantic = topK(qv, ragIndex(), 22).filter((x) => x.s > 0.45).map((x) => x.it); semanticOk = true } } catch {}
-  if (!semanticOk) console.warn("[ask] RAG semántico no disponible (Ollama caído) → respondo solo por búsqueda de palabras (FTS)") // #29: ya no es silencioso
+  // semantic=false → FTS solo (para llamadas en TIEMPO REAL como el piloto: cargar el índice de 550MB tarda ~12s, inaceptable por respuesta)
+  if (useSemantic) try { const qv = await embed(question); if (qv) { semantic = topK(qv, ragIndex(), 22).filter((x) => x.s > 0.45).map((x) => x.it); semanticOk = true } } catch {}
   const ctxItems = [], seen = new Set()
   for (const it of semantic) { if (seen.has(it.id)) continue; seen.add(it.id); ctxItems.push({ ts: it.ts, label: it.kind === "note" ? "🧠 " + it.ref : it.ref, text: it.text }) }
-  // FTS sobre TODO el histórico (2M msgs) DESDE LA DB — reemplaza el escaneo del messages.jsonl de 1.1GB (crasheaba con ERR_STRING_TOO_LONG)
   try { for (const r of dbSearch(question, { limit: 22, byRank: true })) { const k = "fts:" + r.id; if (seen.has(k)) continue; seen.add(k); ctxItems.push({ ts: r.ts, label: `${r.channel} ${stripWA(r.grp || r.name || "")}`, text: cleanMsg(r.text) }) } } catch {}
-  try { for (const r of dbSearchBody(question, { limit: 8 })) { const k = "body:" + r.thread + ":" + r.ts; if (seen.has(k)) continue; seen.add(k); ctxItems.push({ ts: r.ts, label: `email ${stripWA(r.name || "")}`, text: cleanMsg(String(r.snip || "").replace(/<[^>]+>/g, " ")) }) } } catch {} // #: FTS sobre cuerpos de email (montos/fechas)
+  try { for (const r of dbSearchBody(question, { limit: 8 })) { const k = "body:" + r.thread + ":" + r.ts; if (seen.has(k)) continue; seen.add(k); ctxItems.push({ ts: r.ts, label: `email ${stripWA(r.name || "")}`, text: cleanMsg(String(r.snip || "").replace(/<[^>]+>/g, " ")) }) } } catch {}
   ctxItems.sort((a, b) => (a.ts || 0) - (b.ts || 0))
-  const ctx = ctxItems.slice(0, 28).map((e) => `- (${e.label}, ${fmt(e.ts).slice(0, 10)}) ${(e.text || "").replace(/\s+/g, " ").slice(0, 200)}`).join("\n")
+  return { items: ctxItems.slice(0, limit), semanticOk }
+}
+
+export async function ask(question) {
+  const fmt = (ts) => new Date(ts).toISOString().slice(0, 16).replace("T", " ")
+  const { items: ctxItems, semanticOk } = await retrieveContext(question, { limit: 28 })
+  if (!semanticOk) console.warn("[ask] RAG semántico no disponible (Ollama caído) → respondo solo por búsqueda de palabras (FTS)") // #29: ya no es silencioso
+  const ctx = ctxItems.map((e) => `- (${e.label}, ${fmt(e.ts).slice(0, 10)}) ${(e.text || "").replace(/\s+/g, " ").slice(0, 200)}`).join("\n")
   // TODO LOCAL: respuesta con modelo chico/rápido en el server (privado). Prompt claro para que el modelo chico no se pierda.
   const prompt = `Sos el asistente personal de ${ownerFirst()}. Abajo hay FRAGMENTOS reales de sus mensajes y notas.
 Respondé la PREGUNTA en 1 a 4 frases claras, en español, usando SOLO esos fragmentos.

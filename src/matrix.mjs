@@ -120,14 +120,16 @@ async function uploadMedia(token, buffer, mime, filename = "voz.ogg") {
 }
 // ENVÍO DE NOTA DE VOZ: m.audio con los marcadores MSC1767/MSC3245 → los bridges (WhatsApp/Telegram/Discord/Signal) la entregan
 // como mensaje de voz (PTT), no como archivo. El audio ya viene en ogg/opus (convertido por el server). Usado por /api/send-audio.
-export async function sendMatrixAudio(room, buffer, { mime = "audio/ogg", durationMs = 0 } = {}) {
+export async function sendMatrixAudio(room, buffer, { mime = "audio/ogg", durationMs = 0, waveform = null } = {}) {
   const token = await login()
   const mxc = await uploadMedia(token, buffer, mime)
   if (!mxc) return { ok: false, error: "no se pudo subir el audio al servidor Matrix" }
+  // waveform (64 amplitudes 0..1024): sin él WhatsApp puede mostrar la nota como archivo que no reproduce. Si no vino, uno plano.
+  const wf = (Array.isArray(waveform) && waveform.length) ? waveform : new Array(64).fill(256)
   const content = {
     msgtype: "m.audio", body: "Nota de voz.ogg", url: mxc,
     info: { mimetype: mime, size: buffer.length, duration: durationMs },
-    "org.matrix.msc1767.audio": { duration: durationMs },
+    "org.matrix.msc1767.audio": { duration: durationMs, waveform: wf },
     "org.matrix.msc3245.voice": {}, // ← marca de "voice message" (PTT) para los bridges
   }
   const r = await api("PUT", `/_matrix/client/v3/rooms/${encodeURIComponent(room)}/send/m.room.message/${Date.now()}${Math.random().toString(36).slice(2)}`, token, content)
@@ -144,6 +146,17 @@ export async function sendMatrixMedia(room, buffer, { mime = "application/octet-
   if (width && height) { info.w = width; info.h = height }
   const content = { msgtype, body: filename, url: mxc, info }
   const r = await api("PUT", `/_matrix/client/v3/rooms/${encodeURIComponent(room)}/send/m.room.message/${Date.now()}${Math.random().toString(36).slice(2)}`, token, content)
+  return { ok: !!(r && (r.event_id || r.eventId)), event: r?.event_id }
+}
+
+// ENVÍO DE STICKER: evento m.sticker (tipo de evento propio, no m.room.message) con la imagen webp → los bridges lo entregan
+// como sticker nativo (WhatsApp exige webp; el server lo convierte a 512×512 antes). Usado por /api/send-sticker.
+export async function sendMatrixSticker(room, buffer, { mime = "image/webp" } = {}) {
+  const token = await login()
+  const mxc = await uploadMedia(token, buffer, mime, "sticker.webp")
+  if (!mxc) return { ok: false, error: "no se pudo subir el sticker al servidor Matrix" }
+  const content = { body: "sticker.webp", url: mxc, info: { mimetype: mime, size: buffer.length, w: 512, h: 512 } }
+  const r = await api("PUT", `/_matrix/client/v3/rooms/${encodeURIComponent(room)}/send/m.sticker/${Date.now()}${Math.random().toString(36).slice(2)}`, token, content)
   return { ok: !!(r && (r.event_id || r.eventId)), event: r?.event_id }
 }
 
@@ -370,7 +383,7 @@ export async function runReader() {
         meta.selfChat = allGhosts.length > 0 && peers.length === 0 // sala 1:1 solo con MIS ghosts = me escribo a mí (Mis Notas)
         for (const e of (r.timeline?.events || [])) {
          try {
-          if (e.type !== "m.room.message") continue
+          if (e.type !== "m.room.message" && e.type !== "m.sticker") continue // stickers llegan como evento m.sticker (no m.room.message)
           if (e.sender === `@${USER}:${DOMAIN}`) continue // comandos míos al bot, no son mensajes reales
           if (isBotSender(e.sender)) continue // avisos del bridge bot (código, instrucciones), no mensajes reales
           const c = e.content || {}
@@ -393,15 +406,19 @@ export async function runReader() {
           if (meta.name && !meta.dmPeer) rec.group = meta.name // solo grupos llevan nombre de sala; un DM NO (su "nombre de sala" es el contacto)
           const threadKey = computeThread(rec) // una sola fuente de verdad para la política de media
           let media = null, mediaType = callKind, filename = null
-          if (["m.image", "m.video", "m.audio", "m.file"].includes(c.msgtype) && c.url) {
-            const kind = c.msgtype.replace("m.", "") // image/video/audio/file — el audio SIEMPRE se guarda
+          // un sticker (evento m.sticker) tiene el MISMO shape que una imagen (url + info webp) → lo tratamos como imagen
+          const isSticker = e.type === "m.sticker"
+          const mtype = isSticker ? "m.image" : c.msgtype
+          if (["m.image", "m.video", "m.audio", "m.file"].includes(mtype) && c.url) {
+            const kind = mtype.replace("m.", "") // image/video/audio/file — el audio SIEMPRE se guarda
             const store = shouldStoreMedia(threadKey, kind) // política: no guardar fotos/videos/docs de este chat
             if (store) {
               const buf = await Promise.race([mediaToBuffer(token, c.url), new Promise((res) => setTimeout(() => res(null), MEDIA_TIMEOUT))]).catch(() => null) // timeout: no estancar /sync por una media lenta
-              if (buf) { media = casPutBuffer(buf, extOf(c.info?.mimetype, c.body), `${meta.channel}/${meta.name || name}`); mediaType = kind } // CAS: dedup por contenido
+              if (buf) { media = casPutBuffer(buf, isSticker ? "webp" : extOf(c.info?.mimetype, c.body), `${meta.channel}/${meta.name || name}`); mediaType = isSticker ? "image" : kind } // sticker=imagen webp; el resto conserva su kind (video/audio/file) — NO forzar image
             }
             const skip = store ? "" : " · (no guardada)"
-            if (c.msgtype === "m.image") text = (store && c.body && !/^image|\.(jpg|png|webp)$/i.test(c.body)) ? c.body : "🖼 Imagen" + skip
+            if (isSticker) text = "🖼 Sticker" + skip
+            else if (c.msgtype === "m.image") text = (store && c.body && !/^image|\.(jpg|png|webp)$/i.test(c.body)) ? c.body : "🖼 Imagen" + skip
             else if (c.msgtype === "m.video") text = "📹 Video" + skip
             else if (c.msgtype === "m.audio") text = "🎤 Audio"
             else if (c.msgtype === "m.file") { text = `📄 ${c.body || "documento"}` + skip; filename = store ? c.body : null }
@@ -518,8 +535,22 @@ export async function syncBridgePortals() {
       if (p.name) named += setGrp.run(p.name, canon).changes
     }
   }
+  // LID→número: WhatsApp está migrando todos los contactos a "LID" (@lid), un identificador de privacidad distinto del número (@s.whatsapp.net).
+  // El mismo contacto entra a veces como @lid y a veces como @s.whatsapp.net → DOS hilos para una persona (contacto duplicado). El bridge
+  // guarda el mapeo real en whatsmeow_lid_map(lid, pn); lo usamos para fusionar cada hilo @lid en su hilo por número. Cero hardcodeo.
+  let mergedL = 0
+  try {
+    const lids = mdb.prepare("SELECT lid, pn FROM whatsmeow_lid_map").all()
+    for (const { lid, pn } of lids) {
+      if (!lid || !pn) continue
+      const live = `whatsapp:${lid}@lid`
+      const num = String(pn).replace(/[:@].*$/, "") // pn puede venir "595...@s.whatsapp.net" o "595...:12@..."
+      const canon = MY_NUMBERS.has(num) ? "self" : (contacts[num] || `whatsapp:${num}@s.whatsapp.net`)
+      if (canon !== live) mergedL += mergeThreads(canon, [live])
+    }
+  } catch (e) { console.warn("lid-merge:", e.message) }
   rebuildStats()
-  console.log(`portales: grupos unificados ${mergedG} msgs, DMs unificados ${mergedD} msgs, ${named} nombrados`)
+  console.log(`portales: grupos unificados ${mergedG} msgs, DMs unificados ${mergedD} msgs, LID→número ${mergedL} msgs, ${named} nombrados`)
 }
 
 export async function backfillAvatars() {

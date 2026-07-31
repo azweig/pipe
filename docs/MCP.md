@@ -63,7 +63,7 @@ No hace falta abrir ningún puerto: SSH tuneliza stdin/stdout, cifrado y ya aute
 ```
 > El proceso MCP corre DONDE está la base (el server), así los datos nunca viajan salvo por el canal SSH cifrado hacia tu cliente.
 
-Reiniciá tu cliente MCP y preguntale, p.ej.: *"buscá en mi inbox qué me dijo Milagros de la factura"* o *"¿qué tareas tengo pendientes?"*.
+Reiniciá tu cliente MCP y preguntale, p.ej.: *"buscá en mi inbox qué me dijo Ana de la factura"* o *"¿qué tareas tengo pendientes?"*.
 
 ## Node
 Requiere **Node 20 LTS** (igual que el resto de Pipe). El server MCP no toca la red; solo la base SQLite local (lecturas concurrentes vía WAL, no bloquea al daemon).

@@ -116,6 +116,26 @@ function runVideoFetch() {
   p.on("exit", () => { videoRunning = false })
 }
 
+// --- piloto automático / modo vacaciones: responde por los contactos habilitados (harness estricto, fail-closed) ---
+let autopilotRunning = false
+function runAutopilot() {
+  if (autopilotRunning) return
+  // sin contactos habilitados → ni gastamos en levantar el proceso (el caso común hasta que actives uno)
+  try { const c = JSON.parse(readFileSync("data/autopilot.json", "utf8")); if (!Object.values(c).some((v) => v && v.enabled)) return } catch { return }
+  autopilotRunning = true
+  const p = spawnLogged("autopilot", NODE, ["src/autopilot-run.mjs"])
+  p.on("exit", () => { autopilotRunning = false })
+}
+
+// 🩺 watchdog de embeddings/Ollama: mantiene caliente el motor semántico del "segundo cerebro" y reinicia Ollama si muere
+let embedWdRunning = false
+function runEmbedWatchdog() {
+  if (embedWdRunning) return
+  embedWdRunning = true
+  const p = spawnLogged("embed-wd", NODE, ["src/embed-watchdog.mjs"])
+  p.on("exit", () => { embedWdRunning = false })
+}
+
 let heartbeatRunning = false
 function runHeartbeat() {
   if (heartbeatRunning) return
@@ -236,7 +256,7 @@ function runIngest() {
   if (ingestRunning) return
   ingestRunning = true
   const p = spawnLogged("ingest", NODE, ["src/ingest-db.mjs"])
-  p.on("exit", () => { ingestRunning = false })
+  p.on("exit", (code) => { ingestRunning = false; if (code === 10) setTimeout(runAutopilot, 5000) }) // exit 10 = mensajes nuevos → piloto automático YA (event-driven)
 }
 
 // --- clasificador de spam LLM (capa 2): clasifica hilos dudosos en lote, cachea el veredicto ---
@@ -344,6 +364,9 @@ setTimeout(runIngest, 15000) // primera ingesta a la DB a los 15s
 setInterval(runIngest, 15000) // ingesta JSONL→DB cada 15s (mensajes nuevos consultables casi al toque)
 setTimeout(runVideoFetch, 180000) // primera descarga de videos a los 3 min
 setInterval(runVideoFetch, 4 * 60000) // baja videos de links nuevos cada 4 min (pocos por corrida, throttled)
+setTimeout(runAutopilot, 60000) // primera corrida del piloto automático al minuto
+setInterval(runAutopilot, 60000) // revisa contactos con piloto automático cada 1 min (fail-closed; la mayoría de corridas no hacen nada)
+setTimeout(runEmbedWatchdog, 30000); setInterval(runEmbedWatchdog, 5 * 60000) // mantiene caliente el motor semántico + reinicia Ollama si muere
 setTimeout(runBridgeSync, 8 * 60000) // sync del bridge (fotos+nombres) a los 8 min
 setInterval(runBridgeSync, 6 * 3600000) // fotos de perfil + nombres de grupo cada 6h (mautrix DB)
 setTimeout(runBridgePortals, 90000) // primera fusión de grupos duplicados a los 90s

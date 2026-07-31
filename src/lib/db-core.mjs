@@ -12,7 +12,8 @@ export function initSchema(h) {
       id TEXT PRIMARY KEY,
       channel TEXT, account TEXT, thread TEXT, jid TEXT,
       sender TEXT, name TEXT, text TEXT, ts INTEGER, dir TEXT,
-      grp TEXT, media TEXT, mediaType TEXT, filename TEXT, unread INTEGER DEFAULT 0, body TEXT
+      grp TEXT, media TEXT, mediaType TEXT, filename TEXT, unread INTEGER DEFAULT 0, body TEXT,
+      rev INTEGER DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_thread_ts ON messages(thread, ts);
     CREATE INDEX IF NOT EXISTS idx_ts ON messages(ts);
@@ -77,6 +78,22 @@ export function initSchema(h) {
   if (!mcols.includes("body")) h.exec("ALTER TABLE messages ADD COLUMN body TEXT")
   if (!mcols.includes("summary")) h.exec("ALTER TABLE messages ADD COLUMN summary TEXT")
   if (!mcols.includes("attachments")) h.exec("ALTER TABLE messages ADD COLUMN attachments TEXT") // JSON [{name,cas,mime,size}] — adjuntos de email (multi)
+  // SYNC EDIT-AWARE: `rev` = revisión monotónica global por fila. Se estampa por TRIGGER en cada INSERT y cada UPDATE (cualquier
+  // columna), así el cliente pide solo `rev > lastSeenRev` y recibe mensajes NUEVOS *y* editados (media backfilleada, resumen, etc.)
+  // sin re-bajar todo. Contador en meta('msg_rev'). Los triggers se crean acá (post-ALTER) para que `rev` exista en DBs viejas.
+  if (!mcols.includes("rev")) h.exec("ALTER TABLE messages ADD COLUMN rev INTEGER DEFAULT 0")
+  h.exec(`
+    INSERT OR IGNORE INTO meta(k, v) VALUES ('msg_rev', '0');
+    CREATE INDEX IF NOT EXISTS idx_rev ON messages(rev);
+    CREATE TRIGGER IF NOT EXISTS messages_rev_ai AFTER INSERT ON messages BEGIN
+      UPDATE meta SET v = CAST(v AS INTEGER) + 1 WHERE k='msg_rev';
+      UPDATE messages SET rev = (SELECT CAST(v AS INTEGER) FROM meta WHERE k='msg_rev') WHERE id = NEW.id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS messages_rev_au AFTER UPDATE ON messages WHEN NEW.rev = OLD.rev BEGIN
+      UPDATE meta SET v = CAST(v AS INTEGER) + 1 WHERE k='msg_rev';
+      UPDATE messages SET rev = (SELECT CAST(v AS INTEGER) FROM meta WHERE k='msg_rev') WHERE id = NEW.id;
+    END;
+  `)
   // migración: pin/archivo de clips (para priorizar/enfocar en Notas)
   const ccols = h.prepare("PRAGMA table_info(clips)").all().map((c) => c.name)
   if (!ccols.includes("pinned")) h.exec("ALTER TABLE clips ADD COLUMN pinned INTEGER DEFAULT 0")
@@ -160,7 +177,7 @@ export function resetDb(path = ":memory:") {
 // ── seed de fixtures para tests ──────────────────────────────────────────────
 // Inserta filas de `messages` (dispara el trigger de FTS por esquema). NO mantiene thread_stats:
 // eso lo hace insertMany/rebuildStats del ingest-repo (Wave 1). Suficiente para caracterizar lecturas.
-const SEED_COLS = ["id", "channel", "account", "thread", "jid", "sender", "name", "text", "ts", "dir", "grp", "media", "mediaType", "filename", "unread", "body", "summary", "attachments"]
+const SEED_COLS = ["id", "channel", "account", "thread", "jid", "sender", "name", "text", "ts", "dir", "grp", "media", "mediaType", "filename", "unread", "body", "summary", "attachments", "rev"]
 function normSeed(r) {
   const ts = r.ts ?? 0
   return {
@@ -169,6 +186,7 @@ function normSeed(r) {
     sender: r.sender || "", name: r.name || "", text: r.text || "", ts, dir: r.dir || "in",
     grp: r.grp ?? null, media: r.media ?? null, mediaType: r.mediaType ?? null, filename: r.filename ?? null,
     unread: r.unread ? 1 : 0, body: r.body ?? null, summary: r.summary ?? null, attachments: r.attachments ?? null,
+    rev: r.rev ?? 0, // el trigger de sync-rev la re-stampa en el INSERT; el seed provee un valor para el guard de cobertura de columnas
   }
 }
 export function seed(rows = []) {
