@@ -47,6 +47,15 @@ async function portalDmPeer(roomId) {
   try { const db = await mautrixDb(); const p = db && db.prepare("SELECT room_type, other_user_id, id FROM portal WHERE mxid=? LIMIT 1").get(roomId); if (p && p.room_type === "dm") peer = p.other_user_id || p.id || null } catch {}
   _dmPeer.set(roomId, peer); return peer
 }
+// JID REAL del grupo (@g.us) desde el portal de mautrix, para keyear en el INGEST por el @g.us y NO por la sala "!room" efímera →
+// elimina de RAÍZ el duplicado grupo (!room vs @g.us) que antes solo arreglaba syncBridgePortals cada 20min (y se rompía si la DB estaba trabada).
+const _portalJid = new Map() // mxid → @g.us (cache; no cambia)
+async function portalGroupJid(roomId) {
+  if (_portalJid.has(roomId)) return _portalJid.get(roomId)
+  let jid = null
+  try { const db = await mautrixDb(); const p = db && db.prepare("SELECT id FROM portal WHERE mxid=? LIMIT 1").get(roomId); if (p && /@(g\.us|broadcast|newsletter|thread\.v2)$/.test(p.id || "")) jid = p.id } catch {}
+  _portalJid.set(roomId, jid); return jid
+}
 // ¿la sala es el WhatsApp Status Broadcast (estados/historias)? → sus mensajes NUNCA son una conversación; van a un hilo oculto, no por remitente.
 const _isStatus = new Map()
 async function portalIsStatus(roomId) {
@@ -381,6 +390,8 @@ export async function runReader() {
         // grupo confirmado → NUNCA DM. DM confirmado por el portal pero sin membresía sincronizada (peers vacío) → peer autoritativo del portal (NO cae al pushname).
         else meta.dmPeer = isG === true ? null : isG === false ? (peers[0] || await portalDmPeer(roomId)) : (peers.length === 1 ? peers[0] : null)
         meta.selfChat = allGhosts.length > 0 && peers.length === 0 // sala 1:1 solo con MIS ghosts = me escribo a mí (Mis Notas)
+        // GRUPO: keyear por el @g.us del portal (no por la sala "!room") → cero duplicado en el ingest, sin depender del cron de dedup
+        const gjid = (isG === true && !meta.dmPeer && !meta.selfChat) ? await portalGroupJid(roomId) : null
         for (const e of (r.timeline?.events || [])) {
          try {
           if (e.type !== "m.room.message" && e.type !== "m.sticker") continue // stickers llegan como evento m.sticker (no m.room.message)
@@ -400,7 +411,7 @@ export async function runReader() {
           const mine = !!(phoneOf(e.sender) && MY_NUMBERS.has(phoneOf(e.sender))) // mensaje enviado por MÍ (desde el celu u otra cuenta) → saliente
           // rec de IDENTIDAD primero: el gate de media y el guardado deben usar la MISMA clave. Si divergen (p.ej. identity-manual.json
           // canoniza por nombre y el gateRec no lo tenía), el gate cae al default "store" y guarda lo que el usuario pidió NO guardar.
-          const rec = { channel: meta.channel, account: "matrix", id: e.event_id, jid: roomId, sender: e.sender, name: mine ? owner() : name, ts: e.origin_server_ts, dir: mine ? "out" : "in" }
+          const rec = { channel: meta.channel, account: "matrix", id: e.event_id, jid: gjid || roomId, sender: e.sender, name: mine ? owner() : name, ts: e.origin_server_ts, dir: mine ? "out" : "in" }
           if (meta.dmPeer) rec.dm = meta.dmPeer // 1:1 del bridge → computeThread lo keyea por número (no por la sala)
           if (meta.selfChat) rec.self = true // sala solo con mis ghosts → "Mis Notas"
           if (meta.name && !meta.dmPeer) rec.group = meta.name // solo grupos llevan nombre de sala; un DM NO (su "nombre de sala" es el contacto)
