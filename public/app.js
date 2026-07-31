@@ -339,6 +339,7 @@ const IC_AUDIO = '<svg viewBox="0 0 24 24"><path d="M4 10v4M8 6v12M12 3v18M16 7v
 const CFG_SECS = [
   { id: "hub", icon: IC_ID, name: "Este hub", kick: "Tu identidad", title: "¿Quién sos?", desc: "Con esto la IA sabe quién sos y desde dónde escribís — para atribuir bien tus mensajes." },
   { id: "engine", icon: SVG.spark, name: "Motor de IA", kick: "Inteligencia", title: "Keys y áreas", desc: "Cargá tus keys y elegí qué IA usa cada tarea. Todo queda cifrado en tu servidor." },
+  { id: "enrich", icon: SVG.globe, name: "Enriquecimiento (Apify)", kick: "Perfiles sociales", title: "Enriquecimiento (Apify)", desc: "Perfiles sociales anónimos (no usa tus cookies). Cargá una o varias cuentas Apify — la app rota entre ellas y si una llega al límite mensual pasa a la siguiente." },
   { id: "mail", icon: IC_MAIL, name: "Cuentas de correo", kick: "Correo", title: "Tus bandejas", desc: "Gmail, Outlook o cualquier IMAP — todo en un solo lugar." },
   { id: "msg", icon: SVG.chat, name: "Mensajería", kick: "Chat", title: "WhatsApp, Telegram y más", desc: "Sumá tus chats a la bandeja unificada." },
   { id: "send", icon: IC_SEND, name: "Estado de envío", kick: "Diagnóstico", title: "¿Tus mensajes salen?", desc: "El hub se autoprueba mandándote un mensaje y te avisa si algo no sale." },
@@ -355,6 +356,7 @@ function cfgStatus(id) {
   if (id === "msg") { if ((wa.loggedOut || []).length) return { cls: "err", text: "revincular WhatsApp" }; const nums = (a.messaging && a.messaging[0] && a.messaging[0].numbers) || []; return nums.length ? { cls: "ok", text: `${nums.length} ${nums.length === 1 ? "número" : "números"}` } : { cls: "warn", text: "sin canales" } }
   if (id === "send") { const s = window.__selftest; if (!s) return { cls: "", text: "sin probar" }; const bad = s.filter((x) => !x.ok).length; return bad ? { cls: "err", text: `${bad} ${bad === 1 ? "falla" : "fallas"}` } : { cls: "ok", text: "todo ok" } }
   if (id === "prefs") return { cls: auth.pinSet ? "ok" : "warn", text: auth.pinSet ? "PIN activo" : "sin PIN" }
+  if (id === "enrich") return { cls: "", text: "gestionar" }
   if (id === "autopilot") return { cls: "", text: "qué escala" }
   if (id === "sync") return { cls: "", text: "reconstruir" }
   if (id === "storage") return { cls: "", text: "gestionar" }
@@ -467,6 +469,7 @@ function renderCfgSection(id) {
   }
   if (id === "storage") body = `<div id="storageCfg" class="cfg-card">Cargando…</div>`
   if (id === "autopilot") body = `<div id="apPolicyCfg" class="cfg-card">Cargando…</div>`
+  if (id === "enrich") body = `<div id="apifyCfg">Cargando…</div>`
   render(`<div class="screen">
     <button class="cfg-back" onclick="cfgBack()">${IC_BACK}Ajustes</button>
     <div class="cfg-sec-h"><div class="cfg-kick">${esc(sec.kick || "Configuración")}</div><h1>${esc(sec.title || sec.name || "")}</h1>${sec.desc ? `<p>${esc(sec.desc)}</p>` : ""}</div>
@@ -475,6 +478,57 @@ function renderCfgSection(id) {
   if (id === "send") loadSelfTest()
   if (id === "storage") loadStorageCfg()
   if (id === "autopilot") loadAutopilotPolicy()
+  if (id === "enrich") loadApifyCfg()
+}
+// ── Enriquecimiento (Apify): cuentas anónimas que la app rota para traer perfiles sociales ──
+window.loadApifyCfg = async () => {
+  const box = document.getElementById("apifyCfg"); if (!box) return
+  const r = await api("/api/apify/accounts").catch(() => null)
+  if (!r) { box.textContent = "No se pudo cargar."; return }
+  const accs = r.accounts || []
+  window.__apifyN = accs.length
+  const rows = accs.map((a) => `<div class="cfg-r">
+      <div class="ric">${SVG.search}</div>
+      <div class="rm"><b>${esc(a.name || "Cuenta Apify")}</b><span>${a.runs || 0} corrida${(a.runs || 0) === 1 ? "" : "s"} · ~$${Number(a.usd || 0).toFixed(2)}${a.hint ? ` · ••••${esc(a.hint)}` : ""}</span></div>
+      ${a.exhausted ? `<span class="cfg-badge" style="background:rgba(224,102,47,.12);color:var(--warn)">AGOTADA este mes</span>` : ""}
+      <button class="rx" onclick="apifyRemove('${esc(a.id)}')" title="Quitar">✕</button></div>`).join("")
+  const list = accs.length ? `<div class="cfg-card">${rows}</div>` : `<div class="cfg-empty"><b>Sin cuentas Apify</b><p>Cargá una para activar el enriquecimiento social de tus contactos. Con el plan gratis alcanza para arrancar.</p></div>`
+  box.innerHTML = `${list}
+    <button class="btn" onclick="apifyAddSheet()">➕ Agregar cuenta Apify</button>
+    <div class="cfg-note">${IC_INFO}<div>La app usa estas cuentas de forma anónima (no tus cookies). Rota entre ellas y salta a la siguiente si una llega al límite mensual gratuito.${r.month ? ` Mes actual: ${esc(r.month)}.` : ""}</div></div>
+    <details style="margin-top:12px"><summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px;list-style:none">⚙️ Avanzado · IDs de actores por plataforma</summary>
+      <textarea id="apify-actors" class="inp" spellcheck="false" style="margin-top:8px;font-family:ui-monospace,Menlo,monospace;font-size:12px;min-height:120px;box-sizing:border-box">${esc(JSON.stringify(r.actors || {}, null, 2))}</textarea>
+      <button class="btn ghost" style="margin-top:8px" onclick="apifySaveActors()">Guardar actores</button></details>`
+}
+window.apifyAddSheet = () => {
+  openSheet(`<h2 style="margin:0 0 10px">➕ Cuenta Apify</h2>
+    <div class="sub" style="margin:0 0 12px">Creá una cuenta gratis en apify.com y pegá tu API token (Settings → Integrations). El nombre es opcional.</div>
+    <input class="inp" id="apify-name" placeholder="Nombre (opcional, ej: Apify #1)" style="box-sizing:border-box;margin-bottom:10px">
+    <div style="position:relative;margin-bottom:6px"><input class="inp" id="apify-token" type="password" placeholder="Pegá tu API token (apify_api_…)" style="box-sizing:border-box;padding-right:44px"><button type="button" onclick="togglePw('apify-token',this)" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:0;cursor:pointer;font-size:17px;padding:5px;color:var(--muted)">👁</button></div>
+    <a href="https://console.apify.com/settings/integrations" target="_blank" rel="noopener" class="chip" style="text-decoration:none">Obtener token ↗</a>
+    <button class="btn" style="width:100%;margin-top:16px" onclick="apifyAdd()">Agregar</button>
+    <div id="apify-out" class="tiny" style="text-align:center;margin-top:10px;min-height:16px"></div>`)
+}
+window.apifyAdd = async () => {
+  const name = (document.getElementById("apify-name")?.value || "").trim()
+  const token = (document.getElementById("apify-token")?.value || "").trim()
+  const out = document.getElementById("apify-out")
+  if (!token) { if (out) out.innerHTML = '<span style="color:#e0663a">Falta el token.</span>'; return }
+  if (out) out.textContent = "Agregando…"
+  const r = await post("/api/apify/accounts", { name, token }).catch(() => null)
+  if (r && (r.accounts || r.ok)) { closeSheet(); loadApifyCfg() }
+  else if (out) out.innerHTML = `<span style="color:#e0663a">${esc((r && r.error) || "No se pudo agregar.")}</span>`
+}
+window.apifyRemove = async (id) => {
+  if (!confirm("¿Quitar esta cuenta Apify?")) return
+  await post("/api/apify/accounts", { remove: id }).catch(() => null)
+  loadApifyCfg()
+}
+window.apifySaveActors = async () => {
+  let actors; try { actors = JSON.parse(document.getElementById("apify-actors").value || "{}") } catch { return alert("El JSON de actores no es válido.") }
+  const r = await post("/api/apify/accounts", { actors }).catch(() => null)
+  alert(r && (r.accounts || r.ok) ? "✅ Actores guardados." : "No se pudo guardar.")
+  loadApifyCfg()
 }
 // ── Piloto automático: política GLOBAL de qué temas escala (te los deja a vos) en vez de responder ──
 const AP_PRESET_LABELS = {
@@ -2277,9 +2331,98 @@ async function viewPersonScreen(nameOrKey) {
       <div class="sub" style="margin:6px 0 10px">${ap && ap.enabled ? `<b style="color:var(--accent)">Activo</b> · la IA responde <b>en tu voz</b> las preguntas simples de ${esc(nm)}${ap.maxPerDay > 0 ? ` (máx ${ap.maxPerDay}/día)` : ""}. Todo lo demás (reuniones, verse, plata, fotos, dudas) te lo escala. Nunca suena a IA ni da datos que no diste.` : `Dejá que la IA conteste sola las preguntas simples de ${esc(nm)}, en tu estilo con esta persona. Con filtro estricto: no acepta reuniones ni compromisos, no manda fotos, no inventa datos, y ante la duda te avisa a vos.`}</div>
       <button class="btn" style="width:100%" onclick='autopilotSheet(${escj(enck(p.key))}, ${escj(nm)})'>${ap && ap.enabled ? "Ajustar · desactivar" : "🏖️ Activar para " + esc(nm)}</button>
     </div>` : ""}
+    ${(p.key && !p.isGroup) ? `<div class="mtg-card" id="enrichCard"><div class="mtg-eyebrow">🔎 Enriquecimiento social</div><div id="enrichBody" class="sub">Cargando…</div></div>` : ""}
     ${p.pending && !p.stats?.messages ? `<div class="hb-empty" style="text-align:center">Sin historial de conversación con este contacto.</div>` : ""}
     </div>
   </div>`, ST.tab)
+  if (p.key && !p.isGroup) loadPersonSocial(p.key, nm)
+}
+// ── Enriquecimiento social + ego-grafo por persona (perfiles públicos anónimos vía Apify) ──
+const REL_COL = { colega: "#5457e5", empresa: "#8158f0", socio: "#12a594", amigo: "#c2410c", amistad: "#c2410c", familia: "#c0392b" }
+const relColor = (t) => REL_COL[String(t || "").toLowerCase().trim()] || "#6b6b7d"
+const SOCIAL_PLATS = [["linkedin", "LinkedIn", "https://linkedin.com/in/…"], ["instagram", "Instagram", "@usuario o URL"], ["facebook", "Facebook", "URL del perfil"], ["x", "X (Twitter)", "@usuario o URL"]]
+window._socialData = {} // enriquecimiento cacheado por key de contacto
+let _egoSel = null
+window.loadPersonSocial = async (key, nm) => {
+  const d = await api("/api/contact/social?key=" + enck(key)).catch(() => null)
+  window._socialData[key] = d || {}
+  paintPersonSocial(key, nm)
+}
+function paintPersonSocial(key, nm) {
+  const box = document.getElementById("enrichBody"); if (!box) return
+  const d = window._socialData[key] || {}, links = d.links || {}
+  const inputs = SOCIAL_PLATS.map(([id, label, ph]) =>
+    `<label class="tiny muted" style="display:block;margin:9px 2px 3px">${label}</label>
+     <input class="inp" id="soc-${id}" value="${esc(links[id] || "")}" placeholder="${esc(ph)}" onblur="savePersonLinks(${escj(enck(key))})" style="padding:9px 11px;box-sizing:border-box">`).join("")
+  box.innerHTML = `<div class="sub" style="margin:0 0 4px">Perfiles públicos anónimos — no usa tus cookies ni tu sesión. Pegá las URLs y tocá Investigar.</div>${inputs}
+    <button class="btn" style="width:100%;margin-top:12px" id="soc-btn" onclick='investigatePerson(${escj(enck(key))}, ${escj(nm)})'>🔍 Investigar</button>
+    <div id="soc-status" class="tiny" style="text-align:center;margin-top:8px;min-height:15px;color:var(--accent)"></div>
+    <div id="soc-result">${renderEnrich(d, nm)}</div>`
+  drawEgo(d.profiles, nm)
+}
+function renderEnrich(d, nm) {
+  const errs = d.errors || {}
+  const errLine = Object.keys(errs).length ? `<div class="tiny" style="color:var(--warn);margin-top:8px">${Object.entries(errs).map(([k, v]) => `${esc(k)}: ${esc(v)}`).join(" · ")}</div>` : ""
+  const p = d.profiles
+  if (!p) return errLine
+  const meta = [p.role, p.company, p.location].filter(Boolean).map(esc).join(" · ")
+  const interests = (p.interests || []).length ? `<div class="pr-chips" style="margin-top:8px">${p.interests.map((t) => `<span class="pr-chip" style="cursor:default">${esc(t)}</span>`).join("")}</div>` : ""
+  const src = (d.sources || []).length ? `<div class="tiny muted" style="margin-top:8px">Fuentes: ${d.sources.map(esc).join(" / ")}</div>` : ""
+  const graph = (p.relationships || []).length ? `<div class="mtg-eyebrow" style="margin:16px 0 6px">Grafo de relaciones</div>
+    <div style="background:var(--bg2);border-radius:14px;padding:6px"><svg id="egoSvg" viewBox="0 0 100 100" style="width:100%;height:240px;display:block"></svg></div>
+    <div id="egoLegend" style="display:flex;flex-wrap:wrap;margin-top:8px"></div>` : ""
+  return `<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+    ${p.summary ? `<div style="font-size:14px;line-height:1.5;color:var(--ink)">${esc(p.summary)}</div>` : ""}
+    ${meta ? `<div class="sub" style="margin-top:6px">${meta}</div>` : ""}
+    ${interests}${src}${errLine}${graph}
+    ${d.updatedAt ? `<div class="tiny muted" style="margin-top:8px">Actualizado ${esc(ago(d.updatedAt))}</div>` : ""}</div>`
+}
+function drawEgo(p, nm) {
+  const svg = document.getElementById("egoSvg"); if (!svg || !p || !(p.relationships || []).length) return
+  const rels = p.relationships.slice(0, 12), cx = 50, cy = 50, R = 33, N = rels.length
+  _egoSel = null
+  let lines = "", nodes = ""; const types = new Set()
+  rels.forEach((r, i) => {
+    const ang = -Math.PI / 2 + (i / N) * 2 * Math.PI
+    const x = cx + R * Math.cos(ang), y = cy + R * Math.sin(ang), col = relColor(r.type)
+    const ty = (String(r.type || "").toLowerCase().trim()); if (ty) types.add(ty)
+    lines += `<line class="ego-l" data-i="${i}" x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${col}" stroke-opacity=".45" stroke-width=".7"/>`
+    const ly = y < cy ? y - 6.5 : y + 8.5
+    nodes += `<g class="ego-n" data-i="${i}" onclick="egoHi(${i})" style="cursor:pointer">
+      <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.6" fill="${col}"/>
+      <text x="${x.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="3.5" font-weight="600" fill="currentColor">${esc(String(r.name || "").slice(0, 16))}</text></g>`
+  })
+  svg.style.color = "var(--ink)"
+  svg.innerHTML = `${lines}<circle cx="${cx}" cy="${cy}" r="9" fill="var(--accent)"/><text x="${cx}" y="${cy + 1.6}" text-anchor="middle" font-size="4.6" font-weight="800" fill="#fff">${esc(_ini(nm))}</text>${nodes}`
+  const leg = document.getElementById("egoLegend")
+  if (leg) leg.innerHTML = [...types].map((t) => `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);margin:2px 10px 2px 0"><i style="width:9px;height:9px;border-radius:50%;background:${relColor(t)};display:inline-block"></i>${esc(t)}</span>`).join("")
+}
+window.egoHi = (i) => {
+  _egoSel = (_egoSel === i) ? null : i
+  document.querySelectorAll("#egoSvg .ego-n").forEach((g) => { g.style.opacity = (_egoSel == null || +g.dataset.i === _egoSel) ? "1" : ".28" })
+  document.querySelectorAll("#egoSvg .ego-l").forEach((l) => { l.setAttribute("stroke-opacity", _egoSel == null ? ".45" : (+l.dataset.i === _egoSel ? ".9" : ".1")) })
+}
+window.savePersonLinks = async (encKey) => {
+  const key = decodeURIComponent(encKey), links = {}
+  SOCIAL_PLATS.forEach(([id]) => { const el = document.getElementById("soc-" + id); if (el) links[id] = el.value.trim() })
+  window._socialData[key] = window._socialData[key] || {}; window._socialData[key].links = links
+  await post("/api/contact/links", { key, links }).catch(() => null)
+}
+window.investigatePerson = async (encKey, nm) => {
+  const key = decodeURIComponent(encKey), links = {}
+  SOCIAL_PLATS.forEach(([id]) => { const el = document.getElementById("soc-" + id); if (el) links[id] = el.value.trim() })
+  const btn = document.getElementById("soc-btn"), st = document.getElementById("soc-status")
+  if (!Object.values(links).some(Boolean)) { if (st) st.textContent = "Pegá al menos un perfil primero."; return }
+  await post("/api/contact/links", { key, links }).catch(() => null)
+  if (btn) { btn.disabled = true; btn.textContent = "Investigando…" }
+  if (st) st.innerHTML = ORB2("Investigando… puede tardar")
+  const r = await post("/api/contact/investigate", { key, links }).catch(() => null)
+  if (btn) { btn.disabled = false; btn.textContent = "🔍 Investigar de nuevo" }
+  if (!r) { if (st) st.textContent = "No se pudo investigar. Probá de nuevo en un rato."; return }
+  if (st) st.textContent = ""
+  window._socialData[key] = r
+  const res = document.getElementById("soc-result"); if (res) res.innerHTML = renderEnrich(r, nm)
+  drawEgo(r.profiles, nm)
 }
 // globitos del grafo: arrastrables (para leerlos sin que se tapen) y, si no arrastraste, tap → abre la persona
 window.grDrag = (e, el) => {
