@@ -344,6 +344,7 @@ const CFG_SECS = [
   { id: "msg", icon: SVG.chat, name: "Mensajería", kick: "Chat", title: "WhatsApp, Telegram y más", desc: "Sumá tus chats a la bandeja unificada." },
   { id: "send", icon: IC_SEND, name: "Estado de envío", kick: "Diagnóstico", title: "¿Tus mensajes salen?", desc: "El hub se autoprueba mandándote un mensaje y te avisa si algo no sale." },
   { id: "autopilot", icon: IC_ROBOT, name: "Piloto automático", kick: "Automatización", title: "Qué escala el piloto", desc: "Elegí qué temas el piloto NO responde solo — esos te los deja a vos." },
+  { id: "train", icon: IC_ROBOT, name: "Entrená tu IA", kick: "Automatización", title: "Corregí lo que respondería tu IA", desc: "Te muestra un mensaje real y lo que tu IA contestaría. Aprobalo o corregilo — así aprende tu estilo." },
   { id: "sync", icon: IC_SYNC, name: "Sincronización", kick: "Mantenimiento", title: "Reconstruir / resincronizar", desc: "Si algo se desincronizó, reconstruilo desde acá. No borra nada." },
   { id: "storage", icon: IC_DISK, name: "Almacenamiento", kick: "Espacio", title: "Fotos, videos y archivos", desc: "Elegí qué media guardar en el servidor (toda la cuenta, o por chat desde el 📎). El audio siempre se guarda." },
   { id: "prefs", icon: SVG.sliders, name: "Preferencias", kick: "Ajustes", title: "Notificaciones, Jarvis y PIN", desc: "Avisos, tu cerebro Jarvis y el PIN de acceso." },
@@ -358,6 +359,7 @@ function cfgStatus(id) {
   if (id === "prefs") return { cls: auth.pinSet ? "ok" : "warn", text: auth.pinSet ? "PIN activo" : "sin PIN" }
   if (id === "enrich") return { cls: "", text: "gestionar" }
   if (id === "autopilot") return { cls: "", text: "qué escala" }
+  if (id === "train") return { cls: "", text: "corregir" }
   if (id === "sync") return { cls: "", text: "reconstruir" }
   if (id === "storage") return { cls: "", text: "gestionar" }
   return { cls: "", text: "" }
@@ -469,6 +471,7 @@ function renderCfgSection(id) {
   }
   if (id === "storage") body = `<div id="storageCfg" class="cfg-card">Cargando…</div>`
   if (id === "autopilot") body = `<div id="apPolicyCfg" class="cfg-card">Cargando…</div>`
+  if (id === "train") body = `<div id="trainDeck" class="cfg-card">Cargando…</div>`
   if (id === "enrich") body = `<div id="apifyCfg">Cargando…</div>`
   render(`<div class="screen">
     <button class="cfg-back" onclick="cfgBack()">${IC_BACK}Ajustes</button>
@@ -478,6 +481,7 @@ function renderCfgSection(id) {
   if (id === "send") loadSelfTest()
   if (id === "storage") loadStorageCfg()
   if (id === "autopilot") loadAutopilotPolicy()
+  if (id === "train") loadTrainDeck()
   if (id === "enrich") loadApifyCfg()
 }
 // ── Enriquecimiento (Apify): cuentas anónimas que la app rota para traer perfiles sociales ──
@@ -593,6 +597,43 @@ window.saveCouncil = async () => {
   const r = await post("/api/autopilot/council", { enabled, members, chairman }).catch(() => null)
   if (msg) msg.textContent = r ? "✓ Guardado" : "No se pudo guardar."
   if (r && msg) setTimeout(() => { if (msg) msg.textContent = "" }, 3000)
+}
+
+// ── 🎓 ENTRENÁ TU IA: mazo de corrección. Carta = mensaje real + lo que tu IA respondería → aprobás (✓) o corregís (✍️). ──
+let _trainCount = 0
+window.loadTrainDeck = async () => {
+  const box = document.getElementById("trainDeck"); if (!box) return
+  box.innerHTML = `<div class="center" style="height:90px"><div class="spin"></div></div>`
+  const c = await api("/api/autopilot/train-card").catch(() => null)
+  if (!c || c.error || c.none) { box.innerHTML = `<div class="cfg-note">${IC_INFO}<div>${c && c.none ? "No hay más mensajes para practicar por ahora — volvé más tarde." : "No se pudo cargar la carta."}</div></div><button class="btn" style="width:100%;margin-top:10px" onclick="loadTrainDeck()">Reintentar</button>`; return }
+  const bubbles = (c.context || []).map((m) => `<div style="display:flex;justify-content:${m.mine ? "flex-end" : "flex-start"};margin:3px 0"><span style="max-width:82%;padding:7px 11px;border-radius:13px;font-size:13.5px;background:${m.mine ? "var(--accent)" : "var(--panel2)"};color:${m.mine ? "#fff" : "var(--ink)"}">${esc(m.text)}</span></div>`).join("")
+  box.innerHTML = `
+    <div class="tiny muted" style="margin-bottom:8px"><b>${esc(c.name)}</b> — así viene la charla:</div>
+    ${bubbles}
+    <div style="display:flex;justify-content:flex-start;margin:4px 0"><span style="max-width:88%;padding:8px 12px;border-radius:13px;font-size:14px;background:var(--panel2);color:var(--ink);border:2px solid var(--accent)">${esc(c.incoming)}</span></div>
+    <div class="tiny muted" style="margin:15px 0 5px">🤖 Tu IA respondería:</div>
+    <div id="trainDraft" style="padding:11px 13px;border-radius:12px;background:color-mix(in srgb,var(--accent) 9%,transparent);font-size:14.5px;min-height:20px">${c.draft ? esc(c.draft) : '<span class="muted">(no pudo redactar — escribí cómo responderías vos)</span>'}</div>
+    <div class="row" style="gap:8px;margin-top:13px">
+      <button class="btn ghost" style="flex:1" onclick='trainEdit(${escj(enck(c.key))}, ${escj(c.draft || "")})'>✍️ Así lo diría yo</button>
+      <button class="btn" style="flex:1" onclick='trainOk(${escj(enck(c.key))}, ${escj(c.draft || "")})'>✓ Está bien</button>
+    </div>
+    <button class="btn ghost" style="width:100%;margin-top:8px" onclick="loadTrainDeck()">⏭️ Saltar este</button>
+    <div class="tiny muted" style="text-align:center;margin-top:12px">${_trainCount} ${_trainCount === 1 ? "corregido" : "corregidos"} en esta sesión · cada uno entrena a tu IA 🧠</div>`
+}
+window.trainOk = async (encKey, draft) => {
+  await post("/api/autopilot/feedback", { key: decodeURIComponent(encKey), good: true, original: draft }).catch(() => {})
+  _trainCount++; loadTrainDeck()
+}
+window.trainEdit = (encKey, draft) => {
+  const box = document.getElementById("trainDraft"); if (!box) return
+  box.innerHTML = `<textarea id="trainFix" class="inp" style="width:100%;box-sizing:border-box;min-height:64px;resize:vertical;font-size:14.5px">${esc(draft)}</textarea>
+    <button class="btn" style="width:100%;margin-top:8px" onclick='trainSave(${escj(encKey)}, ${escj(draft)})'>💾 Guardar corrección</button>`
+  const ta = document.getElementById("trainFix"); if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length) }
+}
+window.trainSave = async (encKey, original) => {
+  const correction = (document.getElementById("trainFix")?.value || "").trim(); if (!correction) return
+  await post("/api/autopilot/feedback", { key: decodeURIComponent(encKey), good: false, correction, original }).catch(() => {})
+  _trainCount++; loadTrainDeck()
 }
 window.saveAutopilotPolicy = async () => {
   const presets = [...document.querySelectorAll(".ap-preset:checked")].map((el) => el.value)

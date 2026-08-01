@@ -92,6 +92,36 @@ export function autopilotFeedback(key, { good, correction, original } = {}) {
   try { appendFileSync(FB(), JSON.stringify({ ts: Date.now(), key, good: !!good, correction: correction || "", original: original || "" }) + "\n") } catch {}
   return { ok: true }
 }
+// 🎓 ENTRENÁ TU IA — "mazo de corrección": trae UNA carta = un mensaje real que te llegó + lo que tu IA respondería. Vos aprobás
+// (✓) o corregís (así lo diría yo). Cada corrección alimenta el banco de feedback (B) y los futuros re-trains del LoRA (C).
+export async function trainCard() {
+  try {
+    const { handle } = await import("../db-core.mjs")
+    const db = handle()
+    const cands = db.prepare("SELECT thread, MAX(jid) jid, COUNT(*) n FROM messages WHERE text IS NOT NULL AND thread!='self' GROUP BY thread HAVING n>=20 ORDER BY RANDOM() LIMIT 40").all()
+      .filter((t) => !isContainerJid(jidOfKey(t.thread)) && !/@g\.us|@broadcast|@newsletter/.test(t.jid || ""))
+    for (const t of cands.slice(0, 10)) {
+      const rows = dbThreadMsgs(t.thread, { limit: 60 }).filter((r) => r.text || r.mediaType)
+      const pts = []
+      for (let i = 6; i < rows.length; i++) if (rows[i].dir === "in" && rows[i].text && rows[i].text.length > 6) pts.push(i)
+      if (!pts.length) continue
+      // nombre lindo: el del contacto; si es un número crudo, probamos el key del hilo (suele ser el nombre) o lo saltamos
+      let name = nameOf(rows[pts[0]])
+      if (/^\+?\d[\d\s+-]*$/.test(name) || name === "un contacto") { const k = String(t.thread).replace(/^\w+:/, ""); name = /^\d|@/.test(k) ? "" : k }
+      if (!name) continue // sin nombre lindo → siguiente candidato (mejor UX)
+      const i = pts[Math.floor(Math.random() * pts.length)]
+      const w = rows.slice(0, i + 1)
+      const draft = String(await humanDraft(w, t.thread, "", {}, getPersona()).catch(() => "") || "").trim()
+      return {
+        key: t.thread, name,
+        context: w.slice(-5, -1).map((r) => ({ mine: r.dir === "out", text: (r.text || "[" + (r.mediaType || "adjunto") + "]").replace(/\s+/g, " ").slice(0, 220) })),
+        incoming: rows[i].text.replace(/\s+/g, " ").slice(0, 320),
+        draft,
+      }
+    }
+    return { none: true }
+  } catch (e) { return { error: e.message } }
+}
 // (B) BANCO DE CORRECCIONES: las correcciones que hacés ("qué hubiera dicho yo") son datos de preferencia. Las de ESTE contacto
 // pesan primero; si faltan, se completan con las de OTROS contactos → una corrección generaliza a todo el piloto (aprende con el uso).
 function feedbackFor(key, limit = 6) {

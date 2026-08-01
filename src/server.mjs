@@ -530,6 +530,7 @@ const server = createServer(async (req, res) => {
       if (path === "/api/autopilot/preview" && req.method === "POST") { const b = await body(req); try { return json(res, 200, await brain.considerReply(b.key, { dryRun: true, force: true })) } catch (e) { return json(res, 400, { error: e.message }) } }
       if (path === "/api/autopilot/log") return json(res, 200, { log: brain.autopilotLog(60) })
       if (path === "/api/autopilot/feedback" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.autopilotFeedback(b.key, { good: b.good, correction: b.correction, original: b.original })) }
+      if (path === "/api/autopilot/train-card") return json(res, 200, await brain.trainCard()) // 🎓 Entrená tu IA: trae un mensaje real + el borrador de la IA para aprobar/corregir
       // 🎭 PERSONA del owner (para que el piloto responda en personaje). GET = ver; POST {text} = editar; POST {rebuild:true} = regenerar de tus datos
       if (path === "/api/autopilot/persona" && req.method === "POST") { const b = await body(req); if (b.rebuild) return json(res, 200, { text: await brain.buildPersona() }); return json(res, 200, brain.setPersona(b.text || "")) }
       if (path === "/api/autopilot/persona") return json(res, 200, { text: brain.getPersona() })
