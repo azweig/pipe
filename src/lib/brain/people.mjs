@@ -75,7 +75,8 @@ export function personView(nameOrKey) {
 
 // ── DIRECTORIO ──
 export function directory() {
-  const people = peopleNodes().map((p) => ({ name: p, role: fm(cardFor("People", p), "role"), tags: fm(cardFor("People", p), "tags"), initials: initials(p) }))
+  const al = contactAliases() // colapsar duplicados fusionados: ocultar del directorio los nombres que son alias de otro canónico
+  const people = peopleNodes().filter((p) => !al[String(p || "").trim().toLowerCase()]).map((p) => ({ name: p, role: fm(cardFor("People", p), "role"), tags: fm(cardFor("People", p), "tags"), initials: initials(p) }))
   const companies = companyNodes().map((c) => ({ name: c, relation: fm(cardFor("Companies", c), "relation"), tags: fm(cardFor("Companies", c), "tags") }))
   return { people: people.sort((a, b) => a.name.localeCompare(b.name)), companies: companies.sort((a, b) => a.name.localeCompare(b.name)) }
 }
@@ -253,6 +254,23 @@ export async function personCard(nameOrKey, { force = false } = {}) {
 }
 
 // fusiona hilos: mueve <sources[]> al hilo <target>. Base del botón "es la misma persona".
+// ── ALIAS DE CONTACTOS: cuando fusionás duplicados que NO tienen hilo (tarjetas del vault / agenda), no hay mensajes que mover;
+// registramos su nombre → nombre canónico para que el directorio los COLAPSE (dejen de aparecer duplicados). Reversible (borrar del json).
+const ALIAS_FILE = () => process.env.CONTACT_ALIASES || "data/contact-aliases.json"
+export function contactAliases() { try { return existsSync(ALIAS_FILE()) ? JSON.parse(readFileSync(ALIAS_FILE(), "utf8")) : {} } catch { return {} } }
+export function addContactAliases(canonical, aliasNames = []) {
+  const canon = String(canonical || "").trim(); if (!canon) return
+  const a = contactAliases(); let ch = false
+  for (const nm of aliasNames) { const k = String(nm || "").trim().toLowerCase(); if (k && k !== canon.toLowerCase() && a[k] !== canon) { a[k] = canon; ch = true } }
+  if (ch) { try { writeFileSync(ALIAS_FILE(), JSON.stringify(a, null, 2)) } catch {} }
+}
+// fusión "inteligente" desde la UI: mueve mensajes de los sources CON hilo y registra alias para los duplicados sin hilo (vault/agenda)
+export function mergeContactsInto(target, keys = [], { canonical = "", aliases = [] } = {}) {
+  const moved = (keys || []).length ? mergeThreadsInto(target, keys) : 0
+  if (canonical && (aliases || []).length) addContactAliases(canonical, aliases)
+  return { moved, aliased: (aliases || []).length }
+}
+
 export function mergeThreadsInto(target, sources) {
   const srcs = (sources || []).filter((s) => s !== target)
   const moved = dbMergeThreads(target, srcs)

@@ -269,7 +269,7 @@ Ejemplos que SE APRUEBAN (son perfectos, humanos): "jaja q? para q queres eso", 
 
 // Borrador CASUAL-HUMANO propio del piloto (NO usa suggestReply, que responde servicial como asistente y delata la IA).
 // La clave: te están PROBANDO. Nunca hace tareas de asistente (calcular pi, escribir código, ensayos), desvía como un amigo.
-export async function humanDraft(rows, key, mediaDesc = "", knowledge = {}, persona = "") {
+export async function humanDraft(rows, key, mediaDesc = "", knowledge = {}, persona = "", opts = {}) {
   const last = rows[rows.length - 1]
   // ¿el último entrante tiene CONTENIDO CONCRETO (pregunta o largo) o es un fragmento críptico (emoji/saludo/"jajaja")?
   // En los crípticos el modelo no tenía qué decir → tiraba de tu PERFIL/CEREBRO e INVENTABA temas (SpaceX, millas). Por eso, en
@@ -338,7 +338,8 @@ OJO: te están PROBANDO (a ver si sos un bot) o te tiran cargadas/cosas raras. T
 - Reuniones/llamadas/meets/horarios: NUNCA confirmes ni fijes nada, aunque haya link. Diferí sin comprometerte.
 - Datos sensibles (bancarios, claves, dirección, compras): nunca los pases, cambiá de tema con naturalidad.
 Devolvé SOLO el texto del mensaje, sin comillas, corto: UNA sola frase natural, tuya y única.${exampleLangNote}`
-  return llm(`Conversación:\n${ctx}\n\nTu respuesta:`, { system: sys, chain: autopilotChain(), temperature: 0.7, bypassCap: true, task: "autopilot-draft" })
+  // model override (para el COUNCIL: cada miembro draftea con un modelo local distinto del GPU box); default = cadena del piloto
+  return llm(`Conversación:\n${ctx}\n\nTu respuesta:`, { system: sys, chain: autopilotChain(), temperature: opts.temperature ?? 0.7, model: opts.model, bypassCap: true, task: "autopilot-draft" })
     .then((s) => deLaugh(cleanDraft(s, ownerFirst(), bestLang), myRecent)).catch(() => "") // limpia (prefijo/basura/risas) + saca "jaja" inicial si ya vengo abusando
 }
 

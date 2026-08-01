@@ -2354,8 +2354,11 @@ function paintPersonSocial(key, nm) {
   const inputs = SOCIAL_PLATS.map(([id, label, ph]) =>
     `<label class="tiny muted" style="display:block;margin:9px 2px 3px">${label}</label>
      <input class="inp" id="soc-${id}" value="${esc(links[id] || "")}" placeholder="${esc(ph)}" onblur="savePersonLinks(${escj(enck(key))})" style="padding:9px 11px;box-sizing:border-box">`).join("")
-  box.innerHTML = `<div class="sub" style="margin:0 0 4px">Perfiles públicos anónimos — no usa tus cookies ni tu sesión. Pegá las URLs y tocá Investigar.</div>${inputs}
-    <button class="btn" style="width:100%;margin-top:12px" id="soc-btn" onclick='investigatePerson(${escj(enck(key))}, ${escj(nm)})'>🔍 Investigar</button>
+  box.innerHTML = `<div class="sub" style="margin:0 0 4px">Perfiles públicos anónimos — no usa tus cookies ni tu sesión. Pegá las URLs. "Guardar" solo guarda los links; "Investigar" además los busca.</div>${inputs}
+    <div class="row" style="gap:8px;margin-top:12px">
+      <button class="btn ghost" style="flex:1" onclick='savePersonLinks(${escj(enck(key))}, true)'>💾 Guardar</button>
+      <button class="btn" style="flex:1" id="soc-btn" onclick='investigatePerson(${escj(enck(key))}, ${escj(nm)})'>🔍 Investigar</button>
+    </div>
     <div id="soc-status" class="tiny" style="text-align:center;margin-top:8px;min-height:15px;color:var(--accent)"></div>
     <div id="soc-result">${renderEnrich(d, nm)}</div>`
   drawEgo(d.profiles, nm)
@@ -2402,11 +2405,12 @@ window.egoHi = (i) => {
   document.querySelectorAll("#egoSvg .ego-n").forEach((g) => { g.style.opacity = (_egoSel == null || +g.dataset.i === _egoSel) ? "1" : ".28" })
   document.querySelectorAll("#egoSvg .ego-l").forEach((l) => { l.setAttribute("stroke-opacity", _egoSel == null ? ".45" : (+l.dataset.i === _egoSel ? ".9" : ".1")) })
 }
-window.savePersonLinks = async (encKey) => {
+window.savePersonLinks = async (encKey, toast) => {
   const key = decodeURIComponent(encKey), links = {}
   SOCIAL_PLATS.forEach(([id]) => { const el = document.getElementById("soc-" + id); if (el) links[id] = el.value.trim() })
   window._socialData[key] = window._socialData[key] || {}; window._socialData[key].links = links
   await post("/api/contact/links", { key, links }).catch(() => null)
+  if (toast) { const st = document.getElementById("soc-status"); if (st) { st.textContent = "✓ Links guardados"; setTimeout(() => { if (st.textContent === "✓ Links guardados") st.textContent = "" }, 2000) } }
 }
 window.investigatePerson = async (encKey, nm) => {
   const key = decodeURIComponent(encKey), links = {}

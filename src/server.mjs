@@ -519,7 +519,7 @@ const server = createServer(async (req, res) => {
       if (path === "/api/thread/media") return json(res, 200, brain.threadMedia(q.key || ""))
       if (path === "/api/contact/profile") return json(res, 200, brain.contactProfile(q.key || ""))
       if (path === "/api/thread/targets") return json(res, 200, brain.threadTargets(q.key || ""))
-      if (path === "/api/send" && req.method === "POST") { const b = await body(req); let text = b.text; if (b.covert) { try { text = brain.encodeCovertFor(b.key, b.text) } catch (e) { return json(res, 400, { error: e.message }) } } const r = await brain.sendReply(b.key, text, { channel: b.channel, target: b.target }); return json(res, r && r.error ? 400 : 200, b.covert && !(r && r.error) ? { ...r, cover: text } : r) } // covert: cifra→texto tapadera antes de mandar; devuelve el poema para "ver original"
+      if (path === "/api/send" && req.method === "POST") { const b = await body(req); let text = b.text; if (b.covert) { try { text = brain.encodeCovertFor(b.key, b.text) } catch (e) { return json(res, 400, { error: e.message }) } } const r = await brain.sendReply(b.key, text, { channel: b.channel, target: b.target }); if (r && !r.error) brain.invalidateThreads(); return json(res, r && r.error ? 400 : 200, b.covert && !(r && r.error) ? { ...r, cover: text } : r) } // covert: cifra→texto tapadera antes de mandar; devuelve el poema para "ver original". invalidateThreads → la bandeja refleja tu envío YA (antes tardaba hasta el TTL del cache)
       // ── modo encubierto ("El Santo"): config por-contacto + preview en vivo ──
       if (path === "/api/covert/config" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setCovert(b.key, b.pass, b.style)) }
       if (path === "/api/covert/config") return json(res, 200, brain.getCovert(q.key || ""))
@@ -570,6 +570,7 @@ const server = createServer(async (req, res) => {
         const ogg = await toOggOpus(raw, inMime).catch(() => null) // si ffmpeg falla, mandamos el original
         const waveform = ogg ? await oggWaveform(ogg).catch(() => null) : null // 64 amplitudes → PTT reproducible en WhatsApp
         const r = await brain.sendReplyAudio(q.key, ogg || raw, { channel: q.channel, target: q.target, mime: ogg ? "audio/ogg" : inMime, durationMs, waveform })
+        if (r && !r.error) brain.invalidateThreads()
         return json(res, r && r.error ? 400 : 200, r)
       }
       // IMAGEN / VIDEO / ARCHIVO: recibe el binario + params en la query y lo manda por el bridge (adjunto)
@@ -579,6 +580,7 @@ const server = createServer(async (req, res) => {
         if (!raw || !raw.length) return json(res, 400, { error: "archivo vacío o demasiado grande (máx 64MB)" })
         if (!q.key) return json(res, 400, { error: "falta key" })
         const r = await brain.sendReplyMedia(q.key, raw, { channel: q.channel, target: q.target, mime, filename: q.filename ? decodeURIComponent(q.filename) : "archivo" })
+        if (r && !r.error) brain.invalidateThreads()
         return json(res, r && r.error ? 400 : 200, r)
       }
       if (path === "/api/send-sticker" && req.method === "POST") {
@@ -588,6 +590,7 @@ const server = createServer(async (req, res) => {
         if (!q.key) return json(res, 400, { error: "falta key" })
         const webp = await toWebpSticker(raw, inMime).catch(() => null) // imagen → webp 512×512; si ffmpeg falla, mando el original
         const r = await brain.sendReplySticker(q.key, webp || raw, { channel: q.channel, target: q.target, mime: webp ? "image/webp" : inMime })
+        if (r && !r.error) brain.invalidateThreads()
         return json(res, r && r.error ? 400 : 200, r)
       }
       // ── Grupos de la bandeja (auto editables + custom) ──
@@ -604,7 +607,7 @@ const server = createServer(async (req, res) => {
       if (path === "/api/espacio/exception" && req.method === "POST") { const b = await body(req); return json(res, 200, ws.espacioAddException(b.id, { type: b.type, value: b.value })) }
       if (path === "/api/espacio/exception/delete" && req.method === "POST") { const b = await body(req); return json(res, 200, ws.espacioRemoveException(b.id, b.idx)) }
       if (path === "/api/espacio/view") return json(res, 200, await brain.espacioView(ws, q.id || ""))
-      if (path === "/api/contact/merge" && req.method === "POST") { const b = await body(req); const moved = brain.mergeThreadsInto(b.target || b.key, b.keys || b.channelIds || []); return json(res, 200, { moved }) }
+      if (path === "/api/contact/merge" && req.method === "POST") { const b = await body(req); const r = brain.mergeContactsInto(b.target || b.key, b.keys || b.channelIds || [], { canonical: b.canonical || "", aliases: b.aliases || [] }); brain.invalidateThreads(); return json(res, 200, r) } // fusiona hilos (mueve msgs) + registra alias de los duplicados sin hilo (vault/agenda) → el directorio los colapsa
       // ── ENRIQUECIMIENTO SOCIAL: cuentas Apify (multi-cuenta, round-robin, cuota) + investigar un contacto por los links que pegaste ──
       if (path === "/api/apify/accounts" && req.method === "POST") { const b = await body(req); if (b.remove) return json(res, 200, apify.removeApifyAccount(b.remove)); if (b.actors) return json(res, 200, apify.setApifyActors(b.actors)); return json(res, 200, apify.addApifyAccount({ name: b.name, token: b.token })) }
       if (path === "/api/apify/accounts") return json(res, 200, apify.apifyAccounts())
