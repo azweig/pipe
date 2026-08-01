@@ -149,7 +149,10 @@ function cleanDraft(s, ownerName = "", wantLang = "") {
   if (/[a-z][A-Z][a-z]+[A-Z]/.test(d)) return ""                        // camelCase glue (código): ValueHandling, PropertyParams
   if (/\S{26,}/.test(d)) return ""                                      // "palabra" de 26+ chars sin espacio = pegote de basura
   if (/_[a-z0-9]+_[a-z0-9]+_/i.test(d)) return ""                       // snake_case glue: para_el_registro
-  if (/\((\s*)?(nota|note|as an?|como (el|la)|instrucci|el contacto|the (contact|previous))/i.test(d)) return "" // fuga de meta/razonamiento "(Nota: ...)"
+  // fuga de meta/razonamiento del modelo — paréntesis donde el modelo COMENTA su propia respuesta ("(Voy a dejar la respuesta corta…)",
+  // "(Nota: …)", "(en tono informal)"), o narra lo que hace. Se descarta y escala (mejor que mandar el pensamiento del modelo).
+  if (/\(\s*(voy a|deja(r[eé]?|ré)?|dejo|escrib\w*|respond\w*|respuesta|mantengo|uso (un )?(tono|estilo)|en tono|como si (fuer|se)|para (sonar|que|mostrar|parecer)|nota|note|as an?|instrucci|el contacto|the (contact|previous|response|user)|i('|’)?ll|i will|let me)/i.test(d)) return ""
+  if (/\b(respuesta corta|tono informal|como si fuera una (conversaci|charla)|sin sonar a|para que suene)\b/i.test(d)) return "" // narra su propia estrategia sin paréntesis
   const gib = d.replace(/\s+/g, " ").match(/(\w{2,3})\1{2,}/i)           // sílaba repetida ≥3× = gibberish (yansansansa)…
   if (gib && !/^[jaeh]+$/i.test(gib[0])) return ""                       // …pero NO la risa (jajaja/jejeje/hahaha)
   // 🙅 REGISTRO DE ASISTENTE (tells duros que el modelo mete igual): mejor descartar y escalar que mandar algo que delata al bot
@@ -363,7 +366,7 @@ async function chairmanPick(rows, cands, chairmanModel) {
   return idx >= 0 ? cands[idx].text : cands[0].text
 }
 // genera candidatos (1 por modelo miembro, secuencial) → el chairman elige. Fallback a humanDraft si no hay miembros útiles.
-async function councilDraft(rows, key, mediaDesc, knowledge, persona) {
+export async function councilDraft(rows, key, mediaDesc, knowledge, persona) {
   const cfg = getCouncil()
   const members = (cfg.members || []).filter(Boolean)
   if (members.length < 2) return humanDraft(rows, key, mediaDesc, knowledge, persona, { model: members[0] })
