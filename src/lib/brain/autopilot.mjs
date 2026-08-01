@@ -92,8 +92,16 @@ export function autopilotFeedback(key, { good, correction, original } = {}) {
   try { appendFileSync(FB(), JSON.stringify({ ts: Date.now(), key, good: !!good, correction: correction || "", original: original || "" }) + "\n") } catch {}
   return { ok: true }
 }
+// (B) BANCO DE CORRECCIONES: las correcciones que hacés ("qué hubiera dicho yo") son datos de preferencia. Las de ESTE contacto
+// pesan primero; si faltan, se completan con las de OTROS contactos → una corrección generaliza a todo el piloto (aprende con el uso).
 function feedbackFor(key, limit = 6) {
-  try { return readFileSync(FB(), "utf8").trim().split("\n").map((l) => { try { return JSON.parse(l) } catch { return null } }).filter((f) => f && f.key === key && !f.good && f.correction).slice(-limit) } catch { return [] }
+  try {
+    const all = readFileSync(FB(), "utf8").trim().split("\n").map((l) => { try { return JSON.parse(l) } catch { return null } }).filter((f) => f && !f.good && f.correction)
+    const mine = all.filter((f) => f.key === key).slice(-limit)
+    if (mine.length >= limit) return mine
+    const others = all.filter((f) => f.key !== key).slice(-(limit - mine.length)) // banco global: correcciones de otros contactos generalizan
+    return [...others, ...mine]
+  } catch { return [] }
 }
 
 // ── anti-muletilla determinístico: el modelo IGNORA el "no digas jaja". Acá lo forzamos ──
@@ -270,6 +278,34 @@ Ejemplos que SE APRUEBAN (son perfectos, humanos): "jaja q? para q queres eso", 
   return llm(prompt, { json: true, chain: autopilotChain(), temperature: 0.1, bypassCap: true, task: "autopilot-review" })
 }
 
+// ══════════ (A) RETRIEVAL DE TU COMPORTAMIENTO REAL ══════════
+// Dado el mensaje entrante, busca en tus ~2M mensajes los casos PARECIDOS (entrante → TU respuesta real) vía FTS y los da como
+// few-shot. El modelo copia CÓMO RESPONDÉS VOS a situaciones así — en vez de inventar con reglas genéricas. Esto mete "a vos" en
+// el borrador sin fine-tuning. Rápido (FTS indexado). Excluye el hilo actual (myVoice ya cubre lo reciente de este hilo).
+async function myPastReplies(incomingText, excludeThread) {
+  const q = String(incomingText || "").trim(); if (q.length < 10) return []
+  try {
+    const { handle } = await import("../db-core.mjs")
+    const db = handle()
+    const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+    const terms = [...new Set(norm(q).split(/[^a-z0-9]+/).filter((w) => w.length >= 4))].slice(0, 8)
+    if (terms.length < 2) return []
+    const match = terms.map((t) => `"${t}"`).join(" OR ")
+    const rows = db.prepare(`SELECT m.thread AS th, m.ts AS ts, m.text AS inc FROM messages_fts f JOIN messages m ON m.rowid = f.rowid
+      WHERE messages_fts MATCH ? AND m.dir='in' AND m.text IS NOT NULL AND length(m.text) > 10 ${excludeThread ? "AND m.thread != ?" : ""} ORDER BY rank LIMIT 25`)
+      .all(...(excludeThread ? [match, excludeThread] : [match]))
+    const replyOf = db.prepare(`SELECT text FROM messages WHERE thread=? AND dir='out' AND ts>? AND text IS NOT NULL AND length(text) BETWEEN 3 AND 180 AND text NOT LIKE '🖼%' AND text NOT LIKE '🎤%' AND text NOT LIKE '📎%' ORDER BY ts LIMIT 1`)
+    const pairs = [], seen = new Set()
+    for (const r of rows) {
+      const rep = replyOf.get(r.th, r.ts); if (!rep || !rep.text) continue
+      const k = norm(rep.text).slice(0, 30); if (seen.has(k)) continue; seen.add(k)
+      pairs.push({ inc: r.inc.replace(/\s+/g, " ").slice(0, 90), reply: rep.text.replace(/\s+/g, " ").slice(0, 90) })
+      if (pairs.length >= 4) break
+    }
+    return pairs
+  } catch { return [] }
+}
+
 // Borrador CASUAL-HUMANO propio del piloto (NO usa suggestReply, que responde servicial como asistente y delata la IA).
 // La clave: te están PROBANDO. Nunca hace tareas de asistente (calcular pi, escribir código, ensayos), desvía como un amigo.
 export async function humanDraft(rows, key, mediaDesc = "", knowledge = {}, persona = "", opts = {}) {
@@ -313,6 +349,9 @@ export async function humanDraft(rows, key, mediaDesc = "", knowledge = {}, pers
   // VOZ REAL: muestras de cómo escribís VOS (tus propios salientes con contenido real) → el drafter copia TU registro, no un español neutro/de manual
   const myVoice = rows.filter((r) => r.dir === "out").map((r) => (r.text || "").replace(/\s+/g, " ").trim()).filter((t) => t.length > 5 && /[a-záéíóúñ]/i.test(t)).slice(-12)
   const voiceNote = myVoice.length >= 2 ? `\n\nASÍ ESCRIBÍS VOS (muestras REALES de tus mensajes — copiá EXACTO este registro: mismas palabras, misma jerga, mismo largo, voseo, cómo abreviás):\n${myVoice.map((t) => `· "${t.slice(0, 100)}"`).join("\n")}` : ""
+  // (A) TU COMPORTAMIENTO REAL ante situaciones parecidas → few-shot de (te dijeron → respondiste). El modelo copia tu forma de reaccionar.
+  const pastPairs = await myPastReplies(lastIn, key).catch(() => [])
+  const pastNote = pastPairs.length ? `\n\n🎯 ASÍ REACCIONASTE VOS a mensajes PARECIDOS (esta es tu forma REAL de responder a algo así — imitá la actitud/largo, NO copies textual):\n${pastPairs.map((p) => `— te dijeron "${p.inc}" → vos: "${p.reply}"`).join("\n")}` : ""
   // LARGO APRENDIDO: la mediana de palabras de TUS mensajes reales → el drafter iguala tu brevedad (en la prueba real la IA respondía 2× más largo que vos)
   const wc = myVoice.map((t) => t.split(/\s+/).filter(Boolean).length).sort((a, b) => a - b)
   const medW = wc.length ? wc[Math.floor(wc.length / 2)] : 7
@@ -321,7 +360,7 @@ export async function humanDraft(rows, key, mediaDesc = "", knowledge = {}, pers
   const qGate = otherHasContent
     ? `\n- ⛔ El último mensaje del otro TIENE contenido concreto o es una pregunta → PROHIBIDO contestar "q?"/"q pasó?"/"q onda" o cualquier evasiva. Respondé PUNTUAL a lo que dice (corto, al tema).`
     : `\n- El último mensaje es cortito/críptico: si de verdad no se entiende, un "q?"/"q pasó?" está bien; si lo entendés, contestá al toque. Igual NO inventes datos para rellenar.`
-  const sys = `Sos ${ownerFirst()} respondiendo por WhatsApp como lo harías VOS: casual, CORTÍSIMO, humano, EN CONTEXTO de toda la charla (no respondas cosas sueltas). Estilo de esta conversación (minúsculas/jerga si las usás).${personaNote}${fbNote}${voiceNote}${kNote}${webNote}${antiRep}${noJaja}
+  const sys = `Sos ${ownerFirst()} respondiendo por WhatsApp como lo harías VOS: casual, CORTÍSIMO, humano, EN CONTEXTO de toda la charla (no respondas cosas sueltas). Estilo de esta conversación (minúsculas/jerga si las usás).${personaNote}${fbNote}${voiceNote}${pastNote}${kNote}${webNote}${antiRep}${noJaja}
 - ✂️ LARGO (lo más importante): escribís CORTÍSIMO, como en tus muestras (mediana ~${medW} palabras, muchas veces 1-4). Tu respuesta = UNA sola oración, ≤ ~${capW} palabras. PROHIBIDO una segunda oración o explicar de más, SALVO que te pidan un dato puntual. Ante la duda, MENOS es más: mejor "dale", "no sé", "q pasó?" que un párrafo. Si podés contestar en 2-3 palabras, hacelo.
 - 🚫 NO INVENTES NADA: no menciones ni afirmes ningún nombre, monto, hora, lugar, situación, producto, tarea, tecnología ni hecho que NO esté LITERAL en los mensajes de arriba. Nada de "estoy en una llamada", "ya te mandé", "te paso la plata", "Claude Enterprise", nombres de gente o temas que no aparecen.
 - 🎯 ENGANCHÁTE con lo que dice: si el otro te hace una pregunta o te manda algo con contenido, RESPONDÉ A ESO puntual (corto, pero al tema). SOLO usá un "q?"/"q pasó?"/"a q te referís?" cuando el mensaje de verdad no tiene contenido (un "hola", "che", un emoji suelto) o es un galimatías que no se entiende. NUNCA zafes con "q pasó?" de un mensaje que sí tiene tema — eso te delata como que no leíste.
