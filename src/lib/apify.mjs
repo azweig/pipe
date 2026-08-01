@@ -9,12 +9,18 @@ import { encSecret, decSecret } from "./secrets.mjs"
 const FILE = () => process.env.APIFY_STORE || "auth/apify.json"
 const month = () => new Date().toISOString().slice(0, 7) // YYYY-MM — el free tier de Apify se resetea por mes
 
-// actors por plataforma (defaults razonables, editables por el usuario). En la API de Apify el "/" del id va como "~".
+// actors por plataforma (defaults PROBADOS que devuelven datos REALES en el free tier — pay-per-result, NO de alquiler que dan demo;
+// editables por el usuario). En la API de Apify el "/" del id va como "~". Casi todos toman el USERNAME (handle), por eso {{username}}
+// = el handle extraído de la URL que pegás (instagram.com/leomessi → leomessi). {{url}} sigue disponible para actors que quieran la URL.
 const DEFAULT_ACTORS = {
-  linkedin:  { id: "get-leads~linkedin-scraper",   input: { profileUrls: ["{{url}}"] } },
-  instagram: { id: "apidojo~instagram-scraper",    input: { directUrls: ["{{url}}"], resultsType: "details", resultsLimit: 12 } },
-  facebook:  { id: "apify~facebook-pages-scraper", input: { startUrls: [{ url: "{{url}}" }] } },
-  x:         { id: "apidojo~twitter-scraper",      input: { startUrls: ["{{url}}"], maxItems: 20 } },
+  linkedin:  { id: "apimaestro~linkedin-profile-detail", input: { username: "{{username}}" } },      // basic_info + experience + education (funciona sin cookies)
+  instagram: { id: "apify~instagram-profile-scraper",     input: { usernames: ["{{username}}"], includeAboutSection: false } },
+  facebook:  { id: "lazyscraper~facebook-profile-scraper", input: { user_name: "{{username}}" } },
+  x:         { id: "dead00~twitter-profile-scraper-no-cookies", input: { usernames: ["{{username}}"] } },
+}
+// handle/username desde una URL de perfil: instagram.com/leomessi → leomessi · x.com/@elon → elon · linkedin.com/in/xxx → xxx
+function handleFromUrl(u) {
+  try { const seg = new URL(String(u)).pathname.replace(/\/+$/, "").split("/").filter(Boolean); return (seg.pop() || "").replace(/^@/, "") } catch { return String(u || "").trim().replace(/^@/, "") }
 }
 
 function load() { try { if (existsSync(FILE())) return JSON.parse(readFileSync(FILE(), "utf8")) } catch {} return { accounts: [], rr: 0, actors: {} } }
@@ -51,7 +57,8 @@ async function runOne(token, actorId, input) {
 export async function runActor(platform, urlStr) {
   const s = load(), m = month()
   const cfg = actorsCfg(s)[platform]; if (!cfg || !cfg.id) throw new Error(`sin actor configurado para ${platform}`)
-  const input = JSON.parse(JSON.stringify(cfg.input).replace(/\{\{url\}\}/g, String(urlStr).replace(/"/g, "")))
+  const cleanUrl = String(urlStr).replace(/"/g, "")
+  const input = JSON.parse(JSON.stringify(cfg.input).replace(/\{\{url\}\}/g, cleanUrl).replace(/\{\{username\}\}/g, handleFromUrl(cleanUrl).replace(/"/g, "")))
   const avail = (s.accounts || []).filter((a) => a.exhaustedMonth !== m)
   if (!avail.length) throw new Error((s.accounts || []).length ? "todas tus cuentas Apify llegaron a su límite mensual" : "no hay cuentas Apify configuradas")
   const start = (s.rr || 0) % avail.length
