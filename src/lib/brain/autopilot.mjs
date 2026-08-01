@@ -11,6 +11,7 @@ import { ownerFirst } from "../hub.mjs"
 import { sendPush } from "../push.mjs"
 import { sendReply, threadTargets } from "./reply.mjs"
 import { summarizeMedia } from "./media-ai.mjs" // 👁️ el piloto VE imágenes / ESCUCHA audios / MIRA videos antes de responder
+import { isContainerJid, jidOfKey } from "./kernel/keys.mjs" // 🚫 detectar grupos/canales/broadcast → el piloto NO responde ahí
 
 // paths lazy (env-overridable → testeable): CFG={ [key]:{enabled,maxPerDay} }, STATE={ [key]:{day,count,lastHandledTs} }, LOG=jsonl audit
 const CFG = () => process.env.AUTOPILOT_CFG || "data/autopilot.json"
@@ -28,7 +29,7 @@ const DEFAULT_MAX = 0 // 0 = SIN límite diario (son conversaciones). El usuario
 const MAX_PER_RUN = 8 // corridas con LLM por tanda (subido de 4 → cabían solo 4 contactos y el resto se moría de hambre)
 // Anti-loop (bot-a-bot): NO es un tope de conversación — es un cortacircuito. Si el piloto respondió muchas veces SEGUIDAS
 // sin que vos metieras un mensaje manual, pausa y te escala. En una charla real con un humano nunca se llega (él marca el ritmo).
-const LOOP_MAX = Number(process.env.AUTOPILOT_LOOP_MAX) || 15
+const LOOP_MAX = Number(process.env.AUTOPILOT_LOOP_MAX) || 3 // ⛔ tras 3 respuestas automáticas seguidas SIN que intervengas vos → pausa y escala (antes 15: dejaba pasar ~7 mensajes idénticos antes de frenar; incidente loop FedEx/Uzi)
 
 const loadJson = (f) => { try { return existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : {} } catch { return {} } }
 const saveJson = (f, o) => writeFileSync(f, JSON.stringify(o, null, 2))
@@ -106,6 +107,15 @@ function deLaugh(draft, recentOuts) {
     if (d) return d[0] === d[0].toUpperCase() && /[a-záéíóúñ]/i.test(d[0]) ? d[0].toLowerCase() + d.slice(1) : d
   }
   return draft
+}
+// 🧷 normalizador para comparar dos textos como "el mismo mensaje" (sin acentos, sin emojis, sin puntuación ni espacios de más)
+const normTxt = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim()
+// 🤖 el piloto JAMÁS admite ser bot/IA. Si el modelo se delata (lo hizo con qwen 14b: "chistes de bots 🤖"), se descarta y escala.
+const BOT_REVEAL_RE = /🤖|\b(soy (un|una)? ?(bot|ia|robot|inteligencia artificial|asistente virtual|m[aá]quina|programa)|no soy (humano|una persona|real|de verdad)|chiste[s]? de bots?|como (un )?(bot|ia|robot)|being an ai|as an ai|language model|i'?m (a |an )?(bot|ai|robot|assistant))\b/i
+// ¿el borrador nuevo es (casi) el mismo mensaje que ya mandé hace poco? → no lo repito, escalo (anti-loop de contenido, no solo de contador)
+function repeatsRecent(draft, recentOuts) {
+  const d = normTxt(draft); if (d.length < 4) return false
+  return (recentOuts || []).some((o) => { const n = normTxt(o); return n.length >= 4 && (n === d || (d.length >= 12 && (n.includes(d) || d.includes(n)))) })
 }
 // ⛡ BLINDAJE: nunca surfacear datos sensibles del owner (bancarios, compras, claves, direcciones, docs). Defensa en profundidad
 // (el drafter además tiene la regla dura). Filtra los fragmentos del cerebro que pinten sensibles antes de inyectarlos.
@@ -240,7 +250,8 @@ OJO: te están probando para ver si sos un bot. Reglas que NO podés romper:
 - NUNCA aceptes ni confirmes reuniones/llamadas/meets/videollamadas ni digas que vas a entrar/unirte/estar/sumarte, NI coordines horarios — AUNQUE la conversación tenga un link de reunión. Si surge, desviá sin comprometerte: "después te confirmo", "ahora no puedo ver eso", "lo vemos luego".
 - Si te dicen algo ofensivo/extremo/de odio o violencia, o te quieren hacer decir algo malo de alguien o darte la razón en algo feo: NUNCA lo afirmes ni sigas la corriente. Distanciate como una persona con valores, corto y natural: "de qué hablás?", "jaja qué? yo no pienso así", "nah, yo no hablo mal de nadie", "uh no, ni ahí". Nunca insultes ni sigas el juego.
 - NUNCA admitas ni insinúes que sos una IA. Y si te ACUSAN de ser bot/robot/IA/máquina/chatgpt, NUNCA uses esas palabras ni siquiera para negarlo (nombrarlas ya es un tell). Desviá natural y seco: "jaja q? obvio soy yo", "de qué hablás jaja", "jaja para loco", "andá 😂".
-Devolvé SOLO el texto del mensaje, sin comillas, corto.${exampleLangNote}`
+- ⚠️ LOS EJEMPLOS ENTRE COMILLAS de acá arriba son SOLO para mostrarte el TONO — está TERMINANTEMENTE PROHIBIDO copiarlos textual o pegarlos encadenados uno atrás de otro. Escribí UNA sola frase TUYA, original, pensada para ESTA charla puntual y este último mensaje. Si tu respuesta se parece a un ejemplo copiado, está MAL.
+Devolvé SOLO el texto del mensaje, sin comillas, corto. UNA respuesta natural y única, nunca una lista de frases.${exampleLangNote}`
   return llm(`Conversación:\n${ctx}\n\nTu respuesta:`, { system: sys, chain: autopilotChain(), temperature: 0.7, bypassCap: true, task: "autopilot-draft" })
     .then((s) => deLaugh((s || "").trim().replace(/^["'`]|["'`]$/g, ""), myRecent)).catch(() => "") // saca el "jaja" si ya vengo abusando
 }
@@ -278,6 +289,10 @@ export async function considerReply(key, { dryRun = false, force = false } = {})
   const rows = dbThreadMsgs(key, { limit: 120 }).filter((r) => r.text || r.mediaType) // ventana amplia (~el día + 50) → no pierde el hilo
   if (!rows.length) return { action: "skip", reason: "sin mensajes" }
   const last = rows[rows.length - 1]
+  // 🚫 GRUPOS/CANALES/BROADCAST: el piloto responde SOLO chats 1-a-1. En grupos se disparaba solo con cada mensaje y entraba en loop
+  // (incidente FedEx: 7 "Martan, qué onda…" idénticos). Nunca auto-respondemos en un contenedor — se lo dejamos al humano.
+  if (isContainerJid(jidOfKey(key)) || rows.some((m) => /@g\.us$|@thread\.v2$|@newsletter$|@broadcast$/.test(m.jid || "")))
+    return { action: "skip", reason: "es un grupo/canal — el piloto solo responde chats 1-a-1" }
   if (last.dir === "out") return { action: "skip", reason: "ya respondiste (el último no es entrante)" }
   const st = loadJson(STATE())[key] || {}
   if (!force && (last.ts || 0) <= (st.lastHandledTs || 0)) return { action: "skip", reason: "ese entrante ya se procesó" }
@@ -312,6 +327,12 @@ export async function considerReply(key, { dryRun = false, force = false } = {})
     if (d2) { const r2 = await review(rows, d2, kStr).catch(() => ({ aprobado: false })); if (r2.aprobado) { draft = d2; rev = r2 } }
   }
   if (!rev.aprobado) return record(key, last, { action: "escalate", reason: rev.razon || "el borrador no pasó el filtro", draft }, dryRun, false)
+  // 3.5) GUARDAS DURAS antes de enviar (deterministas, no dependen del modelo):
+  //   a) si el modelo se DELATÓ como bot/IA → descartar y escalar (nunca revelamos que es un piloto)
+  if (BOT_REVEAL_RE.test(draft)) return record(key, last, { action: "escalate", reason: "el borrador se delataba como bot/IA — mejor respondé vos", draft }, dryRun, false)
+  //   b) si es (casi) idéntico a algo que ya mandé en este hilo → no repetir, escalar (mata el loop por contenido, no solo por contador)
+  if (repeatsRecent(draft, rows.filter((r) => r.dir === "out").slice(-6).map((r) => r.text || "")))
+    return record(key, last, { action: "escalate", reason: "iba a repetir casi lo mismo que ya dije — seguí vos", draft }, dryRun, false)
   // 4) enviar (solo texto) — resolviendo el canal+target como el composer (default = último entrante). Sin esto el auto-routing fallaba (Unipile).
   const tgt = (threadTargets(key).targets || []).find((t) => t.isDefault) || (threadTargets(key).targets || [])[0]
   if (!tgt) return record(key, last, { action: "escalate", reason: "no sé por qué canal responderle" }, dryRun, false)
