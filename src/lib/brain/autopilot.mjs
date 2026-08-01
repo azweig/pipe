@@ -154,6 +154,8 @@ function cleanDraft(s, ownerName = "", wantLang = "") {
   if (gib && !/^[jaeh]+$/i.test(gib[0])) return ""                       // …pero NO la risa (jajaja/jejeje/hahaha)
   // 🙅 REGISTRO DE ASISTENTE (tells duros que el modelo mete igual): mejor descartar y escalar que mandar algo que delata al bot
   if (/\b(necesitas?|necesit[aá]s) algo m[aá]s\b|\bcon qu[eé] (te ayudo|necesit[aá]s ayuda)|\bestoy (aqu[ií]|para) (para )?ayudar|avisame si necesit|\bbusc[aá] en internet\b|app de deportes|\bhablar[eé] con la ia\b|voy a hablar con la ia|estar[eé] al tanto\b|seguir[eé] coordinando/i.test(d)) return ""
+  // 🤖 el modelo VERBALIZANDO sus propias reglas internas = tell mortal de bot ("sin comprometerme", "sin compartir datos sensibles", "usame para…")
+  if (/\bsin comprometerme\b|sin compartir (datos|info|informaci)|no comparto datos sensibles|\bc[oó]mo (puedo|te puedo) ayudar|puedo ayudarte hoy|\bus[aá](me|te)? para (cosas|temas) m[aá]s|para lo que necesites/i.test(d)) return ""
   return d.trim()
 }
 // ⛡ BLINDAJE: nunca surfacear datos sensibles del owner (bancarios, compras, claves, direcciones, docs). Defensa en profundidad
@@ -273,7 +275,8 @@ export async function humanDraft(rows, key, mediaDesc = "", knowledge = {}, pers
   // En los crípticos el modelo no tenía qué decir → tiraba de tu PERFIL/CEREBRO e INVENTABA temas (SpaceX, millas). Por eso, en
   // crípticos NO inyectamos perfil ni datos del cerebro: sin materia prima para inventar, cae a una respuesta mínima y natural.
   const lastIn = (mediaDesc || last.text || "").trim()
-  const otherSubstantial = lastIn.length > 25 || /\?/.test(lastIn)
+  const otherSubstantial = lastIn.length > 25 || /\?/.test(lastIn)                 // bar ALTO: inyectar perfil/cerebro (evita inventos)
+  const otherHasContent = otherSubstantial || lastIn.split(/\s+/).filter(Boolean).length >= 3 // bar BAJO: engancharse (no "q?")
   // CONTEXTO AMPLIO: hasta 50 mensajes (para NO perder el hilo — antes usaba 16 y respondía cosas sueltas fuera de contexto)
   const ctx = rows.slice(-50).map(fmtLine).join("\n") + (mediaDesc ? `\n(El último mensaje NO es texto: te mandó un ${last.mediaType}. Su contenido es: "${mediaDesc}". Respondé a ESO EN EL CONTEXTO de la charla, no como algo suelto.)` : "")
   const fb = key ? feedbackFor(key) : [] // correcciones previas del owner → imitá ESE estilo
@@ -311,8 +314,8 @@ export async function humanDraft(rows, key, mediaDesc = "", knowledge = {}, pers
   const wc = myVoice.map((t) => t.split(/\s+/).filter(Boolean).length).sort((a, b) => a - b)
   const medW = wc.length ? wc[Math.floor(wc.length / 2)] : 7
   const capW = Math.min(16, Math.max(6, medW + 3)) // tope flexible ~mediana+3
-  // GATE del "q pasó?": si el ÚLTIMO entrante tiene contenido concreto → prohibir la evasiva; si es críptico → permitirla (sin inventar).
-  const qGate = otherSubstantial
+  // GATE del "q pasó?": si el ÚLTIMO entrante tiene ALGO de contenido (≥3 palabras o pregunta) → prohibir la evasiva; si es críptico → permitirla (sin inventar).
+  const qGate = otherHasContent
     ? `\n- ⛔ El último mensaje del otro TIENE contenido concreto o es una pregunta → PROHIBIDO contestar "q?"/"q pasó?"/"q onda" o cualquier evasiva. Respondé PUNTUAL a lo que dice (corto, al tema).`
     : `\n- El último mensaje es cortito/críptico: si de verdad no se entiende, un "q?"/"q pasó?" está bien; si lo entendés, contestá al toque. Igual NO inventes datos para rellenar.`
   const sys = `Sos ${ownerFirst()} respondiendo por WhatsApp como lo harías VOS: casual, CORTÍSIMO, humano, EN CONTEXTO de toda la charla (no respondas cosas sueltas). Estilo de esta conversación (minúsculas/jerga si las usás).${personaNote}${fbNote}${voiceNote}${kNote}${webNote}${antiRep}${noJaja}
