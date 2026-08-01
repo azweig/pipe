@@ -70,12 +70,14 @@ export function listThreads({ limit = 200 } = {}, { cache = true } = {}) {
   const bucketOf = (r, kind, canon, jid, name, grp) => {
     if (spamS.has(String(jid).toLowerCase()) || spamS.has(String(r.key).replace(/^email:/, "").toLowerCase())) return "spam" // remitente marcado spam por el usuario
     if (cats[r.key]) return CATMAP[cats[r.key]] || "other" // categoría manual manda
-    if (kind !== "group" && llmSpam(r.key) && !notSpam(r.key)) return "spam" // veredicto LLM (capa 2), salvo que el usuario lo haya des-marcado
+    // 🛡️ TUS PROPIAS cuentas conectadas → NUNCA spam (es tu inbox). Antes hilos de hola@pipe.one / ventas@… salían spam y se ocultaban.
+    const own = MY_EMAILS.has(String(jid || "").toLowerCase()) || MY_EMAILS.has(String(r.key || "").replace(/^email:/, "").toLowerCase())
+    if (kind !== "group" && !own && llmSpam(r.key) && !notSpam(r.key)) return "spam" // veredicto LLM (capa 2), salvo que el usuario lo haya des-marcado
     if (kind === "self") return "other"
     // ANTISPAM: SOLO para emails puros. WhatsApp/Telegram/etc NUNCA es spam (regla del usuario).
     const chans = r.channels || r.lastChannel || ""
     const pureEmail = /email/.test(chans) && !/whatsapp|telegram|instagram|signal|teams/.test(chans)
-    if (pureEmail && isSpam(jid, name, r.lastText || "") && !notSpam(r.key)) return "spam" // detector compartido, salvo des-marcado por el usuario
+    if (pureEmail && !own && isSpam(jid, name, r.lastText || "") && !notSpam(r.key)) return "spam" // detector compartido, salvo des-marcado por el usuario
     if (kind === "group") return /familia|family|casa|hogar|amig/i.test(grp || grpNames[jid] || name || "") ? "family" : "other"
     if (canon) { const t = ptags[canon] || ""; if (/familia/.test(t)) return "family"; if (/amigo/.test(t)) return "amigos"; if (pseed[canon] && /cliente|inversor|socio|partner|proveedor|empleado|due[ñn]o|contacto|finanzas/.test(t)) return "trabajo" }
     return "other"
