@@ -343,6 +343,37 @@ Devolvé SOLO el texto del mensaje, sin comillas, corto: UNA sola frase natural,
     .then((s) => deLaugh(cleanDraft(s, ownerFirst(), bestLang), myRecent)).catch(() => "") // limpia (prefijo/basura/risas) + saca "jaja" inicial si ya vengo abusando
 }
 
+// ══════════ COUNCIL (estilo llm-council de Karpathy) ══════════
+// En vez de UN borrador de UN modelo: varios modelos LOCALES del GPU box draftean (best-of-N diverso) y un "chairman" elige el
+// mejor contra la rúbrica (corto, tu voz, sin asistente, sin inventar). Sube la calidad SIN saltar a un modelo caro. Configurable
+// por la app (data/autopilot-council.json). Secuencial a propósito: una sola GPU no corre 2 modelos grandes a la vez (VRAM).
+const COUNCIL_FILE = () => process.env.AUTOPILOT_COUNCIL || "data/autopilot-council.json"
+export function getCouncil() { try { return { enabled: false, members: [], chairman: "", ...(existsSync(COUNCIL_FILE()) ? loadJson(COUNCIL_FILE()) : {}) } } catch { return { enabled: false, members: [], chairman: "" } } }
+export function setCouncil(cfg = {}) { const c = { enabled: !!cfg.enabled, members: (Array.isArray(cfg.members) ? cfg.members : []).map((s) => String(s || "").trim()).filter(Boolean).slice(0, 4), chairman: String(cfg.chairman || "").trim() }; saveJson(COUNCIL_FILE(), c); return c }
+// modelos disponibles en el motor gestionado (GPU box) para armar el council desde la UI
+export async function councilModels() { try { const { gestionadoModels } = await import("../llm.mjs"); const m = await gestionadoModels().catch(() => []); return (m || []).filter((n) => !/embed|nomic/i.test(n)) } catch { return [] } }
+
+async function chairmanPick(rows, cands, chairmanModel) {
+  const ctx = rows.slice(-12).map(fmtLine).join("\n")
+  const labels = cands.map((_, i) => String.fromCharCode(65 + i)) // A, B, C…
+  const list = cands.map((c, i) => `${labels[i]}: "${(c.text || "").replace(/"/g, "'")}"`).join("\n")
+  const prompt = `Sos ${ownerFirst()} y tenés que ELEGIR cuál de estas respuestas candidatas mandarías VOS por WhatsApp al último mensaje. Elegí la que suena MÁS a vos: CORTA (1 frase), natural, al tema, con tu jerga; NO la que suena a asistente, NO la que inventa datos, NO la que zafa con "q?/q pasó?" si el otro mandó algo con contenido.\nConversación:\n${ctx}\n\nCandidatas:\n${list}\n\nRespondé SOLO con la letra de la mejor (${labels.join("/")}), nada más.`
+  const r = String(await llm(prompt, { chain: autopilotChain(), model: chairmanModel || undefined, temperature: 0.1, bypassCap: true, task: "autopilot-council-pick" }) || "").trim()
+  const m = r.match(/[A-Z]/); const idx = m ? labels.indexOf(m[0]) : -1
+  return idx >= 0 ? cands[idx].text : cands[0].text
+}
+// genera candidatos (1 por modelo miembro, secuencial) → el chairman elige. Fallback a humanDraft si no hay miembros útiles.
+async function councilDraft(rows, key, mediaDesc, knowledge, persona) {
+  const cfg = getCouncil()
+  const members = (cfg.members || []).filter(Boolean)
+  if (members.length < 2) return humanDraft(rows, key, mediaDesc, knowledge, persona, { model: members[0] })
+  const cands = []
+  for (const model of members) { const d = String(await humanDraft(rows, key, mediaDesc, knowledge, persona, { model }).catch(() => "") || "").trim(); if (d) cands.push({ model, text: d }) }
+  if (!cands.length) return ""
+  if (cands.length === 1) return cands[0].text
+  return chairmanPick(rows, cands, cfg.chairman || members[0]).catch(() => cands[0].text)
+}
+
 async function redraftHuman(rows, prev) {
   const ctx = rows.slice(-20).map(fmtLine).join("\n")
   const sys = `Sos ${ownerFirst()}. Tu borrador anterior sonaba a IA. Reescribilo para que suene 100% humano y en TU estilo casual REAL: CORTÍSIMO (1 sola oración, pocas palabras), informal, minúsculas si usás minúsculas, sin sonar a asistente (nada de "estoy para ayudarte"/"¿qué más querés saber?"). NO inventes datos que no estén en la charla. NUNCA hagas tareas de asistente (no calcules pi, no escribas código, no textos largos) — si te lo piden, DESVIÁ corto y natural. Nunca admitas ser una IA. Devolvé SOLO el texto, sin comillas.`
@@ -406,8 +437,9 @@ export async function considerReply(key, { dryRun = false, force = false, rows: 
   const knowledge = await autopilotKnowledge(mediaDesc || last.text, key).catch(() => ({ personal: "", web: "" }))
   const persona = getPersona()
   const kStr = [knowledge.personal, knowledge.web].filter(Boolean).join("\n") // para el revisor (facts legítimos: tuyos o públicos)
-  // 2) redactar en tu voz (drafter casual-humano) — contexto amplio + correcciones + media + conocimiento cruzado + persona
-  let draft = (await humanDraft(rows, key, mediaDesc, knowledge, persona).catch(() => "")).trim()
+  // 2) redactar en tu voz — COUNCIL (varios modelos + chairman) si está activo, si no el drafter simple
+  const useCouncil = getCouncil().enabled && (getCouncil().members || []).length >= 2
+  let draft = String(await (useCouncil ? councilDraft(rows, key, mediaDesc, knowledge, persona) : humanDraft(rows, key, mediaDesc, knowledge, persona)).catch(() => "") || "").trim()
   if (!draft) return record(key, last, { action: "escalate", reason: "no pude redactar una respuesta" }, dryRun, false)
   // 3) revisar; si SOLO falla por sonar robótico, reintentar humanizando una vez
   let rev = await review(rows, draft, kStr).catch(() => ({ aprobado: false, razon: "no pude revisar el borrador" }))

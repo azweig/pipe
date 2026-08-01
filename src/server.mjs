@@ -536,6 +536,8 @@ const server = createServer(async (req, res) => {
       // política de escalado: QUÉ tópicos escala el piloto (elegidos por el usuario, no hardcodeado). presets_available = catálogo para la UI.
       if (path === "/api/autopilot/policy" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setEscalatePolicy({ presets: b.presets, custom: b.custom })) }
       if (path === "/api/autopilot/policy") return json(res, 200, { ...brain.getEscalatePolicy(), presets_available: brain.ESCALATE_PRESETS.map((p) => p.key) })
+      if (path === "/api/autopilot/council" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setCouncil({ enabled: b.enabled, members: b.members, chairman: b.chairman })) } // council: varios modelos locales draftean + chairman elige
+      if (path === "/api/autopilot/council") return json(res, 200, { ...brain.getCouncil(), available: await brain.councilModels() })
       // #5: transcribir + resumir un video/audio/imagen on-demand (long-press/hover)
       if (path === "/api/media/summarize" && req.method === "POST") { const b = await body(req); try { const r = await brain.summarizeMedia(b.id); return json(res, r && r.error ? 400 : 200, r) } catch (e) { return json(res, 500, { error: e.message }) } }
       // ── IMPORT de historial de WhatsApp (self-service desde la app: "Exportar chat" → subir el .txt) ──

@@ -556,7 +556,43 @@ window.loadAutopilotPolicy = async () => {
     <label class="tiny muted" style="display:block;margin:2px 2px 5px">Otros temas propios (separados por coma)</label>
     <input id="apCustom" class="inp" placeholder="ej: temas de la obra, cosas del auto" style="margin-bottom:12px" value="${esc((r.custom || []).join(", "))}">
     <button class="btn" style="width:100%" onclick="saveAutopilotPolicy()">Guardar</button>
-    <div id="apPolMsg" class="tiny" style="text-align:center;margin-top:9px;min-height:16px;color:var(--accent)"></div>`
+    <div id="apPolMsg" class="tiny" style="text-align:center;margin-top:9px;min-height:16px;color:var(--accent)"></div>
+    <div style="height:1px;background:var(--line);margin:20px 0 14px"></div>
+    <div id="apCouncil"></div>`
+  loadCouncil()
+}
+// ── COUNCIL: varios modelos LOCALES redactan y un "chairman" elige el mejor → más calidad sin modelo caro. Más lento. ──
+window.loadCouncil = async () => {
+  const box = document.getElementById("apCouncil"); if (!box) return
+  const r = await api("/api/autopilot/council").catch(() => null)
+  if (!r) { box.innerHTML = ""; return }
+  const avail = (r.available || []).filter((m) => !/deepseek|embed|:3b/.test(m)) // sin reasoning/embeddings/muy chico
+  const members = new Set(r.members || [])
+  const memChecks = avail.map((m) => `<label style="display:flex;align-items:center;gap:9px;margin:2px 0;padding:5px 0;font-size:14px;cursor:pointer">
+      <input type="checkbox" class="council-mem" value="${esc(m)}" ${members.has(m) ? "checked" : ""} style="width:17px;height:17px;flex:none">
+      ${esc(m)}</label>`).join("")
+  const chairOpts = ["", ...avail].map((m) => `<option value="${esc(m)}" ${r.chairman === m ? "selected" : ""}>${m ? esc(m) : "(automático)"}</option>`).join("")
+  box.innerHTML = `
+    <label style="display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;cursor:pointer;margin-bottom:6px">
+      <input type="checkbox" id="councilOn" ${r.enabled ? "checked" : ""} style="width:19px;height:19px;flex:none"> 🧠 Council de modelos</label>
+    <div class="cfg-note">${IC_INFO}<div>Varios modelos locales redactan y uno elige el mejor. Más calidad, pero más lento. Elegí 2+ modelos.</div></div>
+    <label class="tiny muted" style="display:block;margin:10px 2px 4px">Modelos que redactan (2+)</label>
+    <div style="margin:2px 2px 8px">${memChecks || '<span class="tiny muted">No hay modelos locales disponibles (GPU box).</span>'}</div>
+    <label class="tiny muted" style="display:block;margin:6px 2px 4px">Chairman (el que elige)</label>
+    <select id="councilChair" class="inp" style="margin-bottom:12px">${chairOpts}</select>
+    <button class="btn" style="width:100%" onclick="saveCouncil()">Guardar council</button>
+    <div id="councilMsg" class="tiny" style="text-align:center;margin-top:9px;min-height:16px;color:var(--accent)"></div>`
+}
+window.saveCouncil = async () => {
+  const enabled = !!document.getElementById("councilOn")?.checked
+  const members = [...document.querySelectorAll(".council-mem:checked")].map((el) => el.value)
+  const chairman = document.getElementById("councilChair")?.value || ""
+  const msg = document.getElementById("councilMsg")
+  if (enabled && members.length < 2) { if (msg) msg.textContent = "Elegí al menos 2 modelos."; return }
+  if (msg) msg.textContent = "Guardando…"
+  const r = await post("/api/autopilot/council", { enabled, members, chairman }).catch(() => null)
+  if (msg) msg.textContent = r ? "✓ Guardado" : "No se pudo guardar."
+  if (r && msg) setTimeout(() => { if (msg) msg.textContent = "" }, 3000)
 }
 window.saveAutopilotPolicy = async () => {
   const presets = [...document.querySelectorAll(".ap-preset:checked")].map((el) => el.value)

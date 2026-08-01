@@ -127,6 +127,16 @@ async function gestionado(prompt, { json, system, temperature, numPredict, _key 
   const d = await res.json()
   return d.response || ""
 }
+// modelos disponibles en el motor gestionado (GPU box, /api/tags de ollama vía gateway) → para armar el council desde la app
+export async function gestionadoModels() {
+  const url = gatewayUrl(); const token = keyFor("gestionado"); if (!url || !token) return []
+  try {
+    const res = await fetch(url + "/api/tags", { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000) })
+    if (!res.ok) return []
+    const d = await res.json()
+    return (d.models || []).map((m) => m.name || m.model).filter(Boolean)
+  } catch { return [] }
+}
 
 // VISIÓN: lee/entiende imágenes (para emails que son pura imagen). Gemini 2.5 Flash → OpenAI gpt-4o-mini.
 // Hook Mistral OCR: si algún día hay MISTRAL_API_KEY, se puede anteponer /v1/ocr para digitalización de docs de alta precisión.
