@@ -137,7 +137,7 @@ PIN-gated when exposed to the internet (rate-limited, scrypt-hashed, session coo
 
 Pipe is free and open source, built and maintained by one person. If it saves you time — or you just want to keep it alive — **[buy me a coffee on Ko-fi](https://ko-fi.com/azweig)** ☕, or use the **Sponsor** button at the top of the repo. Every bit helps and is hugely appreciated. 🙏
 
-Rather not self-host? The **[managed version](https://pipe.one)** funds development too.
+Rather not set it up yourself? Reach out for a **[done-for-you install](https://pipe.one)** on your own box — that supports the project too.
 
 ## License
 
