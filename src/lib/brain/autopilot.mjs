@@ -152,6 +152,8 @@ function cleanDraft(s, ownerName = "", wantLang = "") {
   if (/\((\s*)?(nota|note|as an?|como (el|la)|instrucci|el contacto|the (contact|previous))/i.test(d)) return "" // fuga de meta/razonamiento "(Nota: ...)"
   const gib = d.replace(/\s+/g, " ").match(/(\w{2,3})\1{2,}/i)           // sílaba repetida ≥3× = gibberish (yansansansa)…
   if (gib && !/^[jaeh]+$/i.test(gib[0])) return ""                       // …pero NO la risa (jajaja/jejeje/hahaha)
+  // 🙅 REGISTRO DE ASISTENTE (tells duros que el modelo mete igual): mejor descartar y escalar que mandar algo que delata al bot
+  if (/\b(necesitas?|necesit[aá]s) algo m[aá]s\b|\bcon qu[eé] (te ayudo|necesit[aá]s ayuda)|\bestoy (aqu[ií]|para) (para )?ayudar|avisame si necesit|\bbusc[aá] en internet\b|app de deportes|\bhablar[eé] con la ia\b|voy a hablar con la ia|estar[eé] al tanto\b|seguir[eé] coordinando/i.test(d)) return ""
   return d.trim()
 }
 // ⛡ BLINDAJE: nunca surfacear datos sensibles del owner (bancarios, compras, claves, direcciones, docs). Defensa en profundidad
@@ -267,13 +269,18 @@ Ejemplos que SE APRUEBAN (son perfectos, humanos): "jaja q? para q queres eso", 
 // La clave: te están PROBANDO. Nunca hace tareas de asistente (calcular pi, escribir código, ensayos), desvía como un amigo.
 export async function humanDraft(rows, key, mediaDesc = "", knowledge = {}, persona = "") {
   const last = rows[rows.length - 1]
+  // ¿el último entrante tiene CONTENIDO CONCRETO (pregunta o largo) o es un fragmento críptico (emoji/saludo/"jajaja")?
+  // En los crípticos el modelo no tenía qué decir → tiraba de tu PERFIL/CEREBRO e INVENTABA temas (SpaceX, millas). Por eso, en
+  // crípticos NO inyectamos perfil ni datos del cerebro: sin materia prima para inventar, cae a una respuesta mínima y natural.
+  const lastIn = (mediaDesc || last.text || "").trim()
+  const otherSubstantial = lastIn.length > 25 || /\?/.test(lastIn)
   // CONTEXTO AMPLIO: hasta 50 mensajes (para NO perder el hilo — antes usaba 16 y respondía cosas sueltas fuera de contexto)
   const ctx = rows.slice(-50).map(fmtLine).join("\n") + (mediaDesc ? `\n(El último mensaje NO es texto: te mandó un ${last.mediaType}. Su contenido es: "${mediaDesc}". Respondé a ESO EN EL CONTEXTO de la charla, no como algo suelto.)` : "")
   const fb = key ? feedbackFor(key) : [] // correcciones previas del owner → imitá ESE estilo
   const fbNote = fb.length ? `\n\nEl dueño corrigió respuestas tuyas antes. Así responde ÉL (imitá este estilo/tono exacto): ${fb.map((f) => `"${f.correction}"`).join(" · ")}` : ""
-  const personaNote = persona ? `\n\n(Tu perfil — úsalo SOLO para tu tono y para opiniones/gustos cuando el otro pregunte algo de eso. NO te presentes, NO menciones tu trabajo/proyectos/producto NI lo vendas salvo que el OTRO lo saque primero):\n${persona}` : ""
-  const kNote = knowledge?.personal ? `\n\nINFO DE TUS DATOS (de tus otras charlas/mails/notas) para responder CONCRETO — usala SOLO si viene al caso y es cierta, NO inventes:\n${knowledge.personal}` : ""
-  const webNote = knowledge?.web ? `\n\nDE INTERNET (por si no lo sabías de memoria, para no quedar en blanco — resumilo con tus palabras, natural):\n${knowledge.web}` : ""
+  const personaNote = (persona && otherSubstantial) ? `\n\n(Tu perfil — úsalo SOLO para tu tono y para opiniones/gustos cuando el otro pregunte algo de eso. NO te presentes, NO menciones tu trabajo/proyectos/producto NI lo vendas salvo que el OTRO lo saque primero):\n${persona}` : ""
+  const kNote = (knowledge?.personal && otherSubstantial) ? `\n\nINFO DE TUS DATOS (de tus otras charlas/mails/notas) para responder CONCRETO — usala SOLO si viene al caso y es cierta, NO inventes:\n${knowledge.personal}` : ""
+  const webNote = (knowledge?.web && otherSubstantial) ? `\n\nDE INTERNET (por si no lo sabías de memoria, para no quedar en blanco — resumilo con tus palabras, natural):\n${knowledge.web}` : ""
   // MICRO-MEMORIA: lo que YA respondiste hace poco → cuántas veces arrancaste con risa (para cortar el tic de raíz)
   const myRecent = rows.filter((r) => r.dir === "out").slice(-8).map((r) => (r.text || "").replace(/\s+/g, " ").trim().slice(0, 70)).filter(Boolean)
   const laughN = myRecent.filter(startsLaugh).length
@@ -304,10 +311,7 @@ export async function humanDraft(rows, key, mediaDesc = "", knowledge = {}, pers
   const wc = myVoice.map((t) => t.split(/\s+/).filter(Boolean).length).sort((a, b) => a - b)
   const medW = wc.length ? wc[Math.floor(wc.length / 2)] : 7
   const capW = Math.min(16, Math.max(6, medW + 3)) // tope flexible ~mediana+3
-  // GATE del "q pasó?": si el ÚLTIMO entrante tiene contenido concreto (largo o con pregunta) → prohibir la evasiva; si es un
-  // fragmento críptico → permitirla (y prohibir inventar). Ataca el defecto #1 del juez (43% de los "q?" eran evasivos).
-  const lastIn = (mediaDesc || last.text || "").trim()
-  const otherSubstantial = lastIn.length > 25 || /\?/.test(lastIn)
+  // GATE del "q pasó?": si el ÚLTIMO entrante tiene contenido concreto → prohibir la evasiva; si es críptico → permitirla (sin inventar).
   const qGate = otherSubstantial
     ? `\n- ⛔ El último mensaje del otro TIENE contenido concreto o es una pregunta → PROHIBIDO contestar "q?"/"q pasó?"/"q onda" o cualquier evasiva. Respondé PUNTUAL a lo que dice (corto, al tema).`
     : `\n- El último mensaje es cortito/críptico: si de verdad no se entiende, un "q?"/"q pasó?" está bien; si lo entendés, contestá al toque. Igual NO inventes datos para rellenar.`
