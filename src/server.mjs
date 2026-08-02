@@ -534,6 +534,8 @@ const server = createServer(async (req, res) => {
       // 🎭 PERSONA del owner (para que el piloto responda en personaje). GET = ver; POST {text} = editar; POST {rebuild:true} = regenerar de tus datos
       if (path === "/api/autopilot/persona" && req.method === "POST") { const b = await body(req); if (b.rebuild) return json(res, 200, { text: await brain.buildPersona() }); return json(res, 200, brain.setPersona(b.text || "")) }
       if (path === "/api/autopilot/persona") return json(res, 200, { text: brain.getPersona() })
+      if (path === "/api/autopilot/voice" && req.method === "POST") return json(res, 200, (await brain.buildVoiceProfile()) || { error: "no pude armar el perfil (¿pocos mensajes?)" }) // 🗣️ re-detectar tu voz
+      if (path === "/api/autopilot/voice") return json(res, 200, brain.getVoiceProfile() || {}) // perfil de voz auto-detectado (idiomas/dialecto/tono)
       // política de escalado: QUÉ tópicos escala el piloto (elegidos por el usuario, no hardcodeado). presets_available = catálogo para la UI.
       if (path === "/api/autopilot/policy" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setEscalatePolicy({ presets: b.presets, custom: b.custom })) }
       if (path === "/api/autopilot/policy") return json(res, 200, { ...brain.getEscalatePolicy(), presets_available: brain.ESCALATE_PRESETS.map((p) => p.key) })

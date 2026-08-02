@@ -345,6 +345,7 @@ const CFG_SECS = [
   { id: "send", icon: IC_SEND, name: "Estado de envío", kick: "Diagnóstico", title: "¿Tus mensajes salen?", desc: "El hub se autoprueba mandándote un mensaje y te avisa si algo no sale." },
   { id: "autopilot", icon: IC_ROBOT, name: "Piloto automático", kick: "Automatización", title: "Qué escala el piloto", desc: "Elegí qué temas el piloto NO responde solo — esos te los deja a vos." },
   { id: "train", icon: IC_ROBOT, name: "Entrená tu IA", kick: "Automatización", title: "Corregí lo que respondería tu IA", desc: "Te muestra un mensaje real y lo que tu IA contestaría. Aprobalo o corregilo — así aprende tu estilo." },
+  { id: "voice", icon: IC_ROBOT, name: "Tu voz", kick: "Automatización", title: "Cómo te detecta la IA", desc: "La IA analiza tus mensajes y detecta tu tonalidad: idiomas, dialecto/nacionalidad, tono. Así te imita mejor." },
   { id: "sync", icon: IC_SYNC, name: "Sincronización", kick: "Mantenimiento", title: "Reconstruir / resincronizar", desc: "Si algo se desincronizó, reconstruilo desde acá. No borra nada." },
   { id: "storage", icon: IC_DISK, name: "Almacenamiento", kick: "Espacio", title: "Fotos, videos y archivos", desc: "Elegí qué media guardar en el servidor (toda la cuenta, o por chat desde el 📎). El audio siempre se guarda." },
   { id: "prefs", icon: SVG.sliders, name: "Preferencias", kick: "Ajustes", title: "Notificaciones, Jarvis y PIN", desc: "Avisos, tu cerebro Jarvis y el PIN de acceso." },
@@ -360,6 +361,7 @@ function cfgStatus(id) {
   if (id === "enrich") return { cls: "", text: "gestionar" }
   if (id === "autopilot") return { cls: "", text: "qué escala" }
   if (id === "train") return { cls: "", text: "corregir" }
+  if (id === "voice") return { cls: "", text: "tu tonalidad" }
   if (id === "sync") return { cls: "", text: "reconstruir" }
   if (id === "storage") return { cls: "", text: "gestionar" }
   return { cls: "", text: "" }
@@ -472,6 +474,7 @@ function renderCfgSection(id) {
   if (id === "storage") body = `<div id="storageCfg" class="cfg-card">Cargando…</div>`
   if (id === "autopilot") body = `<div id="apPolicyCfg" class="cfg-card">Cargando…</div>`
   if (id === "train") body = `<div id="trainDeck" class="cfg-card">Cargando…</div>`
+  if (id === "voice") body = `<div id="voiceCfg" class="cfg-card">Cargando…</div>`
   if (id === "enrich") body = `<div id="apifyCfg">Cargando…</div>`
   render(`<div class="screen">
     <button class="cfg-back" onclick="cfgBack()">${IC_BACK}Ajustes</button>
@@ -482,6 +485,7 @@ function renderCfgSection(id) {
   if (id === "storage") loadStorageCfg()
   if (id === "autopilot") loadAutopilotPolicy()
   if (id === "train") loadTrainDeck()
+  if (id === "voice") loadVoiceProfile()
   if (id === "enrich") loadApifyCfg()
 }
 // ── Enriquecimiento (Apify): cuentas anónimas que la app rota para traer perfiles sociales ──
@@ -634,6 +638,40 @@ window.trainSave = async (encKey, original) => {
   const correction = (document.getElementById("trainFix")?.value || "").trim(); if (!correction) return
   await post("/api/autopilot/feedback", { key: decodeURIComponent(encKey), good: false, correction, original }).catch(() => {})
   _trainCount++; loadTrainDeck()
+}
+
+// ── 🗣️ TU VOZ: perfil auto-detectado (idiomas / dialecto-nacionalidad % / tono) de tus propios mensajes ──
+const _voiceBars = (arr, colors) => (arr || []).filter((x) => x && x.name).map((x, i) => {
+  const p = Math.max(2, Math.min(100, +x.pct || 0)), col = colors[i % colors.length]
+  return `<div style="margin:7px 0"><div class="row" style="justify-content:space-between;font-size:13.5px;margin-bottom:3px"><span>${esc(x.name)}</span><b>${p}%</b></div>
+    <div style="height:8px;border-radius:6px;background:var(--panel2);overflow:hidden"><div style="height:100%;width:${p}%;background:${col};border-radius:6px"></div></div></div>`
+}).join("")
+window.loadVoiceProfile = async () => {
+  const box = document.getElementById("voiceCfg"); if (!box) return
+  box.innerHTML = `<div class="center" style="height:70px"><div class="spin"></div></div>`
+  let v = await api("/api/autopilot/voice").catch(() => null)
+  const render = (v) => {
+    const has = v && (v.dialect || v.languages || v.summary)
+    box.innerHTML = `
+      ${has ? `<div class="cbox" style="margin-bottom:12px">${esc(v.summary || "")}</div>
+      ${(v.dialect || []).length ? `<div class="tiny muted" style="margin:12px 2px 2px;font-weight:800;letter-spacing:.4px">DIALECTO / NACIONALIDAD</div>${_voiceBars(v.dialect, ["#6366f1", "#e0872b", "#22a06b", "#e2483d"])}` : ""}
+      ${(v.languages || []).length ? `<div class="tiny muted" style="margin:14px 2px 2px;font-weight:800;letter-spacing:.4px">IDIOMAS</div>${_voiceBars(v.languages, ["#3b82f6", "#8b5cf6", "#22a06b"])}` : ""}
+      ${(v.tone || []).length ? `<div class="tiny muted" style="margin:14px 2px 6px;font-weight:800;letter-spacing:.4px">TONO</div><div class="pr-chips">${v.tone.map((t) => `<span class="pr-chip" style="cursor:default">${esc(t)}</span>`).join("")}</div>` : ""}
+      ${v.traits ? `<div class="pr-chips" style="margin-top:8px">${["brevity", "emoji", "formality", "laughs"].filter((k) => v.traits[k]).map((k) => `<span class="pr-chip" style="cursor:default;opacity:.85">${({ brevity: "largo", emoji: "emoji", formality: "registro", laughs: "risa" })[k]}: ${esc(v.traits[k])}</span>`).join("")}</div>` : ""}
+      <div class="tiny muted" style="margin-top:14px">Esto sale de TUS mensajes reales (local, privado) y ayuda a la IA a imitarte.</div>` :
+      `<div class="cfg-note">${IC_INFO}<div>Todavía no detecté tu voz. Tocá el botón y la IA analiza tus mensajes para armar tu perfil.</div></div>`}
+      <button class="btn ${has ? "ghost" : ""}" style="width:100%;margin-top:14px" id="voiceBtn" onclick="rebuildVoice()">${has ? "🔄 Re-detectar" : "🗣️ Detectar mi voz"}</button>
+      <div id="voiceMsg" class="tiny" style="text-align:center;margin-top:9px;min-height:15px;color:var(--accent)"></div>`
+  }
+  render(v)
+}
+window.rebuildVoice = async () => {
+  const btn = document.getElementById("voiceBtn"), msg = document.getElementById("voiceMsg")
+  if (btn) { btn.disabled = true; btn.textContent = "Analizando tus mensajes…" }
+  if (msg) msg.innerHTML = ORB2("Leyendo tu forma de escribir")
+  const v = await post("/api/autopilot/voice", {}).catch(() => null)
+  if (v && !v.error) loadVoiceProfile()
+  else { if (btn) { btn.disabled = false; btn.textContent = "Reintentar" } if (msg) msg.textContent = "No se pudo — ¿pocos mensajes tuyos?" }
 }
 window.saveAutopilotPolicy = async () => {
   const presets = [...document.querySelectorAll(".ap-preset:checked")].map((el) => el.value)

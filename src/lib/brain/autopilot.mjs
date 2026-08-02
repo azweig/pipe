@@ -254,6 +254,31 @@ export async function buildPersona() {
   return text
 }
 
+// 🗣️ PERFIL DE VOZ ESTRUCTURADO — auto-detectado de los mensajes REALES del usuario (agnóstico de idioma: sirve para CUALQUIER
+// usuario del OSS). Devuelve idiomas %, dialecto/nacionalidad % (por la jerga), tono y rasgos. Se muestra en la config ("Tu voz").
+const VOICE = () => process.env.AUTOPILOT_VOICE || "data/voice-profile.json"
+export function getVoiceProfile() { try { return existsSync(VOICE()) ? loadJson(VOICE()) : null } catch { return null } }
+export async function buildVoiceProfile() {
+  let sample = ""
+  try { const { handle } = await import("../db-core.mjs"); const rows = handle().prepare("SELECT text FROM messages WHERE dir='out' AND text IS NOT NULL AND length(text)>10 AND text NOT LIKE '🖼%' AND text NOT LIKE '🎤%' AND text NOT LIKE '📎%' ORDER BY ts DESC LIMIT 500").all(); sample = rows.map((r) => r.text.replace(/\s+/g, " ").slice(0, 140)).join("\n").slice(0, 9000) } catch {}
+  if (!sample) return null
+  const prompt = `Abajo hay MENSAJES REALES que escribió una persona. Analizá SU FORMA DE ESCRIBIR (el estilo, no el contenido) y devolvé un PERFIL DE VOZ en JSON. Inferí SOLO de lo que se ve en los mensajes; si algo no se puede saber, dejalo vacío. Funciona en cualquier idioma.
+{
+ "summary": "1-2 frases: cómo escribe/habla esta persona (su estilo)",
+ "languages": [{"name":"Español","pct":90},{"name":"Inglés","pct":10}],
+ "dialect": [{"name":"Mexicano","pct":70},{"name":"Neutro","pct":30}],
+ "tone": ["directo","informal","usa humor"],
+ "traits": {"brevity":"muy corto","emoji":"poco","formality":"informal","laughs":"jaja"}
+}
+Reglas: "languages" = idiomas que usa y en qué proporción (deben sumar ~100). "dialect" = dialecto/nacionalidad inferido por la jerga y modismos (voseo, "che", "boludo" → argentino; "pe", "causa", "bacán", "chévere" → peruano; "cara", "mano", "beleza" → brasileño; etc.), con porcentajes que sumen ~100. "tone" = 3-6 rasgos. "brevity" = muy corto|corto|medio|largo. "emoji" = nada|poco|mucho. "formality" = informal|neutro|formal. Devolvé SOLO el JSON.
+
+MENSAJES:
+${sample}`
+  const r = await llm(prompt, { json: true, chain: autopilotChain(), temperature: 0.2, bypassCap: true, task: "voice-profile" }).catch(() => null)
+  if (r && typeof r === "object" && (r.languages || r.dialect || r.summary)) { const out = { ...r, updated: Date.now() }; saveJson(VOICE(), out); return out }
+  return null
+}
+
 // 🛡️ PROVOCACIONES QUE EL ASISTENTE MANEJA SIEMPRE (nunca se escalan). El clasificador LLM es flaky y escala "¿sos un bot?"
 // aunque el prompt diga que no → este pre-filtro DETERMINISTA lo ataja antes de gastar el LLM. (Regex de DETECCIÓN, no de
 // respuesta: no se hardcodea ninguna frase que se envíe — solo se reconoce el tipo de mensaje. Cubre es/en/pt/etc por keywords.)
