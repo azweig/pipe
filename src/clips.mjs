@@ -6,6 +6,8 @@ import { llm, visionLLM } from "./lib/llm.mjs"
 import { transcribeWhisper, whisperAvailable } from "./lib/whisper.mjs"
 import { readFileSync, existsSync, statSync } from "fs"
 import { join } from "path"
+import { lookup } from "dns/promises"
+import net from "net"
 import { loadEnv } from "./lib/env.mjs"
 loadEnv() // keys de IA (visión) desde .env cuando se corre suelto; el cron ya las hereda del daemon
 
@@ -35,16 +37,53 @@ export function clipKind(m) {
   return "text"
 }
 
+// ── guardia anti-SSRF: las URLs de las notas las pega el usuario (arbitrarias). Antes de fetchearlas verificamos que el host NO
+// apunte a una IP privada/reservada/loopback/metadata. Resolvemos DNS y chequeamos TODAS las IPs → mata el DNS-rebinding (un host
+// público que resuelve a 127.0.0.1 / 169.254.169.254 / 10.x para pivotear al metadata de la nube o a servicios internos: Ollama, gateway).
+function isBlockedIp(ip) {
+  const t = net.isIP(ip)
+  if (t === 4) {
+    const p = ip.split(".").map(Number)
+    return p[0] === 0 || p[0] === 10 || p[0] === 127 || (p[0] === 169 && p[1] === 254) ||
+      (p[0] === 172 && p[1] >= 16 && p[1] <= 31) || (p[0] === 192 && p[1] === 168) ||
+      (p[0] === 100 && p[1] >= 64 && p[1] <= 127) || p[0] >= 224 // CGNAT / multicast / reservado
+  }
+  if (t === 6) {
+    const h = ip.toLowerCase()
+    if (h === "::1" || h === "::") return true
+    if (/^(fe80|fc|fd)/.test(h)) return true // link-local / ULA
+    const m = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/); if (m) return isBlockedIp(m[1]) // IPv4-mapeada en IPv6
+    return false
+  }
+  return true // no es una IP válida → bloquear por las dudas
+}
+async function assertPublicUrl(raw) {
+  const u = new URL(raw) // lanza si es inválida
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("esquema no permitido")
+  const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase()
+  if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal")) throw new Error("host local")
+  if (net.isIP(host)) { if (isBlockedIp(host)) throw new Error("IP privada"); return }
+  const addrs = await lookup(host, { all: true }) // best-effort: chequea las IPs resueltas (queda una ventana TOCTOU mínima, aceptable acá)
+  if (!addrs.length || addrs.some((a) => isBlockedIp(a.address))) throw new Error("host resuelve a IP privada")
+}
+
 // baja el <title>/og:title de una URL (best-effort, timeout corto). FB/IG suelen bloquear → devuelve "".
+// redirect:"manual" + re-validación en CADA salto → un redirect no puede rebotar a una IP interna (SSRF vía Location).
 async function fetchTitle(url) {
   try {
-    const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 6000)
-    const r = await fetch(url, { signal: ctrl.signal, redirect: "follow", headers: { "User-Agent": "Mozilla/5.0 (compatible; pipe/1.0)" } })
-    clearTimeout(to)
-    const html = (await r.text()).slice(0, 40000)
-    const og = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i) || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i)
-    const tt = html.match(/<title[^>]*>([^<]+)/i)
-    return (og?.[1] || tt?.[1] || "").replace(/\s+/g, " ").trim().slice(0, 160)
+    let cur = url
+    for (let hop = 0; hop < 5; hop++) {
+      await assertPublicUrl(cur)
+      const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 6000)
+      const r = await fetch(cur, { signal: ctrl.signal, redirect: "manual", headers: { "User-Agent": "Mozilla/5.0 (compatible; pipe/1.0)" } })
+      clearTimeout(to)
+      if (r.status >= 300 && r.status < 400 && r.headers.get("location")) { cur = new URL(r.headers.get("location"), cur).toString(); continue }
+      const html = (await r.text()).slice(0, 40000)
+      const og = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i) || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i)
+      const tt = html.match(/<title[^>]*>([^<]+)/i)
+      return (og?.[1] || tt?.[1] || "").replace(/\s+/g, " ").trim().slice(0, 160)
+    }
+    return ""
   } catch { return "" }
 }
 const domainOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, "") } catch { return "" } }

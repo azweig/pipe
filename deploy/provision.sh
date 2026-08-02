@@ -106,7 +106,9 @@ sleep 4
 
 # ── PIN inicial: detrás de Caddy el cliente NO puede crear PIN (isLocal exige 127.0.0.1 sin XFF).
 #    Lo seteamos DESDE DENTRO del container (loopback = isLocal) y se lo entregamos al cliente. ──
-APP_PIN="$(shuf -i 100000-999999 -n1 2>/dev/null || echo $(( (RANDOM*RANDOM) % 900000 + 100000 )))"
+# 10 dígitos (keyspace 10^10). El default de 6 dígitos era brute-forceable rotando IPs; 10 lo hace inviable y sigue entrando en el pad numérico.
+# Bucle con $RANDOM (no `tr </dev/urandom | head`, que dispara SIGPIPE y aborta bajo `set -o pipefail`).
+APP_PIN=""; while [ "${#APP_PIN}" -lt 10 ]; do APP_PIN="${APP_PIN}${RANDOM}"; done; APP_PIN="${APP_PIN:0:10}"
 PIN_OK="$(docker compose exec -T -e APP_PIN="$APP_PIN" app node -e "fetch('http://127.0.0.1:3000/api/auth/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:process.env.APP_PIN})}).then(r=>r.json()).then(j=>console.log(j.ok?'ok':(j.error||'fail'))).catch(e=>console.log('ERR '+e.message))" 2>/dev/null | tr -d '\r')"
 [ "$PIN_OK" = "ok" ] || echo "  ⚠ no se pudo fijar el PIN automáticamente ($PIN_OK) — el cliente deberá crearlo por túnel local"
 
@@ -115,6 +117,16 @@ mkdir -p "$CADDY_D"
 cat > "$CADDY_D/$TENANT.caddy" <<EOF
 $SUBDOMAIN {
     encode zstd gzip
+    header {
+        # Endurecimiento en el borde (defensa en profundidad; la app ya emite CSP/XFO/nosniff — esto los refuerza y oculta el server).
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        -Server
+        # HSTS: opt-in a propósito. Descomentá SOLO si el subdominio va SIEMPRE por HTTPS (el navegador lo recuerda meses; es difícil de
+        # revertir y puede dejar afuera a un cliente si algún día servís HTTP). Con Caddy + TLS automático suele ser seguro.
+        # Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
     reverse_proxy 127.0.0.1:$APP_PORT
 }
 EOF

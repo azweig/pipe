@@ -70,9 +70,27 @@ function recordFail(ip) {
   }
 }
 
+// ── defensa contra fuerza-bruta DISTRIBUIDA (rotar IPs evade el límite por-IP) ──
+// El rate-limit de arriba es por-IP: un atacante con miles de IPs (botnet/proxies) lo esquiva y ataca los 6 dígitos en horas.
+// Contador GLOBAL de fallos en ventana: superado el umbral, se activa un cooldown que frena TODO intento remoto → colapsa el
+// throughput del atacante. NO es un DoS para el dueño: SIEMPRE le queda el túnel SSH local (isLocal), que ni pasa por el PIN.
+let gFails = [], gLockUntil = 0
+const gThresh = () => +process.env.AUTH_GLOBAL_THRESH || 50 // dinámico → los tests lo ajustan; prod = 50 fallos / 10 min dispara el cooldown
+const G_WIN = 10 * 60000, G_LOCK = 30000
+const globalLocked = () => Date.now() < gLockUntil
+function recordGlobalFail() {
+  const now = Date.now()
+  gFails = gFails.filter((t) => now - t < G_WIN)
+  gFails.push(now)
+  if (gFails.length >= gThresh()) { gLockUntil = now + G_LOCK; gFails = [] } // dispara cooldown y resetea → si el ataque continúa, se re-arma solo
+}
+// para los tests: limpiar TODO el estado de rate-limit en memoria (per-IP + global) entre casos
+export function __resetLimits() { attempts.clear(); gFails = []; gLockUntil = 0 }
+
 export function login(pin, ip) {
+  if (globalLocked()) return { error: "Demasiados intentos en el sistema. Esperá unos minutos (o entrá por el túnel local)." }
   if (rateLimited(ip)) return { error: "Demasiados intentos fallidos. Esperá 15 minutos." }
-  if (!verifyPin(pin)) { recordFail(ip); return { error: "PIN incorrecto." } }
+  if (!verifyPin(pin)) { recordFail(ip); recordGlobalFail(); return { error: "PIN incorrecto." } }
   attempts.delete(ip)
   const token = randomBytes(32).toString("hex") // 256 bits aleatorios: no adivinable
   sessions()[token] = { created: Date.now(), expires: Date.now() + SESSION_TTL }

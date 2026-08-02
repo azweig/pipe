@@ -16,6 +16,7 @@ services:
       BRIDGES_ENABLED: "whatsapp"   # solo el bridge que trae el stack → /link no ofrece canales sin bridge (colgarían). Agregá más acá si sumás bridges.
       SECRETS_KEY: "${SECRETS_KEY}"
       TENANT: "${TENANT}"
+      TRUSTED_HOSTS: "${SUBDOMAIN}"   # allowlist anti DNS-rebinding: hostAllowed() SOLO se activa con esta var → el tenant responde únicamente a su subdominio
       HOST: "0.0.0.0"          # bindea a todas las interfaces DENTRO del container (Docker publica a 127.0.0.1:${APP_PORT} → Caddy → gate PIN)
       OPENAI_API_KEY: "${MANAGED_OPENAI_KEY}"   # IA MANAGED por defecto (out-of-box). El cliente puede pisarlo con su propia key (BYOK gana).
     volumes:

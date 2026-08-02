@@ -1,6 +1,6 @@
 // Servidor web + API de pipe. Sirve la SPA (public/) y expone /api/* en JSON. La app mobile reusará esta misma API.
 import { createServer } from "http"
-import { createHash } from "crypto"
+import { createHash, randomBytes, timingSafeEqual } from "crypto"
 import { readFileSync, existsSync, openSync, unlinkSync, statSync, writeFileSync, createReadStream } from "fs"
 import { loadEnv } from "./lib/env.mjs"
 import { spawn } from "child_process"
@@ -37,6 +37,9 @@ import { setNotSpam } from "./lib/spam.mjs"
 // SameSite=Strict: la cookie NO viaja en requests iniciados desde otros sitios → mata la superficie CSRF
 // (endpoints GET que gastan LLM o mutan, abusables por navegación). La PWA abre su propio origen → sin fricción.
 function setSid(res, token, ttl, secure) { res.setHeader("Set-Cookie", `sid=${token}; Path=/; Max-Age=${Math.floor(ttl / 1000)}; HttpOnly; SameSite=Strict${secure ? "; Secure" : ""}`) }
+// Comparación CONSTANT-TIME de tokens de webhook/ingest (Ko-fi, SMS, gpu-health). `===` corta en el primer byte distinto → filtra
+// el token byte a byte por timing. timingSafeEqual no lo hace; exige mismo largo (comparamos largo primero, sin ramificar por contenido).
+function tokEq(given, expected) { const a = Buffer.from(String(given || "")), b = Buffer.from(String(expected || "")); return a.length === b.length && timingSafeEqual(a, b) }
 function loginPage(pinSet, canSetup) {
   const setup = !pinSet
   return `<!doctype html><html lang=es><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>pipe.one</title>
@@ -189,12 +192,15 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`)
   const path = url.pathname
   // headers de seguridad en TODA respuesta (setHeader persiste a través de los writeHead posteriores).
-  // CSP: permite inline (el UI es todo inline) pero restringe connect-src a 'self' (sin exfiltración a hosts externos)
-  // y frame-ancestors 'none' (anti-clickjacking sobre las acciones de envío). Si algo del UI se rompe, se relaja.
+  // CSP: connect-src 'self' (sin exfiltración a hosts externos), frame-ancestors 'none' (anti-clickjacking sobre las acciones de envío).
+  // script-src EXPLÍCITO 'self' 'unsafe-inline': el UI usa handlers inline (onclick=) → 'unsafe-inline' es necesario, PERO al declararlo
+  // aparte quitamos data:/blob: como orígenes de SCRIPT (un <script src="data:…"> o blob-URL inyectado queda bloqueado; siguen valiendo
+  // para img/media vía default-src). Nota: mientras haya onclick inline no se puede sacar 'unsafe-inline' sin migrar todo a addEventListener;
+  // los escapes (esc/escj/enck en app.js) son la barrera XSS principal. Si algo del UI se rompe, se relaja.
   res.setHeader("X-Content-Type-Options", "nosniff")
   res.setHeader("X-Frame-Options", "DENY")
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin")
-  res.setHeader("Content-Security-Policy", "default-src 'self' data: blob: 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'")
+  res.setHeader("Content-Security-Policy", "default-src 'self' data: blob: 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'")
   try {
     // Assets PÚBLICOS para instalar la app (PWA/TWA→APK): manifest, iconos, service worker, assetlinks. NO son sensibles → sin PIN.
     if (/^\/(manifest\.json|sw\.js|favicon\.ico|icon-\d+\.png|pipe[\w.-]*\.apk)$/.test(path) || path.startsWith("/.well-known/")) {
@@ -253,7 +259,7 @@ const server = createServer(async (req, res) => {
       const raw = await rawBody(req, 256 * 1024)
       let d = null; try { d = JSON.parse(new URLSearchParams((raw || Buffer.alloc(0)).toString("utf8")).get("data") || "{}") } catch {}
       const tok = (process.env.KOFI_TOKEN || "").trim()
-      if (tok && d && d.verification_token === tok) { // procesa SOLO con token válido; si no, 200 silencioso (sin efecto, sin reintentos infinitos)
+      if (tok && d && tokEq(d.verification_token, tok)) { // procesa SOLO con token válido (constant-time); si no, 200 silencioso (sin efecto, sin reintentos infinitos)
         const who = String(d.from_name || "Alguien").slice(0, 60)
         const amount = d.amount ? `${d.amount} ${d.currency || ""}`.trim() : ""
         const kind = { Subscription: "se suscribió 💜", Commission: "encargó una comisión 🎨", "Shop Order": "compró en la tienda 🛍️" }[d.type] || "te invitó un café ☕"
@@ -272,7 +278,7 @@ const server = createServer(async (req, res) => {
     if (path === "/api/ingest/sms" && req.method === "POST") {
       const tok = (process.env.SMS_TOKEN || "").trim()
       const given = String(req.headers["x-token"] || (req.headers.authorization || "").replace(/^Bearer\s+/i, "")).trim()
-      if (!tok || given !== tok) return json(res, 401, { error: "token inválido" })
+      if (!tok || !tokEq(given, tok)) return json(res, 401, { error: "token inválido" })
       const b = await body(req)
       const items = Array.isArray(b.messages) ? b.messages : [b]
       let n = 0
@@ -295,7 +301,7 @@ const server = createServer(async (req, res) => {
     if (path === "/api/gpu-health" && req.method === "POST") {
       const tok = (process.env.GPU_HEALTH_TOKEN || "").trim()
       const given = String(req.headers["x-token"] || (req.headers.authorization || "").replace(/^Bearer\s+/i, "")).trim()
-      if (!tok || given !== tok) return json(res, 401, { error: "token inválido" })
+      if (!tok || !tokEq(given, tok)) return json(res, 401, { error: "token inválido" })
       const b = await body(req)
       try { (await import("fs")).writeFileSync("data/gpu-health.json", JSON.stringify({ ...b, at: Date.now() })) } catch {}
       const act = String(b.action || "none")
@@ -315,7 +321,7 @@ const server = createServer(async (req, res) => {
     if (path === "/oauth/google/start") {
       try {
         const redirectUri = `https://${req.headers.host}/oauth/google/callback`
-        const state = createHash("sha1").update(String(process.hrtime.bigint()) + Math.random()).digest("hex").slice(0, 24)
+        const state = randomBytes(16).toString("hex") // CSRF token OAuth: aleatorio criptográfico (no Math.random, que es predecible)
         const authUrl = goauth.gmailAuthUrl(redirectUri, state, url.searchParams.get("email") || "")
         res.writeHead(302, { "Set-Cookie": `goauth=${state}; Path=/; Max-Age=600; HttpOnly; SameSite=Lax; Secure`, Location: authUrl })
         return res.end()

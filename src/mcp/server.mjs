@@ -38,9 +38,10 @@ function serverRequest(mth, prms, timeoutMs = 120000) {
   })
 }
 // human-in-the-loop: si el cliente soporta elicitation, PIDE confirmación explícita antes de una acción outward.
-// Si no la soporta, se procede confiando en que el cliente ya aprueba cada tool-call (elicitation es defensa EXTRA).
+// Si NO la soporta → FAIL-CLOSED: no auto-aprobamos (antes: return true, cualquier cliente sin elicitation quedaba sin confirmación).
+// El dueño que confía en su cliente (que ya aprueba cada tool-call) puede optar por seguir sin elicitation con MCP_TRUST_CLIENT=1.
 async function confirmWithUser(message) {
-  if (!clientCaps.elicitation) return true
+  if (!clientCaps.elicitation) return process.env.MCP_TRUST_CLIENT === "1"
   const r = await serverRequest("elicitation/create", { message, requestedSchema: { type: "object", properties: { confirm: { type: "boolean", description: "Sí para confirmar" } }, required: ["confirm"] } })
   return !!(r && r.action === "accept" && r.content && r.content.confirm === true)
 }

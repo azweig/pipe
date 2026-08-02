@@ -201,7 +201,8 @@ function cleanDraft(s, ownerName = "", wantLang = "") {
 }
 // ⛡ BLINDAJE: nunca surfacear datos sensibles del owner (bancarios, compras, claves, direcciones, docs). Defensa en profundidad
 // (el drafter además tiene la regla dura). Filtra los fragmentos del cerebro que pinten sensibles antes de inyectarlos.
-const SENSITIVE_RE = /\b(tarjet[ao]|cbu|cvu|iban|swift|cuenta bancaria|n[uú]mero de cuenta|clave|contrase[ñn]a|password|\bpin\b|cvv|c[oó]digo de seguridad|dni\s*\d|pasaporte|compr[eé]|pagu[eé]|factura n|ped[ií] en|orden #?\d|direcci[oó]n:|vivo en|mi casa queda|\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b)\b/i
+// Multiidioma (ES/EN/PT): un denylist en un solo idioma es evadible. Cubre tarjetas, cuentas/routing, claves, documentos, direcciones y compras.
+const SENSITIVE_RE = /\b(tarjet[ao]|cart[aã]o|credit card|debit card|card number|cbu|cvu|iban|swift|routing number|sort code|cuenta bancaria|conta banc[aá]ria|bank account|account number|n[uú]mero de (cuenta|conta)|clave|contrase[ñn]a|senha|palavra-passe|password|passcode|\bpin\b|cvv|cvc|c[oó]digo de seguridad|security code|social security|\bssn\b|dni\s*\d|\bcpf\b|\bcnpj\b|pasaporte|passport|passaporte|compr[eé]|pagu[eé]|paid for|factura n|invoice #?\d|orden #?\d|order #?\d|ped[ií] en|direcci[oó]n:|address:|endere[çc]o:|vivo en|moro em|i live at|mi casa queda|\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b)\b/i
 // pregunta de CONOCIMIENTO GENERAL (no algo privado tuyo) → habilita el fallback a internet
 const GENERAL_Q_RE = /(qui[eé]n (gan|es|invent|dirig)|qu[eé] es |c[oó]mo se |cu[aá]ndo (es|fue|sale|juega)|cu[aá]nto (cuesta|mide|pesa|sale)|d[oó]nde queda|capital de|significa|resultado de|clima|pron[oó]stico|d[oó]lar hoy|precio del|qui[eé]n va a ganar|qui[eé]n crees que)/i
 
@@ -551,6 +552,10 @@ export async function considerReply(key, { dryRun = false, force = false, rows: 
   //   b) si es (casi) idéntico a algo que ya mandé en este hilo → no repetir, escalar (mata el loop por contenido, no solo por contador)
   if (repeatsRecent(draft, rows.filter((r) => r.dir === "out").slice(-6).map((r) => r.text || "")))
     return record(key, last, { action: "escalate", reason: "iba a repetir casi lo mismo que ya dije — seguí vos", draft }, dryRun, false)
+  //   c) ⛡ BLINDAJE DE SALIDA: nunca AUTO-ENVIAR un texto con datos sensibles (tarjeta/CBU/clave/documento/dirección…), en cualquier idioma.
+  //   El filtro de ENTRADA (SENSITIVE_RE sobre el RAG) es evadible y no ve el texto final; este chequea el BORRADOR que saldría → si algo
+  //   sensible se coló (propio o de un tercero del cerebro), escala al humano en vez de mandarlo solo. Última línea antes del envío.
+  if (SENSITIVE_RE.test(draft)) return record(key, last, { action: "escalate", reason: "el borrador incluía datos que parecen sensibles — mejor mandalo vos", draft }, dryRun, false)
   // 4) enviar (solo texto) — resolviendo el canal+target como el composer (default = último entrante). Sin esto el auto-routing fallaba (Unipile).
   const tgt = (threadTargets(key).targets || []).find((t) => t.isDefault) || (threadTargets(key).targets || [])[0]
   if (!tgt) return record(key, last, { action: "escalate", reason: "no sé por qué canal responderle" }, dryRun, false)

@@ -1,5 +1,5 @@
 // Service Worker de pipe: (1) cache del app-shell → cargas rápidas + offline, (2) Web Push rico (badge, foto, acciones, re-suscripción).
-const CACHE = "pipe-shell-v24"
+const CACHE = "pipe-shell-v25"
 const SHELL = ["/", "/index.html", "/app.js", "/i18n.js", "/manifest.json", "/icon-192.png", "/icon-512.png"]
 
 self.addEventListener("install", (e) => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL).catch(() => {}))) })

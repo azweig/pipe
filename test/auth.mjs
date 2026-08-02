@@ -14,7 +14,8 @@ process.chdir(dir)
 after(() => { process.chdir(orig); rmSync(dir, { recursive: true, force: true }) })
 
 process.env.RATE_MAP_PRUNE = "10"; process.env.RATE_MAP_MAX = "20" // umbrales bajos → el test de regresión del Map cebado corre rápido
-const { pinIsSet, setPin, changePin, login, validSession, logout, logoutAll, sessionCount } = await import("../src/lib/auth.mjs")
+process.env.AUTH_GLOBAL_THRESH = "100000" // desactiva el soft-lock global en los tests per-IP (que ceban cientos de fallos); un test dedicado lo baja aparte
+const { pinIsSet, setPin, changePin, login, validSession, logout, logoutAll, sessionCount, __resetLimits } = await import("../src/lib/auth.mjs")
 
 test("PIN: sin configurar al inicio", () => {
   assert.equal(pinIsSet(), false)
@@ -72,6 +73,16 @@ test("rate-limit REGRESIÓN: Map cebado > umbral NO desactiva el bloqueo, ni eva
   assert.match(login("000000", v).error, /Demasiados|Esperá/i, "el 6º sigue bloqueado tras cebar el Map (rate-limit vivo)")
   // y un atacante YA bloqueado no pierde su bloqueo por el evict (aunque mande el PIN correcto)
   assert.match(login("123456", "prime-0").error, /Demasiados|Esperá/i, "un IP bloqueado sigue bloqueado (el evict no evapora bloqueos)")
+})
+
+test("rate-limit GLOBAL: fuerza-bruta DISTRIBUIDA (rotar IPs) dispara un cooldown que frena hasta el PIN correcto", () => {
+  __resetLimits()
+  process.env.AUTH_GLOBAL_THRESH = "50" // bajamos el umbral solo para este caso
+  // 50 fallos desde IPs DISTINTAS (1 c/u → nunca disparan el límite POR-IP) ceban el contador global
+  for (let i = 0; i < 50; i++) login("000000", "dist-" + i)
+  // ahora TODO intento (incluso con el PIN CORRECTO y una IP nueva) queda frenado por el cooldown global
+  assert.match(login("654321", "brand-new-ip").error, /sistema|Esperá/i, "el cooldown global frena a cualquier IP")
+  process.env.AUTH_GLOBAL_THRESH = "100000"; __resetLimits() // restaurar → no afecta a los tests siguientes
 })
 
 test("logoutAll: cierra TODAS las sesiones (celu perdido/robado)", () => {

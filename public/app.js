@@ -84,6 +84,10 @@ const enck = (x) => encodeURIComponent(String(x == null ? "" : x)).replace(/[!'(
 // entidad HTML (&quot;, &#34;…) puede decodificarse a un delimitador y salirse de la string. Es el idioma correcto para JS-en-atributo
 // (esc() SOLO es un no-op contra XSS ahí: la decodificación de entidades corre ANTES que el parser JS y deshace el escape).
 const escj = (x) => esc(JSON.stringify(x == null ? "" : x))
+// escCss: valor SEGURO dentro de CSS url('...') en un atributo style="". Igual que escj para JS, esc() NO alcanza acá: el HTML
+// decodifica las entidades del atributo ANTES de que el parser CSS lo lea, deshaciendo el escape. Quitamos comillas/paréntesis/backslash
+// (los caracteres con los que se rompe de url()). Los valores reales son rutas /media/<hash> del CAS → esto no las altera.
+const escCss = (x) => String(x == null ? "" : x).replace(/["'()\\\s]/g, "")
 const $ = (h) => { const t = document.createElement("template"); t.innerHTML = h.trim(); return t.content.firstChild }
 const PAL = ["#c98d7f", "#c9a06a", "#7d7da6", "#8bb0a2", "#a98bb0", "#7fa9c4", "#c4a07f", "#9db07f"]
 const color = (n) => PAL[[...(n || "?")].reduce((a, c) => a + c.charCodeAt(0), 0) % PAL.length]
@@ -95,7 +99,7 @@ function ago(ts) { if (!ts) return ""; const d = new Date(ts), n = new Date(); c
   return d.toLocaleDateString("es", { day: "numeric", month: "short" }) }
 // avatar con foto LAZY: muestra iniciales al toque y la foto entra cuando carga (loading=lazy → no baja las de fuera de pantalla)
 function avatar(name, photo, cls = "") {
-  if (photo) return `<div class="av ${cls}" style="background:${color(name)}">${esc(initials(name))}<img src="${photo}" loading="lazy" decoding="async" alt="" onload="this.style.opacity=1" onerror="this.remove()"></div>`
+  if (photo) return `<div class="av ${cls}" style="background:${color(name)}">${esc(initials(name))}<img src="${esc(photo)}" loading="lazy" decoding="async" alt="" onload="this.style.opacity=1" onerror="this.remove()"></div>`
   return `<div class="av ${cls}" style="background:${color(name)}">${esc(initials(name))}</div>` }
 const ORB = `<div class="dot"></div>`
 const ORB2 = (t) => `<div class="row" style="justify-content:center;gap:8px">${ORB}<span class="sb">${t}</span></div>`
@@ -1552,7 +1556,7 @@ window.aiSearchRun = async () => {
   if (r.type === "find") { // "memes de messi", "documentación de globex" → resultados directos, sin síntesis
     const rows = (r.results || []).map((m) => {
       const label = m.filename || m.text || m.mediaType || "archivo"
-      const thumb = /image/i.test(m.mediaType || "") && m.media ? `<div class="ai-thumb" style="background-image:url('${m.media}')"></div>` : `<div class="ai-thumb ai-file">${m.filename ? "📄" : "🖼"}</div>`
+      const thumb = /image/i.test(m.mediaType || "") && m.media ? `<div class="ai-thumb" style="background-image:url('${escCss(m.media)}')"></div>` : `<div class="ai-thumb ai-file">${m.filename ? "📄" : "🖼"}</div>`
       return `<div class="ai-res" onclick="go('#conv/${enck(m.key)}')">${thumb}<div class="ai-res-tx"><b>${esc(String(label).slice(0, 80))}</b><span>${esc(m.name || "")} · ${ago(m.ts)}</span></div></div>`
     }).join("")
     const n = (r.results || []).length
@@ -1594,10 +1598,10 @@ window.cycleSpeed = (btn) => { const m = btn.parentElement.querySelector("audio,
 const spdVideo = (media) => `<div style="position:relative;display:inline-block;line-height:0">${media}<button onclick="cycleSpeed(this)" title="Velocidad" style="position:absolute;top:8px;right:8px;background:rgba(0,0,0,.55);color:#fff;border:0;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;line-height:1.35;cursor:pointer">1x</button></div>`
 const spdAudio = (media) => `<div style="display:flex;align-items:center;gap:8px">${media}<button onclick="cycleSpeed(this)" title="Velocidad" style="background:var(--bg,#eef);color:var(--accent);border:1px solid var(--line);border-radius:999px;padding:5px 10px;font-size:12px;font-weight:700;cursor:pointer;flex:none">1x</button></div>`
 function mediaHtml(it) { if (!it.media) return ""
-  if (it.mediaType === "image") return `<img src="${it.media}" alt="Imagen del mensaje" loading="lazy" style="max-width:230px;border-radius:12px;display:block;cursor:pointer" onclick="window.open('${it.media}')" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'small muted',textContent:'🖼 imagen no disponible'}))">`
-  if (it.mediaType === "video") return spdVideo(`<video src="${it.media}" controls preload="none" style="max-width:250px;border-radius:12px;display:block"></video>`)
-  if (it.mediaType === "audio") return spdAudio(`<audio src="${it.media}" controls preload="metadata" style="max-width:200px;display:block"></audio>`)
-  return `<a href="${it.media}" target="_blank" class="row" style="padding:9px 11px;background:#fff;border-radius:10px;text-decoration:none;color:inherit;gap:9px;min-width:180px"><span style="font-size:22px">📄</span><div style="min-width:0"><div class="sb small" style="word-break:break-word">${esc(it.filename || it.text || "Documento")}</div><div class="tiny" style="color:var(--accent)">Abrir / descargar</div></div></a>` }
+  if (it.mediaType === "image") return `<img src="${esc(it.media)}" alt="Imagen del mensaje" loading="lazy" style="max-width:230px;border-radius:12px;display:block;cursor:pointer" onclick="window.open(${escj(it.media)})" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'small muted',textContent:'🖼 imagen no disponible'}))">`
+  if (it.mediaType === "video") return spdVideo(`<video src="${esc(it.media)}" controls preload="none" style="max-width:250px;border-radius:12px;display:block"></video>`)
+  if (it.mediaType === "audio") return spdAudio(`<audio src="${esc(it.media)}" controls preload="metadata" style="max-width:200px;display:block"></audio>`)
+  return `<a href="${esc(it.media)}" target="_blank" class="row" style="padding:9px 11px;background:#fff;border-radius:10px;text-decoration:none;color:inherit;gap:9px;min-width:180px"><span style="font-size:22px">📄</span><div style="min-width:0"><div class="sb small" style="word-break:break-word">${esc(it.filename || it.text || "Documento")}</div><div class="tiny" style="color:var(--accent)">Abrir / descargar</div></div></a>` }
 const audioSum = (it) => it.audioSummary && it.summary ? `<div class="aud-sum">${esc(it.summary)}</div>` : ""
 const convContent = (it) => it.covert // modo encubierto: mostrás el texto DESCIFRADO + badge para ver el poema original (lo que ve WhatsApp)
   ? `${fmtText(it.covert.text)}<div class="tiny" style="opacity:.7;margin-top:3px;cursor:pointer;color:var(--accent)" onclick='event.stopPropagation();covertReveal(${escj(it.id)})'>🕊️ descifrado · ver original</div>`
