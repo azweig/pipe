@@ -1,0 +1,8 @@
+node_modules/
+data/
+auth/
+vault/
+media/
+public/vendor/
+**/*.min.js
+wa-go/

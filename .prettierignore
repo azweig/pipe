@@ -1,0 +1,11 @@
+node_modules/
+data/
+auth/
+vault/
+media/
+secrets/
+public/vendor/
+**/*.min.js
+wa-go/
+package-lock.json
+docs/openapi.json

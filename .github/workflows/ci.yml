@@ -12,7 +12,13 @@ jobs:
         with:
           node-version: 20   # pinneado: Node 25 rompe Baileys + ABI de better-sqlite3
       - run: npm ci || npm install
-      - name: unit + characterization suite (120 tests, portable)
+      - name: lint (first pass — not yet gating)
+        run: npm run lint
+        continue-on-error: true
+      - name: dependency audit (high+)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+      - name: unit + characterization suite (portable)
         run: npm test
       - name: coverage (unit)
         run: npm run test:coverage
