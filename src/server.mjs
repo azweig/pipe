@@ -25,6 +25,7 @@ import * as maintenance from "./lib/maintenance.mjs"
 import * as mailArchive from "./lib/mail-archive.mjs"
 import { ocrCas, ocrEnabled } from "./lib/ocr.mjs"
 import { clipFlag, getMeta, delMeta, delMetaLike, rebuildStats, freeThreadMedia, restoreMedia, listNotes, noteCategories, noteJunkCount, noteAction, totalUnread } from "./lib/db.mjs"
+import { channelCatalog, bridgeNets, tokenNets } from "./lib/channels.mjs" // registro de canales (única fuente de verdad de qué canales hay + cómo se vinculan)
 import { getMediaPolicy, setMediaDefault, setThreadMediaPolicy } from "./lib/media-policy.mjs"
 import { casStats, casTrashList } from "./lib/cas.mjs"
 import { storageStatus } from "./lib/quota.mjs"
@@ -465,6 +466,7 @@ const server = createServer(async (req, res) => {
       // ── vincular una red vía el bridge Matrix del server (whatsapp/instagram/facebook/telegram/linkedin) ──
       if (path === "/api/matrix-link" && req.method === "POST") { // POST: spawnea un proceso → NO debe ser alcanzable por un GET drive-by (<img src=…>)
         const net = (q.net || "whatsapp").replace(/[^a-z]/gi, "")
+        if (!bridgeNets().includes(net)) return json(res, 400, { error: "red no soportada" }) // solo redes del registro con connect matrix-bridge
         const flow = q.phone ? "phone" : "qr"
         const phone = (q.phone || "").replace(/[^0-9+]/g, "")
         try { unlinkSync(`/tmp/matrix_code_${net}`) } catch {}
@@ -477,6 +479,7 @@ const server = createServer(async (req, res) => {
       }
       if (path === "/api/matrix-link-token" && req.method === "POST") { // vincular por token/cookie (Discord=token)
         const net = (q.net || "").replace(/[^a-z]/gi, ""); const b = await body(req)
+        if (!tokenNets().includes(net)) return json(res, 400, { error: "red no soportada" }) // solo redes del registro con connect matrix-token
         try { unlinkSync(`/tmp/matrix_ok_${net}`) } catch {}
         const fd = openSync(`data/logs/matrix-link.log`, "a")
         spawn(process.execPath, ["src/matrix.mjs", "link-token", net], { env: { ...process.env, LINK_CRED: b.token || "" }, stdio: ["ignore", fd, fd], detached: true }).unref()
@@ -502,6 +505,7 @@ const server = createServer(async (req, res) => {
         if (existsSync(f)) { res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "no-store" }); return res.end(readFileSync(f)) }
         res.writeHead(404); return res.end()
       }
+      if (path === "/api/channels/catalog") return json(res, 200, { channels: channelCatalog() }) // catálogo (labels/marca/flujo de conexión) desde el registro — los clientes derivan la UI de acá
       if (path === "/api/status") { const st = integrationsStatus(); if (!secretOn && st.whatsapp) { // 🔒 números/cuentas secretos NO aparecen en config si está bloqueado (igual que /api/accounts)
         st.whatsapp.bridge = (st.whatsapp.bridge || []).filter((n) => !secret.isSecretNumber(n))
         st.whatsapp.baileys = (st.whatsapp.baileys || []).filter((b) => !secret.isSecretNumber(b.num)) } return json(res, 200, st) }

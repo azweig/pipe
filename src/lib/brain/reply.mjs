@@ -5,6 +5,7 @@ import { insertSent as dbInsertSent, threadMessagesTail as dbThreadMsgs, whatsap
 import { readFileSync } from "fs"
 import { join } from "path"
 import { getSlackToken, getSignal } from "../integrations.mjs" // config Slack/Signal conectada desde la Consola (cifrada) — para que los senders la vean, no solo el .env
+import { isSimpleSender } from "../channels.mjs" // registro de canales: qué canales tienen envío SIMPLE (target+texto) → dispatch genérico
 import { phoneOf, MY_NUMBERS } from "../thread.mjs"
 import { sendMatrix, sendMatrixAudio, sendMatrixMedia, sendMatrixSticker, startWhatsAppChat, roomLogin } from "../../matrix.mjs"
 import { unipileConfigured, unipileSend } from "../unipile-api.mjs"
@@ -40,6 +41,9 @@ function telegramSend(chatId, text) {
     p.on("error", (e) => { clearTimeout(to); resolve({ error: e.message }) })
   })
 }
+// mapa de senders SIMPLES por canal (keyed por el id del registro de canales). Agregar un canal de mensajería directo = su entrada
+// en channels.mjs (send:"simple") + su fn acá. sendReply despacha genérico contra esto en vez de un if por canal.
+const SIMPLE_SENDERS = { slack: slackSend, signal: signalSend, telegram: telegramSend }
 import { cleanMsg } from "./kernel/convo.mjs"
 
 // error claro cuando el envío por el bridge falla: si el número dueño de la sala está deslogueado, decí cuál revincular.
@@ -89,9 +93,11 @@ export async function sendReply(key, text, { channel, target } = {}) {
     const r = await sendMatrix(target, text)
     return r.ok ? { ok: true, channel: "whatsapp", ...dbInsertSent(key, "whatsapp", text) } : await waSendError(target)
   }
-  if (channel === "slack" && target) { const r = await slackSend(target, text); return r.ok ? { ok: true, channel: "slack", ...dbInsertSent(key, "slack", text) } : r }
-  if (channel === "signal" && target) { const r = await signalSend(target, text); return r.ok ? { ok: true, channel: "signal", ...dbInsertSent(key, "signal", text) } : r }
-  if (channel === "telegram" && target) { const r = await telegramSend(target, text); return r.ok ? { ok: true, channel: "telegram", ...dbInsertSent(key, "telegram", text) } : r }
+  // canales de mensajería SIMPLES (slack/signal/telegram/…): dispatch genérico por el registro de canales (mismo comportamiento que el if-por-canal previo)
+  if (target && isSimpleSender(channel) && SIMPLE_SENDERS[channel]) {
+    const r = await SIMPLE_SENDERS[channel](target, text)
+    return r.ok ? { ok: true, channel, ...dbInsertSent(key, channel, text) } : r
+  }
   // AUTO (sin destino): email si el key es email, si no la última sala de WhatsApp
   if (String(key).startsWith("email:")) {
     const last = lastEmailInThread(key)
