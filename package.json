@@ -25,7 +25,7 @@
     "prettier": "^3.4.2"
   },
   "dependencies": {
-    "@azure/msal-node": "^5.3.1",
+    "@azure/msal-node": "^5.4.3",
     "@notionhq/client": "^5.22.0",
     "@whiskeysockets/baileys": "^6.7.23",
     "better-sqlite3": "^12.11.1",
