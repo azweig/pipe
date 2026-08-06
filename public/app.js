@@ -813,11 +813,44 @@ window.faqSheet = () => {
     <div style="font-weight:700;font-size:13px;color:var(--muted);margin:12px 2px 8px">MENSAJERÍA</div>
     ${card("whatsapp")}`)
 }
+// CIERRE DEL LOOP DEL REGISTRO DE CANALES: el server publica /api/channels/catalog (única fuente de verdad). CONN_PROV son las tarjetas
+// CURADAS (con guías/subtítulos ricos); esto sólo AGREGA los canales del registro que el web todavía no conoce → un canal nuevo en el
+// server aparece solo, sin editar el front. 0 cambio de comportamiento hoy (CONN_PROV ya cubre todo el registro).
+let _chCat = null
+async function channelCatalog() { if (_chCat) return _chCat; try { const r = await api("/api/channels/catalog"); _chCat = (r && r.channels) || [] } catch { _chCat = [] } return _chCat }
+const CAT_CAT = { messaging: "telefonia", email: "correo", calendar: "trabajo", files: "trabajo", notes: "trabajo" }
+// vincular un canal del catálogo que NO tiene tarjeta curada — despacho GENÉRICO por connect.method (reusa el flujo del bridge/integración).
+window.connCatalog = async (id) => {
+  const c = (await channelCatalog()).find((x) => x.id === id); if (!c || !c.connect) return
+  const m = c.connect.method
+  if (m === "matrix-bridge") return bridgeConnectSheet(c.connect.net, c.label)
+  if (m === "matrix-token") return discordSheet ? discordSheet() : null
+  if (m === "telegram-login") return tgSheet()
+  if (m === "integration") return c.connect.provider === "signal" ? signalSheet() : slackSheet()
+  return serverGuide(id)
+}
+// hoja de vinculación GENÉRICA por bridge Matrix (para cualquier `net` del registro) — reusa netPoll, sin tocar waSheet/waLink.
+window.bridgeConnectSheet = (net, label) => {
+  openSheet(`<button class="cfg-back" onclick="addConnectionSheet('todos')">${IC_BACK}Conexiones</button>
+  <h2 style="margin:6px 0 4px">${esc(label || net)}</h2>
+  <div class="sub" style="margin:0 0 12px">Vinculá por QR o código (bridge del servidor).</div>
+  <input class="inp" id="brPhone" inputmode="tel" placeholder="+código de país (opcional)" style="${CINP}">
+  <div style="display:flex;gap:8px"><button class="btn" style="flex:1" onclick="brLink('${esc(net)}',true)">Código por número</button><button class="btn ghost" style="flex:1" onclick="brLink('${esc(net)}',false)">QR</button></div>
+  <div id="brOut" style="margin-top:16px;text-align:center;min-height:44px"></div>`)
+}
+window.brLink = async (net, byPhone) => {
+  const v = byPhone ? (document.getElementById("brPhone").value || "").trim() : ""
+  document.getElementById("brOut").innerHTML = '<span class="tiny muted">Generando…</span>'
+  await post("/api/matrix-link?net=" + encodeURIComponent(net) + (byPhone && v ? "&phone=" + encodeURIComponent(v) : "")).catch(() => {})
+  netPoll(net, "brOut")
+}
 window.addConnectionSheet = (cat) => { _connCat = cat || "todos"; _renderConnPicker() }
 window.connTab = (id) => { _connCat = id; _renderConnPicker() }
-function _renderConnPicker() {
+async function _renderConnPicker() {
   const tabs = CONN_TABS.map(([id, l]) => `<button class="tchip${_connCat === id ? " on" : ""}" onclick="connTab('${id}')" style="flex:none">${l}</button>`).join("")
-  const tiles = CONN_PROV.filter((p) => _connCat === "todos" || p.cat === _connCat).map((p) => {
+  // auto-append: canales del registro que CONN_PROV no tiene todavía → tarjeta genérica que despacha por connect.method
+  const extra = (await channelCatalog()).filter((c) => !CONN_PROV.some((p) => p.id === c.id)).map((c) => ({ id: c.id, name: c.label, cat: CAT_CAT[c.kind] || "trabajo", chan: c.id, sub: "Del registro de canales", status: c.connect?.method === "server" ? "server" : "ready", _cat: true }))
+  const tiles = CONN_PROV.concat(extra).filter((p) => _connCat === "todos" || p.cat === _connCat).map((p) => {
     const ic = (p.chan && chanIcon(p.chan)) || (p.emoji ? `<span style="font-size:20px">${p.emoji}</span>` : IC_PHONE)
     const on = p.status !== "soon"
     const act = p.status === "server" ? `serverGuide('${p.id}')` : `connOpen('${p.id}')`
