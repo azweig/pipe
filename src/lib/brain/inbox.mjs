@@ -70,7 +70,7 @@ export function listThreads({ limit = 200 } = {}, { cache = true } = {}) {
   const bucketOf = (r, kind, canon, jid, name, grp) => {
     if (spamS.has(String(jid).toLowerCase()) || spamS.has(String(r.key).replace(/^email:/, "").toLowerCase())) return "spam" // remitente marcado spam por el usuario
     if (cats[r.key]) return CATMAP[cats[r.key]] || "other" // categoría manual manda
-    // 🛡️ TUS PROPIAS cuentas conectadas → NUNCA spam (es tu inbox). Antes hilos de hola@pipe.one / ventas@… salían spam y se ocultaban.
+    // 🛡️ TUS PROPIAS cuentas conectadas → NUNCA spam (es tu inbox). Antes hilos de hola@tudominio.com / ventas@… salían spam y se ocultaban.
     const own = MY_EMAILS.has(String(jid || "").toLowerCase()) || MY_EMAILS.has(String(r.key || "").replace(/^email:/, "").toLowerCase())
     if (kind !== "group" && !own && llmSpam(r.key) && !notSpam(r.key)) return "spam" // veredicto LLM (capa 2), salvo que el usuario lo haya des-marcado
     if (kind === "self") return "other"

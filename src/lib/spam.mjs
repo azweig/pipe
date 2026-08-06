@@ -14,7 +14,7 @@ import { withLock } from "./lock.mjs"
 
 // SOLO remitentes REALMENTE automáticos/de difusión. NO metemos prefijos de rol legítimos (hello@, team@, info@, hola@, contacto@,
 // ventas@, sale@…) porque muchísima correspondencia REAL de negocios llega de ahí → marcarlos ocultaba emails legítimos (incl. las
-// cuentas propias del dueño, ej. hola@pipe.one). Mejor un falso NEGATIVO (una promo que se cuela) que perder emails reales.
+// cuentas propias del dueño, ej. hola@tudominio.com). Mejor un falso NEGATIVO (una promo que se cuela) que perder emails reales.
 const BULK_SENDER = /noreply|no-reply|donotreply|do-not-reply|no_reply|notifications?@|newsletter|mailer-daemon|marketing@|@(mail|email|news|e|em|mailer|newsletter|marketing)\.|@\S*(mailchimp|substack|sendgrid|hubspot|intercom|klaviyo|shopify|constantcontact|sendinblue|brevo|mailgun|amazonses|sparkpost)/i
 const PROMO_WORDS = /\b(unsubscribe|desuscrib\w*|darte de baja|dejar de recibir|view in browser|ver en (el )?navegador|black ?friday|cyber ?(monday|day)|hot ?sale|liquidaci[oó]n|promoci[oó]n|promo|ofertas?|descuentos?|exclusiv\w*|cup[oó]n|sorteo|gratis)\b/i
 const BRANDS = /\b(temu|shein|aliexpress|falabella|mallplaza|ticketmaster|ripley|plazavea|oechsle|promart|linio|platanitos|gapfactory)\b/i
