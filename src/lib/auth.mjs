@@ -34,7 +34,7 @@ export function changePin(oldPin, newPin, ip, keepToken) {
   return r
 }
 
-function verifyPin(pin) {
+export function verifyPin(pin) { // exportado: secret.mjs lo usa para exigir que el 2º PIN sea DISTINTO del principal
   const p = loadJ(PIN_FILE, null); if (!p) return false
   const h = scryptSync(String(pin || ""), p.salt, 64)
   const stored = Buffer.from(p.hash, "hex")

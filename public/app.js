@@ -1,8 +1,13 @@
 // pipe — SPA mobile-first. Rediseño estilo iOS/Jarvis. Router por hash + vistas + orb (voz/texto).
 const app = document.getElementById("app")
 let _reauthChecking = false
+// 🔒 CUENTAS SECRETAS: token de sesión secreta SOLO en memoria (nunca a disco). Al desbloquear con el 2º PIN se llena; al perder foco /
+// tocar "Ocultar" / 5 min inactivo se borra. Mientras está lleno, las requests lo mandan y el server devuelve también lo secreto.
+let _secretTok = null, _secretPinSet = false // _secretPinSet: hay un 2º PIN configurado → NO cachear/servir mensajes de local (el server filtra)
+window.secretOn = () => !!_secretTok
 const api = async (p, opts) => {
   try {
+    if (_secretTok) opts = { ...opts, headers: { ...(opts && opts.headers), "x-secret-token": _secretTok } } // 🔒 mientras esté desbloqueado
     const r = await fetch(p, opts)
     if (r.status === 401) {
       // NO recargar a ciegas: un 401 transitorio (refresh de fondo, red inestable) tiraba la PWA al start_url "/" = Home,
@@ -25,7 +30,8 @@ window.toggleSpell = () => {
 }
 // ── cache-first (SWR): última respuesta por URL en localStorage → apertura instantánea, revalida en bg ──
 const _lsGet = (k) => { try { return JSON.parse(localStorage.getItem("c:" + k) || "null") } catch { return null } }
-const _lsSet = (k, v) => { try { localStorage.setItem("c:" + k, JSON.stringify(v)) } catch {} }
+// 🔒 si hay PIN secreto (o estás desbloqueado), NO persistir bandeja/hilos (podrían traer contenido de una línea oculta → nunca al disco).
+const _lsSet = (k, v) => { if ((_secretTok || _secretPinSet) && /\/api\/thread/.test(k)) return; try { localStorage.setItem("c:" + k, JSON.stringify(v)) } catch {} }
 // ── CACHE PERSISTENTE (IndexedDB): guarda la HISTORIA COMPLETA de cada chat en el disco del navegador. De la red baja solo el
 // DELTA (mensajes con rev > el que ya tengo). Así los mensajes viejos NO se re-descargan nunca — abrir es instantáneo y offline. ──
 let _idbP
@@ -50,6 +56,7 @@ async function idbLoad(key) { // → { items:[ordenados por ts], meta }
   } catch { return { items: [], meta: null } }
 }
 async function idbSave(key, items, metaPatch) { // upsert de items (por id) + patch de la metadata del hilo
+  if (_secretTok || _secretPinSet) return // 🔒 con PIN secreto: NUNCA persistir mensajes en IndexedDB (una línea oculta no debe quedar en disco)
   try {
     const db = await _idb()
     const real = (items || []).filter((it) => it && it.id && !String(it.id).startsWith("opt-")) // los optimistas no se persisten
@@ -306,6 +313,7 @@ window.actDone = async (kind, id) => { const el = document.getElementById(`act-$
 // ══════════ CUENTA / CONFIGURACIÓN ══════════
 async function viewSettings() {
   render(skel(4), "cuenta")
+  if (typeof loadSecretState === "function" && window.secretOn && window.secretOn() && !window._secretState) await loadSecretState() // 🔒 estado de cuentas secretas para los checks
   const [acc, auth, llm, wa] = await Promise.all([api("/api/accounts").catch(() => ({})), api("/api/auth/status").catch(() => ({})), api("/api/llm-config").catch(() => ({})), api("/api/wa/status").catch(() => ({}))])
   window.__llm = llm || {}
   paintSettings(acc || {}, auth || {}, llm || {}, wa || {})
@@ -441,16 +449,22 @@ function renderCfgSection(id) {
     <button class="btn" onclick="aiEngineSheet()">Elegir motor y tokens</button>
     <div class="cfg-note">${IC_INFO}<div>Tus datos van al motor que elijas. Tus tokens quedan en tu servidor, nunca se muestran.</div></div>`
   } else if (id === "mail") {
-    const rows = (a.email || []).map((e) => `<div class="cfg-r"><div class="ric">${IC_MAIL}</div><div class="rm"><b>${esc(e.name || e.user)}</b><span>${e.name ? esc(e.user) + " · " : ""}${esc(e.host || "")}${e.count ? ` · ${e.count} correos` : ""}${e.last ? ` · ${ago(e.last)}` : ""}</span></div>${e.kind === "imap" ? `<button class="rx" onclick="removeEmail('${esc(e.label)}')" title="Quitar">✕</button>` : ""}</div>`).join("")
+    const sOn = window.secretOn && window.secretOn()
+    const rows = (a.email || []).map((e) => `<div class="cfg-r"><div class="ric">${IC_MAIL}</div><div class="rm"><b>${esc(e.name || e.user)}</b><span>${e.name ? esc(e.user) + " · " : ""}${esc(e.host || "")}${e.count ? ` · ${e.count} correos` : ""}${e.last ? ` · ${ago(e.last)}` : ""}</span></div>${sOn ? `<button class="rx" onclick="secretAccountToggle('email','${esc(e.label)}')" title="Cuenta secreta — se oculta con el PIN" style="font-size:12px;font-weight:700;color:${secretIsAccountSecret("email", e.label) ? "var(--accent)" : "var(--muted2)"};width:auto">${secretIsAccountSecret("email", e.label) ? "☑ secreta" : "☐ secreta"}</button>` : ""}${e.kind === "imap" ? `<button class="rx" onclick="removeEmail('${esc(e.label)}')" title="Quitar">✕</button>` : ""}</div>`).join("")
     body = ((a.email || []).length ? `<div class="cfg-card">${rows}</div>` : `<div class="cfg-empty"><b>Todavía no conectaste ningún correo</b><p>Tocá “Agregar cuenta de correo” para sumar tu primera bandeja.</p></div>`)
+      + (sOn ? "" : `<button class="btn ghost" onclick="secretUnlockConfig()">PIN</button>`)
       + `<button class="btn" onclick="addConnectionSheet('correo')">➕ Agregar cuenta de correo</button>
       <div class="cfg-note">${IC_INFO}<div>El hub trae solo lo reciente. ¿Falta un correo viejo (un cliente, una deuda)? Traelo del archivo por nombre, dominio o palabra.</div></div>
       <div class="cfg-card" style="padding:13px 15px"><div style="display:flex;gap:8px;align-items:center"><input id="bf-q" class="inp" placeholder="ej: soltrak, @viacorreo.com.ar" style="flex:1;margin:0" onkeydown="if(event.key==='Enter')runBackfill()"><button class="btn" style="width:auto;flex:none;padding:11px 18px" onclick="runBackfill()">Traer</button></div><div id="bf-status" class="tiny muted" style="margin-top:9px;line-height:1.4"></div></div>`
   } else if (id === "msg") {
     const nums = (a.messaging && a.messaging[0] && a.messaging[0].numbers) || []
-    const card = nums.length ? `<div class="cfg-card"><div class="cfg-chips">${nums.map((n) => `<span class="cfg-chip">${IC_PHONE} +${esc(n)}</span>`).join("")}</div></div>` : `<div class="cfg-empty"><b>Sin canales de mensajería</b><p>Tocá “Agregar canal” para vincular tu primer chat.</p></div>`
+    const sOn = window.secretOn && window.secretOn()
+    // cada número = una fila; desbloqueado muestra el check "cuenta secreta" (marcarlo oculta TODA su actividad, automático)
+    const rows = nums.map((n) => `<div class="cfg-r"><div class="ric">${IC_PHONE}</div><div class="rm"><b>+${esc(n)}</b><span>WhatsApp</span></div>${sOn ? `<button class="rx" onclick="secretWaToggle('${esc(n)}')" title="Cuenta secreta — se oculta con el PIN" style="font-size:12px;font-weight:700;color:${secretIsNumberSecret(n) ? "var(--accent)" : "var(--muted2)"};width:auto">${secretIsNumberSecret(n) ? "☑ cuenta secreta" : "☐ cuenta secreta"}</button>` : ""}</div>`).join("")
+    const card = nums.length ? `<div class="cfg-card">${rows}</div>` : `<div class="cfg-empty"><b>Sin canales de mensajería</b><p>Tocá “Agregar canal” para vincular tu primer chat.</p></div>`
+    const pinBtn = sOn ? "" : `<button class="btn ghost" onclick="secretUnlockConfig()">PIN</button>`
     const warn = (wa.loggedOut || []).length ? `<div class="cfg-note warn">${IC_ALERT}<div>WhatsApp se desconectó. Volvé a vincularlo para seguir recibiendo y enviando.</div></div>` : ""
-    body = card + warn + `<button class="btn" onclick="addConnectionSheet('telefonia')">➕ Agregar canal de mensajería</button>
+    body = card + pinBtn + warn + `<button class="btn" onclick="addConnectionSheet('telefonia')">➕ Agregar canal de mensajería</button>
       <button class="btn ghost" onclick="waImportSheet()"><span class="ei">📤</span>Importar historial de WhatsApp</button>
       <div class="cfg-note">${IC_INFO}<div>¿Tenés chats viejos de WhatsApp? Exportalos desde la app (“Exportar chat”) y traelos acá — se suman sin duplicar.</div></div>`
   } else if (id === "send") {
@@ -1430,7 +1444,7 @@ function paintMensajes(rows) {
     <div style="flex:1;text-align:center;font-weight:700;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${mergeSel.size < 2 ? "Elegí 2 o más para unir" : `Se conserva <b>${esc(mergeTgt)}</b>`}</div>
     <button class="pill on" style="flex-shrink:0;padding:9px 16px${mergeSel.size >= 2 ? "" : ";opacity:.5"}" ${mergeSel.size >= 2 ? 'onclick="doMergeSelected()"' : "disabled"}>🔗 Unir (${mergeSel.size})</button></div>` : ""
   render(`<div class="screen inbox"${mergeSel ? ' style="padding-bottom:96px"' : ""}>
-    <div class="ibx-head"><h1>Bandeja</h1><div class="row" style="gap:6px;padding:0;background:none;box-shadow:none"><button class="esp-btn" onclick="mergeMode()" title="Unir contactos duplicados (la misma persona en varios hilos)">${mergeSel ? "✕ Unir" : "🔗 Unir"}</button><button class="esp-btn" onclick="groupsSheet()">🗂 Grupos</button></div></div>
+    <div class="ibx-head"><h1>Bandeja</h1><div class="row" style="gap:6px;padding:0;background:none;box-shadow:none">${window._secretBtn()}<button class="esp-btn" onclick="mergeMode()" title="Unir contactos duplicados (la misma persona en varios hilos)">${mergeSel ? "✕ Unir" : "🔗 Unir"}</button><button class="esp-btn" onclick="groupsSheet()">🗂 Grupos</button></div></div>
     <div class="ibx-search${q ? " has-q" : ""}${_aiSearch ? " ai" : ""}">
       <span class="ibx-si">${SVG.search}</span>
       <input id="ibxq" value="${esc(q)}" placeholder="${_aiSearch ? "Preguntá con IA: “¿qué acordé con Juan?”" : "Buscar por nombre, teléfono o email…"}" autocomplete="off" autocapitalize="off" spellcheck="false" oninput="onInboxSearch(this.value)" onkeydown="onSearchKey(event)">
@@ -1649,9 +1663,12 @@ function convBubble(it) {
   }
   // 🤖 respondido por el piloto automático → badge clickeable para calificar (como el "ver original" de la paloma)
   const autoBadge = it.auto ? `<div class="tiny" style="opacity:.75;margin-top:3px;cursor:pointer;color:var(--accent)" onclick='event.stopPropagation();autopilotFeedbackSheet(${escj(it.id)}, ${escj(it.text || "")})'>🤖 lo respondió el piloto · calificar</div>` : ""
+  // mensaje de una línea oculta (solo visible con el PIN): SOLO un fondo gris tenue para que VOS lo distingas. SIN candado ni palabra
+  // que delate que hay algo oculto (un tercero mirando no debe notar nada raro; el fondo gris no dice nada por sí solo).
+  const secStyle = it.secret ? "background:color-mix(in srgb, var(--accent, #6366f1) 12%, var(--bg2));" : "" // tinte violeta discreto (igual en las 3 apps); SIN candado ni palabra, no delata a un tercero
   const bubble = it.dir === "out"
-    ? `<div class="bubble out">${convContent(it)}${autoBadge}${timeEl(it)}</div>`
-    : `<div class="row" style="align-items:flex-end;gap:8px;margin:5px 0">${avatar(it.name, it.photo, "sm")}<div style="min-width:0"><div class="tiny sb" style="color:${color(it.name)};margin:0 4px 2px">${esc(it.name || "")}</div><div class="bubble in" style="margin:0">${convContent(it)}${timeEl(it)}</div></div></div>`
+    ? `<div class="bubble out" style="${secStyle}">${convContent(it)}${autoBadge}${timeEl(it)}</div>`
+    : `<div class="row" style="align-items:flex-end;gap:8px;margin:5px 0">${avatar(it.name, it.photo, "sm")}<div style="min-width:0"><div class="tiny sb" style="color:${color(it.name)};margin:0 4px 2px">${esc(it.name || "")}</div><div class="bubble in" style="margin:0;${secStyle}">${convContent(it)}${timeEl(it)}</div></div></div>`
   if (!fwdSel) { // fuera de modo selección: burbuja + botón ⋯ (Responder / Reenviar / Copiar), como WhatsApp
     const menuBtn = `<button onclick='msgMenu(${escj(it.id)})' aria-label="Opciones del mensaje" title="Responder · Reenviar · Copiar" style="border:0;background:transparent;color:var(--muted2);font-size:19px;line-height:1;padding:2px 5px;cursor:pointer;opacity:.5;flex-shrink:0;align-self:center">⋯</button>`
     return it.dir === "out"
@@ -1709,6 +1726,7 @@ function renderConv() {
     <div id="convHeader" style="position:sticky;top:0;z-index:24;background:var(--bg);margin:0 -16px 10px;padding:6px 16px 10px;border-bottom:1px solid var(--line)">
       <button class="back" onclick="go('#mensajes')" style="margin-bottom:4px">‹ Bandeja</button>
       <div class="row"><div class="row itemtap" style="flex:1;min-width:0;gap:10px" onclick="viewPerson('${enck(d.key)}')">${avatar(d.name, d.photo)}<div style="min-width:0"><div class="b" style="font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.name)} <span class="tiny muted">›</span></div>${d.email ? `<div class="tiny" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span class="muted">${esc(d.email)}</span>${d.account ? ` <span style="color:var(--accent)">→ ${esc(d.account)}</span>` : ""}</div>` : ""}<div class="sub">${(d.channels || []).map((c) => CH[c] || c).join(" · ") || ""} ${(d.channels || []).length > 1 ? "· unificados" : ""} · ${d.total} msgs</div></div></div>
+        <button class="pill" onclick="secretToggle()" title="${_secretTok ? 'Ocultar' : 'Ingresá tu PIN'}" style="flex-shrink:0;font-weight:700;${_secretTok ? "background:var(--accent);color:#fff" : ""}">${_secretTok ? 'Ocultar' : 'PIN'}</button>
         ${(canSend && d.covert) ? `<button id="covertBtn" onclick="covertToggle()" class="pill" title="Modo encubierto ON/OFF · la clave se configura en el perfil del contacto" style="flex-shrink:0;background:${window._covertOn ? "var(--accent)" : ""};color:${window._covertOn ? "#fff" : ""}">🕊️</button>` : ""}
         ${(canSend && !d.group) ? `<button onclick="autopilotSheet()" class="pill" title="Piloto automático — responder solo por este contacto" style="flex-shrink:0;background:${d.autopilot ? "var(--accent)" : ""};color:${d.autopilot ? "#fff" : ""}">🤖</button>` : ""}
         <button class="pill" onclick="selMode()" style="flex-shrink:0" title="Seleccionar mensajes para reenviar" aria-label="Seleccionar mensajes">↪</button>
@@ -2011,7 +2029,7 @@ window.covertReveal = (id) => {
 
 // ── IMÁGENES / VIDEOS: adjuntar desde el dispositivo o PEGAR del portapapeles → enviar por el bridge ──
 window.pickMedia = () => document.getElementById("mediaInput")?.click()
-window.onMediaPick = (input) => { const files = [...(input.files || [])]; input.value = ""; if (files.length) sendMediaFiles(files) }
+window.onMediaPick = (input) => { const files = [...(input.files || [])]; input.value = ""; if (files.length) handleMediaChoice(files) } // 📎 → selector collage/recorte (paridad con mobile)
 window.pickSticker = () => document.getElementById("stickerInput")?.click()
 window.onStickerPick = (input) => { const f = (input.files || [])[0]; input.value = ""; if (f) sendSticker(f) }
 async function sendSticker(file) { // 🩷 mandar una imagen como sticker (el server la convierte a webp 512×512)
@@ -2048,6 +2066,223 @@ async function sendMediaFile(file) {
   const r = await fetch("/api/send-media?" + qs.toString(), { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file }).then((x) => x.json()).catch(() => null)
   if (!r || r.error) { convState.items = (convState.items || []).filter((x) => x.id !== optId); convState.total = Math.max(0, (convState.total || 1) - 1); renderConv(); alert("No se pudo enviar: " + ((r && r.error) || "error")) }
   else if (r.media) { const it = (convState.items || []).find((x) => x.id === optId); if (it) { it.media = r.media; renderConv() } } // reemplaza el blob local por el del server (persistente)
+}
+
+// ══════════ 🖼️ EDICIÓN DE MEDIA: collage (canvas) + recortar (crop) + arrastrar (drag-drop) — paridad con la app mobile ══════════
+// Reutiliza sendMediaFile/sendMediaFiles (endpoint /api/send-media). El flujo: elegís/arrastrás/pegás → si son 2+ fotos, ofrezco
+// collage o enviarlas por separado; si es 1 foto, ofrezco recortarla; videos/mixto van directo.
+function _loadImg(file) { return new Promise((res, rej) => { const u = URL.createObjectURL(file); const i = new Image(); i.onload = () => res({ img: i, url: u }); i.onerror = () => { URL.revokeObjectURL(u); rej(new Error("img")) }; i.src = u }) }
+function _drawCover(ctx, img, x, y, w, h) { // cover-fit: llena la celda recortando el excedente (como en mobile)
+  const ir = img.width / img.height, cr = w / h; let sw, sh, sx, sy
+  if (ir > cr) { sh = img.height; sw = sh * cr; sx = (img.width - sw) / 2; sy = 0 } else { sw = img.width; sh = sw / cr; sx = 0; sy = (img.height - sh) / 2 }
+  ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h)
+}
+function _canvasToFile(cv, name) { return new Promise((res) => cv.toBlob((b) => res(b ? new File([b], name, { type: "image/jpeg" }) : null), "image/jpeg", 0.9)) }
+// COLLAGE: 2–6 fotos → una sola imagen en grilla (celdas cuadradas, última fila centrada si queda incompleta)
+async function makeCollage(files, { size = 1080, gap = 8, bg = "#ffffff" } = {}) {
+  const list = files.slice(0, 6)
+  const loaded = await Promise.all(list.map((f) => _loadImg(f).catch(() => null)))
+  const imgs = loaded.filter(Boolean); if (!imgs.length) return null
+  const n = imgs.length
+  const cols = n <= 1 ? 1 : n === 2 ? 2 : n === 4 ? 2 : 3
+  const rows = Math.ceil(n / cols)
+  const cell = (size - gap * (cols + 1)) / cols
+  const cw = size, ch = Math.round(gap * (rows + 1) + cell * rows)
+  const cv = document.createElement("canvas"); cv.width = cw; cv.height = ch
+  const ctx = cv.getContext("2d"); ctx.fillStyle = bg; ctx.fillRect(0, 0, cw, ch)
+  imgs.forEach((o, i) => {
+    const r = Math.floor(i / cols), c = i % cols
+    const inRow = Math.min(cols, n - r * cols)                          // cuántas hay en ESTA fila
+    const rowW = inRow * cell + (inRow - 1) * gap
+    const offX = (cw - rowW) / 2                                        // centrar fila incompleta
+    _drawCover(ctx, o.img, offX + c * (cell + gap), gap + r * (cell + gap), cell, cell)
+  })
+  loaded.forEach((o) => o && URL.revokeObjectURL(o.url))
+  return _canvasToFile(cv, "collage.jpg")
+}
+// RECORTAR: modal con la foto + rectángulo de recorte (mover + 4 esquinas). Devuelve un File recortado o null si cancelás.
+function cropImage(file) {
+  return new Promise((resolve) => {
+    _loadImg(file).then(({ img, url }) => {
+      const ov = document.createElement("div"); ov.style.cssText = "position:fixed;inset:0;z-index:10000;background:#0e0e14;display:flex;flex-direction:column"
+      const stage = document.createElement("div"); stage.style.cssText = "flex:1;display:flex;align-items:center;justify-content:center;padding:14px;overflow:hidden"
+      const wrap = document.createElement("div"); wrap.style.cssText = "position:relative;touch-action:none;line-height:0"
+      const im = document.createElement("img"); im.src = url; im.style.cssText = "display:block;max-width:92vw;max-height:74vh;user-select:none;-webkit-user-drag:none"
+      const bar = document.createElement("div"); bar.style.cssText = "display:flex;gap:10px;padding:12px 16px;justify-content:space-between;background:#15151f"
+      const btn = "flex:1;padding:12px;border-radius:12px;border:0;font-size:15px;font-weight:700;cursor:pointer"
+      bar.innerHTML = `<button id="_crCancel" style="${btn};background:#2a2a38;color:#eee">Cancelar</button><button id="_crOk" style="${btn};background:var(--accent,#6c63ff);color:#fff">✂️ Recortar y enviar</button>`
+      wrap.appendChild(im); stage.appendChild(wrap); ov.appendChild(stage); ov.appendChild(bar); document.body.appendChild(ov)
+      requestAnimationFrame(() => {
+        const dw = im.clientWidth, dh = im.clientHeight
+        const box = document.createElement("div"); box.style.cssText = "position:absolute;border:2px solid #fff;box-shadow:0 0 0 9999px rgba(0,0,0,.5);box-sizing:border-box;cursor:move"
+        let cx = dw * 0.08, cy = dh * 0.08, cw = dw * 0.84, ch = dh * 0.84
+        const apply = () => { box.style.left = cx + "px"; box.style.top = cy + "px"; box.style.width = cw + "px"; box.style.height = ch + "px" }
+        for (const pos of ["nw", "ne", "sw", "se"]) { const h = document.createElement("div"); h.dataset.h = pos; const yg = pos[0] === "n" ? "top:-9px" : "bottom:-9px", xg = pos[1] === "w" ? "left:-9px" : "right:-9px"; h.style.cssText = `position:absolute;width:18px;height:18px;background:#fff;border-radius:50%;${yg};${xg};cursor:${pos}-resize`; box.appendChild(h) }
+        wrap.appendChild(box); apply()
+        let drag = null // {mode:"move"|pos, sx,sy, cx,cy,cw,ch}
+        const clamp = () => { cw = Math.max(30, Math.min(cw, dw)); ch = Math.max(30, Math.min(ch, dh)); cx = Math.max(0, Math.min(cx, dw - cw)); cy = Math.max(0, Math.min(cy, dh - ch)) }
+        box.addEventListener("pointerdown", (e) => { e.preventDefault(); const h = e.target.dataset.h; drag = { mode: h || "move", sx: e.clientX, sy: e.clientY, cx, cy, cw, ch }; box.setPointerCapture?.(e.pointerId) })
+        wrap.addEventListener("pointermove", (e) => {
+          if (!drag) return; const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy
+          if (drag.mode === "move") { cx = drag.cx + dx; cy = drag.cy + dy }
+          else { const w = drag.mode[1] === "w"; const nn = drag.mode[0] === "n"
+            if (w) { cx = drag.cx + dx; cw = drag.cw - dx } else { cw = drag.cw + dx }
+            if (nn) { cy = drag.cy + dy; ch = drag.ch - dy } else { ch = drag.ch + dy } }
+          clamp(); apply()
+        })
+        wrap.addEventListener("pointerup", () => { drag = null })
+        const finish = (ok) => { try { document.body.removeChild(ov) } catch {} URL.revokeObjectURL(url)
+          if (!ok) return resolve(null)
+          const scX = img.naturalWidth / dw, scY = img.naturalHeight / dh
+          const cv = document.createElement("canvas"); cv.width = Math.max(1, Math.round(cw * scX)); cv.height = Math.max(1, Math.round(ch * scY))
+          cv.getContext("2d").drawImage(img, cx * scX, cy * scY, cw * scX, ch * scY, 0, 0, cv.width, cv.height)
+          _canvasToFile(cv, "recorte.jpg").then(resolve)
+        }
+        document.getElementById("_crCancel").onclick = () => finish(false)
+        document.getElementById("_crOk").onclick = () => finish(true)
+      })
+    }).catch(() => resolve(null))
+  })
+}
+// SELECTOR: decide collage / recortar / enviar según cuántas y qué tipo. Entra desde el picker 📎, arrastrar y (single) NO desde pegar.
+async function handleMediaChoice(files) {
+  if (!convState || convState.key === "self") return
+  const t = convState.target || {}
+  if (t.channel === "email") return alert("Por ahora las fotos/videos van por WhatsApp/Telegram/etc., no por email.")
+  files = [...files].filter((f) => f && f.size)
+  if (!files.length) return
+  const imgs = files.filter((f) => (f.type || "").startsWith("image/"))
+  const allImgs = imgs.length === files.length
+  window._pendingMedia = files
+  if (allImgs && files.length >= 2) {
+    openSheet(`<h2 style="margin:0 0 4px">${files.length} fotos</h2><div class="sub" style="margin:0 0 14px">¿Cómo las mando?</div>
+      <button class="btn" style="width:100%;margin-bottom:8px" onclick="_mediaCollage()">🧩 Hacer collage (1 imagen)</button>
+      <button class="btn ghost" style="width:100%" onclick="_mediaSeparate()">📤 Enviar por separado (${files.length})</button>`)
+  } else if (allImgs && files.length === 1) {
+    openSheet(`<h2 style="margin:0 0 4px">Foto</h2><div class="sub" style="margin:0 0 14px">¿Querés recortarla?</div>
+      <button class="btn" style="width:100%;margin-bottom:8px" onclick="_mediaCrop()">✂️ Recortar y enviar</button>
+      <button class="btn ghost" style="width:100%" onclick="_mediaSendAll()">📤 Enviar tal cual</button>`)
+  } else { sendMediaFiles(files) } // videos o mixto → directo
+}
+window._mediaCollage = async () => { const f = window._pendingMedia || []; closeSheet(); const c = await makeCollage(f).catch(() => null); if (c) sendMediaFile(c); else alert("No pude armar el collage.") }
+window._mediaSeparate = () => { const f = window._pendingMedia || []; closeSheet(); sendMediaFiles(f) }
+window._mediaSendAll = () => { const f = window._pendingMedia || []; closeSheet(); sendMediaFiles(f) }
+window._mediaCrop = async () => { const f = (window._pendingMedia || [])[0]; closeSheet(); if (!f) return; const c = await cropImage(f).catch(() => null); if (c) sendMediaFile(c) }
+// ARRASTRAR archivos a la conversación (drag-drop nativo del navegador). Overlay visual; solo activo dentro de un chat (no en 'self'/email).
+if (!window._dropBound) {
+  window._dropBound = true
+  const inConv = () => convState && convState.key !== "self" && (convState.target || {}).channel !== "email"
+  const hasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files")
+  const overlay = (show) => { let el = document.getElementById("dropOverlay"); if (!el) { el = document.createElement("div"); el.id = "dropOverlay"; el.style.cssText = "position:fixed;inset:0;z-index:9998;background:rgba(18,18,28,.72);display:none;align-items:center;justify-content:center;color:#fff;font-size:21px;font-weight:800;pointer-events:none;text-align:center"; el.innerHTML = "📎 Soltá para adjuntar<br><span style='font-size:14px;font-weight:500;opacity:.8'>varias fotos → collage · una → recortar</span>"; document.body.appendChild(el) } el.style.display = show ? "flex" : "none"; return el }
+  let depth = 0
+  window.addEventListener("dragenter", (e) => { if (!hasFiles(e) || !inConv()) return; e.preventDefault(); depth++; overlay(true) })
+  window.addEventListener("dragover", (e) => { if (!hasFiles(e) || !inConv()) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy" })
+  window.addEventListener("dragleave", (e) => { if (!hasFiles(e)) return; depth = Math.max(0, depth - 1); if (!depth) overlay(false) })
+  window.addEventListener("drop", (e) => { if (!hasFiles(e)) return; depth = 0; overlay(false); if (!inConv()) return; e.preventDefault(); const files = [...(e.dataTransfer.files || [])]; if (files.length) handleMediaChoice(files) })
+}
+
+// ══════════ 🔒 CUENTAS SECRETAS — botón PIN↔Ocultar, desbloqueo/creación del 2º PIN, out-of-focus lock ══════════
+let _secretIdle = null, _secretUnlockedAt = 0, _secretBlurTimer = null
+function _secretResetIdle() { if (!_secretTok) return; clearTimeout(_secretIdle); _secretIdle = setTimeout(() => secretLock(), 5 * 60000) } // 5 min inactivo en foco → bloquea
+// out-of-focus TOLERANTE: (1) gracia de 1 min desde que pusiste el PIN (los popups de Chrome/apps justo después roban el foco y NO deben
+// bloquear); (2) debounce de 6s: si el foco VUELVE enseguida (era un popup), se cancela; solo bloquea si te fuiste de verdad.
+function _scheduleSecretLock() {
+  if (!_secretTok || Date.now() - _secretUnlockedAt < 60000) return  // dentro del minuto de gracia → no bloquear
+  clearTimeout(_secretBlurTimer); _secretBlurTimer = setTimeout(() => { if (!document.hasFocus() || document.hidden) secretLock() }, 6000)
+}
+function _cancelSecretLock() { clearTimeout(_secretBlurTimer); _secretBlurTimer = null }
+async function secretUnlock() {
+  const st = await api("/api/secret/status").catch(() => null); if (!st) return
+  if (!st.pinSet) { // primera vez: crear el 2º PIN (distinto del de entrada)
+    const p1 = await _pinPrompt("Creá tu PIN", "6-12 dígitos, distinto al de entrada."); if (!p1) return
+    const r = await post("/api/secret/setup", { pin: p1 }); if (r && r.error) return alert(r.error)
+  }
+  const pin = await _pinPrompt("PIN", "Ingresá tu PIN"); if (!pin) return
+  const r = await post("/api/secret/unlock", { pin }); if (!r || r.error) return alert((r && r.error) || "PIN incorrecto")
+  _secretTok = r.token; _secretPinSet = true; _secretUnlockedAt = Date.now(); _secretResetIdle()
+  await loadSecretState()
+  _repaintForSecret()
+  const marked = (((window._secretState || {}).numbers || []).length) + (((window._secretState || {}).accounts || []).length)
+  if (!marked) secretManageSheet() // todavía no ocultaste ninguna cuenta → abrí el gestor para elegir cuál (así no hay que cazarlo en Config)
+}
+// GESTOR de cuentas ocultas: lista tus números de WhatsApp + cuentas de correo con un toggle. Toda la actividad de la marcada se oculta sin el PIN.
+window.secretManageSheet = async () => {
+  if (!_secretTok) return
+  const acc = await api("/api/accounts").catch(() => ({}))
+  await loadSecretState()
+  const nums = (acc.messaging && acc.messaging[0] && acc.messaging[0].numbers) || []
+  const emails = acc.email || []
+  const numRows = nums.map((n) => `<button class="btn ${secretIsNumberSecret(n) ? "" : "ghost"}" style="margin-bottom:6px;text-align:left" onclick="secretWaToggleSheet('${esc(n)}')">${secretIsNumberSecret(n) ? "☑" : "☐"}  WhatsApp +${esc(n)}</button>`).join("")
+  const emailRows = emails.map((e) => `<button class="btn ${secretIsAccountSecret("email", e.label) ? "" : "ghost"}" style="margin-bottom:6px;text-align:left" onclick="secretAccountToggleSheet('email','${esc(e.label)}')">${secretIsAccountSecret("email", e.label) ? "☑" : "☐"}  ${esc(e.name || e.user)}</button>`).join("")
+  openSheet(`<h2 style="margin:0 0 4px">Cuentas ocultas</h2><div class="sub" style="margin:0 0 12px">Marcá qué cuenta ocultar — toda su actividad se esconde sin el PIN.</div>
+    <div class="section-title" style="margin:0 0 6px">WhatsApp</div>${numRows || '<div class="sub" style="margin-bottom:8px">—</div>'}
+    <div class="section-title" style="margin:12px 0 6px">Correo</div>${emailRows || '<div class="sub" style="margin-bottom:8px">—</div>'}
+    <button class="btn" style="width:100%;margin-top:14px" onclick="closeSheet();secretLock()">Ocultar ahora</button>`)
+}
+async function _secretMark(path, body, want) {
+  const r = await post(path, body)
+  if (!r) { alert("No se pudo guardar (¿conexión?). Reintentá."); return false }
+  if (r.error) { if (r.error === "bloqueado") { alert("El PIN se cerró — ingresalo de nuevo."); await secretUnlock() } else alert(r.error); return false }
+  await loadSecretState()
+  if (want) { closeSheet(); location.hash = "#mensajes"; secretLock() } // marcaste una cuenta → esconder YA (vas a la bandeja bloqueado y desaparece)
+  else secretManageSheet() // desmarcaste → refrescá el gestor
+  return true
+}
+window.secretWaToggleSheet = async (n) => { const want = !secretIsNumberSecret(n); await _secretMark("/api/secret/wa", { number: n, secret: want }, want) }
+window.secretAccountToggleSheet = async (ch, ac) => { const want = !secretIsAccountSecret(ch, ac); await _secretMark("/api/secret/account", { channel: ch, account: ac, secret: want }, want) }
+function secretLock() {
+  if (!_secretTok) return
+  _secretTok = null; clearTimeout(_secretIdle)
+  post("/api/secret/lock", {}).catch(() => {})
+  try { for (const k of Object.keys(localStorage)) if (/^c:\/api\/thread/.test(k)) localStorage.removeItem(k) } catch {} // borra cualquier rastro cacheado
+  _repaintForSecret()
+}
+window.secretToggle = () => { _secretTok ? secretLock() : secretUnlock() }
+function _repaintForSecret() { route() } // re-pinta la vista ACTUAL con/sin el token — sin sacarte del hilo (la conversación se re-filtra por-mensaje; los secretos desaparecen si bloqueás, y NO te expulsa)
+// botón de la bandeja: 🔒 PIN (bloqueado) ↔ 🔓 Ocultar (desbloqueado)
+window._secretBtn = () => `<button class="esp-btn" onclick="secretToggle()" title="${_secretTok ? 'Ocultar' : 'Ingresá tu PIN'}">${_secretTok ? 'Ocultar' : 'PIN'}</button>`
+function _pinPrompt(title, sub) {
+  return new Promise((resolve) => {
+    openSheet(`<h2 style="margin:0 0 4px">${esc(title)}</h2><div class="sub" style="margin:0 0 12px">${esc(sub)}</div>
+      <input id="_secPin" type="password" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="••••••" style="width:100%;box-sizing:border-box;padding:13px;font-size:20px;letter-spacing:5px;text-align:center;border-radius:12px;border:1px solid var(--line);background:#fff;margin-bottom:10px">
+      <button id="_secOk" class="btn" style="width:100%">Continuar</button>`)
+    setTimeout(() => { const i = document.getElementById("_secPin"); if (i) { i.focus(); i.onkeydown = (e) => { if (e.key === "Enter") document.getElementById("_secOk").click() } } }, 60)
+    const ok = document.getElementById("_secOk"); if (ok) ok.onclick = () => { const v = (document.getElementById("_secPin") || {}).value || ""; closeSheet(); resolve(v.trim() || null) }
+  })
+}
+// ── CUENTAS SECRETAS en CONFIG (se marcan UNA vez; toda su actividad se oculta sola) ──
+window._secretState = null // { accounts:[{channel,account}], numbers:["51999..."] } — cargado al desbloquear/entrar a config
+async function loadSecretState() { window._secretState = _secretTok ? await api("/api/secret/state").catch(() => null) : null }
+window.secretIsAccountSecret = (channel, account) => ((window._secretState || {}).accounts || []).some((a) => a.channel === channel && a.account === account)
+window.secretIsNumberSecret = (n) => ((window._secretState || {}).numbers || []).includes(String(n).replace(/\D/g, ""))
+window.secretAccountToggle = async (channel, account) => {
+  if (!_secretTok) return secretUnlockConfig()
+  const r = await post("/api/secret/account", { channel, account, secret: !secretIsAccountSecret(channel, account) }); if (r && r.error) return alert(r.error)
+  await loadSecretState(); route()
+}
+window.secretWaToggle = async (number) => {
+  if (!_secretTok) return secretUnlockConfig()
+  const r = await post("/api/secret/wa", { number, secret: !secretIsNumberSecret(number) }); if (r && r.error) return alert(r.error)
+  await loadSecretState(); route()
+}
+// desbloquear (o crear el PIN) desde config → cargar el estado y re-pintar para que aparezcan las cuentas + los checks
+window.secretUnlockConfig = async () => { await secretUnlock(); await loadSecretState(); route() }
+// 🔒 borra de disco TODO rastro de mensajes cacheados (una línea oculta no debe quedar en local). Se llama al arrancar si hay PIN, y al bloquear.
+async function _secretPurgeCache() {
+  try { for (const k of Object.keys(localStorage)) if (/^c:\/api\/thread/.test(k)) localStorage.removeItem(k) } catch {}
+  try { const db = await _idb(); for (const st of ["msgs", "meta"]) { const tx = db.transaction(st, "readwrite"); tx.objectStore(st).clear(); await _txDone(tx) } } catch {}
+}
+if (!window._secretActBound) { window._secretActBound = true
+  // ¿hay 2º PIN configurado? → modo "no cachear mensajes en local" + purgar lo que haya quedado de antes (cuando estaban visibles)
+  api("/api/secret/status").then((s) => { if (s && s.pinSet) { _secretPinSet = true; _secretPurgeCache() } }).catch(() => {})
+  for (const ev of ["click", "keydown", "input"]) document.addEventListener(ev, _secretResetIdle, { passive: true }) // actividad → resetea los 5 min
+  // 🔒 OUT-OF-FOCUS: bloquear al SALIR de la app (otra app/pestaña, minimizar). document.hasFocus() evita bloquear cuando el foco va a un
+  // iframe INTERNO (el visor de email en hilos unificados). Con gracia de 1 min + debounce de 6s (popups que devuelven el foco no bloquean).
+  // pagehide (refrescar/cerrar) bloquea al toque. focus/visible cancela un bloqueo pendiente (era un popup transitorio).
+  window.addEventListener("blur", () => { if (!document.hasFocus()) _scheduleSecretLock() })
+  window.addEventListener("focus", _cancelSecretLock)
+  document.addEventListener("visibilitychange", () => { document.hidden ? _scheduleSecretLock() : _cancelSecretLock() })
+  window.addEventListener("pagehide", () => secretLock())
 }
 
 // ── NOTAS DE VOZ: grabar y ENVIAR audio real (no transcribir) por WhatsApp/Telegram/Discord/etc. vía el bridge ──
@@ -2145,7 +2380,9 @@ async function showSendOptions(text, ch) {
 async function viewConv(key) {
   const startHash = location.hash
   // 1) pintar la HISTORIA COMPLETA cacheada en IndexedDB al instante (no solo 40 msgs; funciona offline)
-  const local = await idbLoad(key)
+  // 🔒 PERO si hay PIN secreto configurado, NO uso la cache local: traigo fresco del server (que filtra las líneas ocultas cuando está
+  // bloqueado). Si no, un mensaje de una línea oculta que quedó cacheado seguiría apareciendo. El server es la única fuente de verdad.
+  const local = _secretPinSet ? { items: [], meta: {} } : await idbLoad(key)
   const lm = local.meta || {}, haveLocal = local.items.length > 0
   if (haveLocal) { convState = { key, items: local.items, name: lm.name, photo: lm.photo, email: lm.email, account: lm.account, channels: lm.channels || [], total: lm.total, hasMore: lm.hasMore, oldestTs: lm.oldestTs, targets: lm.targets || [], target: (lm.targets || [])[0] || null, maxRev: lm.maxRev || 0, covert: lm.covert || null }; renderConv(); window.scrollTo(0, document.body.scrollHeight) } else render(skel(5))
   // 2) de la red: si ya tengo cache → solo el DELTA (rev > maxRev); si es la 1ra vez → carga completa (últimos 60)
@@ -3036,6 +3273,7 @@ window.openContactSettings = async (keyEnc) => {
   const info = await api("/api/contact/info?key=" + enck(key)) || { category: "auto" }
   const cat = info.category || "auto"
   const catBtn = (id, label, emoji) => `<button class="pill ${cat === id ? "on" : ""}" style="flex:1;justify-content:center;padding:10px" onclick="setCategory('${keyEnc}','${id}')">${emoji} ${label}</button>`
+  const secretBtn = "" // las cuentas secretas se marcan en Configuración (por cuenta), no por conversación
   openSheet(`<h2>${esc(convState?.name || key)}</h2>
     <div class="sub" style="margin:6px 0 14px">¿Qué es esta persona para vos?</div>
     <div class="row" style="gap:6px;margin-bottom:8px">${catBtn("familia", "Familia", "🏠")}${catBtn("amigos", "Amigos", "🧑‍🤝‍🧑")}${catBtn("trabajo", "Trabajo", "💼")}</div>
@@ -3043,6 +3281,7 @@ window.openContactSettings = async (keyEnc) => {
     <div style="border-top:1px solid var(--line);padding-top:14px">
       <button class="btn ${info.pinned ? "" : "ghost"}" style="margin-bottom:10px" onclick="togglePin('${keyEnc}',${info.pinned ? "false" : "true"})">${info.pinned ? "📌 Fijado arriba · quitar" : "📌 Fijar arriba"}</button>
       <button class="btn ghost" style="margin-bottom:10px" onclick="toggleSilence('${keyEnc}',${info.silenced ? "false" : "true"})">${info.silenced ? "🔔 Quitar de Silenciados" : "🔕 Silenciar (mover a “Silenciados”)"}</button>
+      ${secretBtn}
       <button class="btn ghost" onclick="findMerge('${keyEnc}')">🔗 Buscar si es la misma persona que otra</button></div>`)
 }
 window.togglePin = async (keyEnc, pinned) => { await post("/api/contact/pin", { key: decodeURIComponent(keyEnc), pinned: pinned === true || pinned === "true" }); closeSheet(); if (typeof viewMensajes === "function" && location.hash.replace("#", "").split("/")[0] === "mensajes") viewMensajes() }

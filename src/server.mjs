@@ -19,11 +19,12 @@ import { llmConfigMasked, setLlmConfig, smartChain, testKey } from "./lib/llm.mj
 import * as hub from "./lib/hub.mjs"
 import * as meetings from "./lib/meetings.mjs"
 import * as auth from "./lib/auth.mjs"
+import * as secret from "./lib/secret.mjs"
 import { localFlags, clientIpFrom, csrfReason, hostAllowed } from "./lib/http-gate.mjs"
 import * as maintenance from "./lib/maintenance.mjs"
 import * as mailArchive from "./lib/mail-archive.mjs"
 import { ocrCas, ocrEnabled } from "./lib/ocr.mjs"
-import { clipFlag, getMeta, rebuildStats, freeThreadMedia, restoreMedia, listNotes, noteCategories, noteJunkCount, noteAction, totalUnread } from "./lib/db.mjs"
+import { clipFlag, getMeta, delMeta, delMetaLike, rebuildStats, freeThreadMedia, restoreMedia, listNotes, noteCategories, noteJunkCount, noteAction, totalUnread } from "./lib/db.mjs"
 import { getMediaPolicy, setMediaDefault, setThreadMediaPolicy } from "./lib/media-policy.mjs"
 import { casStats, casTrashList } from "./lib/cas.mjs"
 import { storageStatus } from "./lib/quota.mjs"
@@ -40,6 +41,14 @@ function setSid(res, token, ttl, secure) { res.setHeader("Set-Cookie", `sid=${to
 // Comparación CONSTANT-TIME de tokens de webhook/ingest (Ko-fi, SMS, gpu-health). `===` corta en el primer byte distinto → filtra
 // el token byte a byte por timing. timingSafeEqual no lo hace; exige mismo largo (comparamos largo primero, sin ramificar por contenido).
 function tokEq(given, expected) { const a = Buffer.from(String(given || "")), b = Buffer.from(String(expected || "")); return a.length === b.length && timingSafeEqual(a, b) }
+// 🔒 al marcar/desmarcar una cuenta secreta: purga los artefactos DERIVADOS horneados por cron (pueden ser PREVIOS a la marca → contienen
+// lo secreto). Se regeneran filtrados en el próximo cron; mientras, los fallbacks EN VIVO (home/coach/notas/cards) ya excluyen lo secreto.
+function purgeSecretDerived() {
+  try { for (const k of ["home_brief", "notes_digest"]) delMeta(k) } catch {}          // snapshots de texto libre (LLM)
+  try { for (const p of ["personcard:", "mtgcard:", "espcard:"]) delMetaLike(p) } catch {} // tarjetas pre-generadas por contacto/reunión/espacio
+  try { brain.invalidateThreads() } catch {}
+  try { brain.invalidateCoach() } catch {}
+}
 function loginPage(pinSet, canSetup) {
   const setup = !pinSet
   return `<!doctype html><html lang=es><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>pipe.one</title>
@@ -317,6 +326,29 @@ const server = createServer(async (req, res) => {
       if (path.startsWith("/api/")) return json(res, 401, { error: "no autorizado" })
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(loginPage(auth.pinIsSet(), isLocal))
     }
+    // ── 🔒 CUENTAS SECRETAS: 2º PIN. secretOn = hay una sesión secreta válida (token corto por dispositivo) → se ven las cuentas secretas.
+    // El token viaja en el header x-secret-token (app nativa) o cookie 'secret' (web). Sliding 5 min; el cliente lo borra al perder foco.
+    const secretTok = String(req.headers["x-secret-token"] || cookies.secret || "").trim()
+    const secretOn = secret.validSecretSession(secretTok)
+    // guard para endpoints por-hilo: un hilo de cuenta secreta NO existe si no está desbloqueado (como si el key no fuera válido)
+    const secretBlocked = (key) => !secretOn && !!key && secret.secretThreadKeys().has(key)
+    if (path === "/api/secret/status") return json(res, 200, { pinSet: secret.secretPinSet(), unlocked: secretOn })
+    // crear/cambiar el 2º PIN: SOLO con la sesión principal (ya estás authed). Debe ser distinto del PIN de entrada (lo valida setSecretPin).
+    if (path === "/api/secret/setup" && req.method === "POST") { const b = await body(req); const r = secret.setSecretPin(b.pin); return json(res, r.error ? 400 : 200, r) }
+    // desbloquear: verifica el 2º PIN → token de sesión secreta (también en cookie para la web)
+    if (path === "/api/secret/unlock" && req.method === "POST") {
+      const b = await body(req); const r = secret.unlockSecret(b.pin); if (r.error) return json(res, 401, r)
+      res.setHeader("Set-Cookie", `secret=${r.token}; Path=/; Max-Age=${Math.floor(r.ttl / 1000)}; HttpOnly; SameSite=Strict${httpsProto ? "; Secure" : ""}`)
+      return json(res, 200, { ok: true, token: r.token })
+    }
+    if (path === "/api/secret/lock" && req.method === "POST") { secret.lockSecret(secretTok); res.setHeader("Set-Cookie", "secret=; Path=/; Max-Age=0; HttpOnly"); return json(res, 200, { ok: true }) }
+    // listar cuentas con su flag secreta (SOLO desbloqueado) + togglear. Sin sesión secreta no se puede ni ver ni tocar la marca.
+    if (path === "/api/secret/accounts") { if (!secretOn) return json(res, 403, { error: "bloqueado" }); return json(res, 200, { accounts: secret.listSecretAccounts() }) }
+    if (path === "/api/secret/account" && req.method === "POST") { if (!secretOn) return json(res, 403, { error: "bloqueado" }); const b = await body(req); const r = secret.setSecretAccount(b.channel, b.account, !!b.secret); purgeSecretDerived(); return json(res, 200, r) }
+    // marcar/desmarcar un NÚMERO de WhatsApp como CUENTA SECRETA → oculta TODA su actividad automáticamente. SOLO desbloqueado.
+    if (path === "/api/secret/wa" && req.method === "POST") { if (!secretOn) return json(res, 403, { error: "bloqueado" }); const b = await body(req); const r = secret.setSecretNumber(b.number, !!b.secret); purgeSecretDerived(); return json(res, 200, r) }
+    // estado de las cuentas secretas (correo + números WA) para los checkboxes de config. Requiere desbloqueado.
+    if (path === "/api/secret/state") { if (!secretOn) return json(res, 403, { error: "bloqueado" }); return json(res, 200, { accounts: secret.listSecretAccounts(), numbers: secret.listSecretNumbers() }) }
     // ── OAuth Gmail: flujo web "Conectar Gmail → Permitir" (nada de app-passwords). Solo autenticados llegan acá. ──
     if (path === "/oauth/google/start") {
       try {
@@ -343,14 +375,23 @@ const server = createServer(async (req, res) => {
     // ── API ──
     if (path.startsWith("/api/")) {
       const q = Object.fromEntries(url.searchParams)
+      // 🔒 gateo por-hilo. /api/thread SE AUTO-FILTRA por-mensaje (contacto fusionado → ves lo no-secreto); los demás endpoints por-hilo
+      // (media/targets/delta/sync/catchup/suggest/person) NO filtran → se bloquean si el hilo tiene ALGO secreto. 100% secreto → todo vacío.
+      if (!secretOn) { const g = secret.secretGate(); const sk = q.key || q.name
+        if (sk && g.any) {
+          const hasAny = g.hide.has(sk) || g.preview.has(sk)
+          if (hasAny && (path.startsWith("/api/thread/") || path === "/api/person" || path === "/api/person/full" || path === "/api/contact/profile")) return json(res, 200, { items: [], secret: true })
+          if (g.hide.has(sk) && path === "/api/thread") return json(res, 200, { items: [], secret: true })
+        }
+      }
       if (path === "/api/oauth/google/configured") return json(res, 200, { configured: goauth.googleConfigured() })
       if (path === "/api/wa/status") return json(res, 200, { loggedOut: await loggedOutNumbers() }) // números WhatsApp caídos → banner de re-link
       if (path === "/api/summary") return json(res, 200, brain.summary())
-      if (path === "/api/threads") return jsonCached(req, res, brain.listThreads({ limit: +q.limit || 100 }))
+      if (path === "/api/threads") { let t = brain.listThreads({ limit: +q.limit || 100 }); if (!secretOn) { const g = secret.secretGate(); if (g.any) t = t.filter((x) => !g.hide.has(x.key)).map((x) => { const p = g.preview.get(x.key); return p ? { ...x, lastText: ((p.text || "").replace(/\s+/g, " ").slice(0, 120)) || "…", ts: p.ts, lastChannel: p.channel || x.lastChannel } : x }) } return jsonCached(req, res, t) } // 🔒 oculta hilos 100% secretos + parchea el preview de los parciales al último mensaje NO-secreto
       // OCR local (opcional): extrae texto de una imagen/PDF del CAS (facturas, documentos) sin nube. Requiere OCR_URL.
       if (path === "/api/ocr" && req.method === "POST") { const b = await body(req); if (!ocrEnabled()) return json(res, 200, { text: "", disabled: true }); const text = await ocrCas(b.media || "").catch(() => ""); return json(res, 200, { text }) }
       // contador barato de entrantes (thread_stats.unread es monotónico por ingesta) → el cliente detecta "llegó algo nuevo" y suena. Sin recomputar la bandeja.
-      if (path === "/api/unread") return json(res, 200, { n: totalUnread() })
+      if (path === "/api/unread") { let n = totalUnread(); if (!secretOn) n -= secret.secretUnread(); return json(res, 200, { n: Math.max(0, n) }) } // 🔒 no contar no-leídos secretos si está bloqueado
       if (path === "/api/person") return json(res, 200, await brain.personCard(q.name || q.key || "", { force: q.force === "1" }))
       if (path === "/api/person/full") return json(res, 200, brain.personView(q.name || q.key || "")) // timeline completo (on-demand)
       if (path === "/api/coach") return json(res, 200, brain.coachData())
@@ -461,7 +502,9 @@ const server = createServer(async (req, res) => {
         if (existsSync(f)) { res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "no-store" }); return res.end(readFileSync(f)) }
         res.writeHead(404); return res.end()
       }
-      if (path === "/api/status") return json(res, 200, integrationsStatus())
+      if (path === "/api/status") { const st = integrationsStatus(); if (!secretOn && st.whatsapp) { // 🔒 números/cuentas secretos NO aparecen en config si está bloqueado (igual que /api/accounts)
+        st.whatsapp.bridge = (st.whatsapp.bridge || []).filter((n) => !secret.isSecretNumber(n))
+        st.whatsapp.baileys = (st.whatsapp.baileys || []).filter((b) => !secret.isSecretNumber(b.num)) } return json(res, 200, st) }
       // ── rediseño: objetivos, empresas, espacios, contactos, home ──
       if (path === "/api/home") return json(res, 200, await brain.homeSnapshot(ws))
       if (path === "/api/home/audio") { const f = "data/home-brief.mp3"; if (!existsSync(f)) { res.writeHead(404); return res.end() } return serveFile(req, res, f, "audio/mpeg") }
@@ -480,7 +523,7 @@ const server = createServer(async (req, res) => {
       if (path === "/api/clip/pin" && req.method === "POST") { const b = await body(req); return json(res, 200, clipFlag(b.id, "pinned", b.on !== false)) }
       if (path === "/api/clip/archive" && req.method === "POST") { const b = await body(req); return json(res, 200, clipFlag(b.id, "archived", b.on !== false)) }
       // CUENTA / CONFIGURACIÓN: cuentas conectadas + agregar/quitar correo
-      if (path === "/api/accounts") return json(res, 200, accounts.listAccounts())
+      if (path === "/api/accounts") { const a = accounts.listAccounts(); if (!secretOn) { a.email = (a.email || []).filter((e) => !secret.isSecretAccount("email", e.label)); a.messaging = (a.messaging || []).map((m) => ({ ...m, numbers: (m.numbers || []).filter((n) => !secret.isSecretNumber(n)) })) } return json(res, 200, a) } // 🔒 cuentas/números secretos no aparecen en config si está bloqueado
       if (path === "/api/accounts/email" && req.method === "POST") { const b = await body(req); const r = await accounts.addEmailAccount(b); if (r.ok) { try { spawn("pkill", ["-f", "mail-imap.mjs"]) } catch {} } return json(res, r && r.error ? 400 : 200, r) } // reconecta el reader
       if (path === "/api/accounts/email/remove" && req.method === "POST") { const b = await body(req); const r = accounts.removeEmailAccount(b.label); if (r.ok) { try { spawn("pkill", ["-f", "mail-imap.mjs"]) } catch {} } return json(res, r && r.error ? 400 : 200, r) }
       // Integraciones conectables desde la Consola (Slack/Signal): token/URL cifrados; al guardar, pkill al reader → el daemon lo respawnea con la config nueva.
@@ -630,7 +673,7 @@ const server = createServer(async (req, res) => {
       if (path === "/api/contact/category" && req.method === "POST") { const b = await body(req); ws.setContactCategory(b.key, b.category); return json(res, 200, { ok: true }) }
       if (path === "/api/contact/info") return json(res, 200, { category: (ws.contactCategories()[q.key] || "auto"), pinned: ws.pins().includes(q.key), silenced: ws.silenced().includes(q.key) })
       if (path === "/api/contact/suggestions") return json(res, 200, await brain.mergeSuggestions(ws, q.key || ""))
-      if (path === "/api/thread") return json(res, 200, await brain.unifiedThread(q.key || "", ws, { before: +q.before || 0, limit: +q.limit || 100 }))
+      if (path === "/api/thread") return json(res, 200, await brain.unifiedThread(q.key || "", ws, { before: +q.before || 0, limit: +q.limit || 100, secretOn }))
       if (path === "/api/thread/catchup") return json(res, 200, await brain.catchup(q.key || "", ws, +q.since || 0))
       // SYNC edit-aware: solo los mensajes NUEVOS o editados (rev > sinceRev) → el cliente cachea el resto y no lo re-baja
       if (path === "/api/thread/delta") return json(res, 200, brain.threadDeltaItems(q.key || "", +q.sinceRev || 0))
@@ -682,6 +725,7 @@ const server = createServer(async (req, res) => {
         if (q.refresh) { const fd = openSync(`data/logs/matrix-link.log`, "a"); spawn(process.execPath, ["src/matrix.mjs", "logins", net], { env: process.env, stdio: ["ignore", fd, fd], detached: true }).unref() }
         let list = []
         try { list = JSON.parse(readFileSync(`/tmp/matrix_logins_${net}.json`, "utf8")) } catch {}
+        if (!secretOn) list = list.filter((n) => !secret.isSecretNumber(n)) // 🔒 no listar cuentas secretas del bridge sin 2º PIN
         return json(res, 200, { net, accounts: list })
       }
       return json(res, 404, { error: "endpoint no encontrado" })

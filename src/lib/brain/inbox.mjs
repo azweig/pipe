@@ -10,6 +10,7 @@ import { promisify } from "util"
 import { tmpdir } from "os"
 import { threadsSummary as dbThreads, repliedThreads, getBody as dbGetBody, threadMediaGallery, threadPage as dbThreadPage, threadCount as dbThreadCount, threadMessagesTail as dbThreadMsgs, threadSince as dbThreadSince, threadUnreadCount as dbUnreadCount, search as dbSearch, threadMessagesSinceAll, threadDelta as dbThreadDelta, threadMaxRev as dbThreadMaxRev } from "../db.mjs"
 import { autopilotSentIds, listAutopilot, getAutopilot, listEscalations, clearEscalation } from "./autopilot.mjs" // 🤖 tag de mensajes/contactos del piloto automático
+import { secretThreadKeys, isSecretMsg } from "../secret.mjs" // 🔒 cuentas/números secretos (excluir de bandeja/búsqueda; filtrar por-mensaje en el hilo)
 import { jidOfKey, canonOfKey, numOf, initials, stripWA, norm, plural, isContainerJid } from "./kernel/keys.mjs"
 import { enrichCovert, getCovert } from "./covert.mjs"
 import { jf, waGroups, avatarMap, contactName, photoFor } from "./kernel/contacts.mjs"
@@ -139,8 +140,10 @@ export function threadMedia(key) {
 // ── BÚSQUEDA FULL-TEXT en todos los mensajes/mails ──
 export function searchMessages(query, { limit = 80 } = {}) {
   // FTS5 en SQLite → instantáneo sobre millones de mensajes
-  const rows = dbSearch(query, { limit })
-  return rows.map((e) => ({ key: e.thread, who: stripWA(e.grp || e.name || ""), channel: e.channel, ts: e.ts || 0, dir: e.dir || "in", text: cleanMsg(e.text || "").slice(0, 240) }))
+  let secretKeys = new Set(); try { secretKeys = secretThreadKeys() } catch {} // 🔒 no buscar en cuentas secretas
+  // excluye hilos 100%-secretos Y, en hilos PARCIALES (contacto con línea secreta + no-secreta), los mensajes de canal secreto (dbSearch trae m.*)
+  const rows = dbSearch(query, { limit: secretKeys.size ? limit + 40 : limit }).filter((e) => !secretKeys.has(e.thread) && !isSecretMsg(e))
+  return rows.slice(0, limit).map((e) => ({ key: e.thread, who: stripWA(e.grp || e.name || ""), channel: e.channel, ts: e.ts || 0, dir: e.dir || "in", text: cleanMsg(e.text || "").slice(0, 240) }))
 }
 
 // transforma UNA fila de la DB en el item liviano que renderiza el cliente (mismo shape para el hilo completo y para el delta).
@@ -180,8 +183,9 @@ export function threadDeltaItems(key, sinceRev = 0, { limit = 500 } = {}) {
   return { items, maxRev: dbThreadMaxRev(key) }
 }
 
-export async function unifiedThread(key, ws, { before = 0, limit = 100 } = {}) {
-  const rows = dbThreadPage(key, { before, limit }) // página de historial (paginable hacia atrás)
+export async function unifiedThread(key, ws, { before = 0, limit = 100, secretOn = false } = {}) {
+  // 🔒 POR-MENSAJE: si NO está desbloqueado, saco los mensajes de números/cuentas secretos (contacto fusionado → ves solo lo no-secreto)
+  const rows = dbThreadPage(key, { before, limit }).filter((e) => secretOn || !isSecretMsg(e.thread ? e : { ...e, thread: key }))
   const total = dbThreadCount(key)
   const AV = avatarMap()
   const items = []
@@ -195,7 +199,9 @@ export async function unifiedThread(key, ws, { before = 0, limit = 100 } = {}) {
     const isPlainOut = (e.dir || "in") === "out" && text && !e.media && !/^(🖼|📹|🎤|📄|🌟|📎|📍|👤)/.test(text)
     if (isPlainOut && text === lastOutText && e.ts - lastOutTs < 90000) continue
     if (isPlainOut) { lastOutText = text; lastOutTs = e.ts }
-    items.push(msgToItem(e, AV, text))
+    const it = msgToItem(e, AV, text)
+    if (secretOn && isSecretMsg(e)) it.secret = true // 🔒 desbloqueado: marcar los mensajes del número/cuenta secreto para el candado + fondo
+    items.push(it)
   }
   const oldestTs = rows.length ? rows[0].ts : 0
   const hasMore = total > items.length && rows.length >= limit // hay mensajes más antiguos

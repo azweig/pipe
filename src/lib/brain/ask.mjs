@@ -42,9 +42,11 @@ export async function retrieveContext(question, { limit = 14, semantic: useSeman
   // semantic=false → FTS solo (para llamadas en TIEMPO REAL como el piloto: cargar el índice de 550MB tarda ~12s, inaceptable por respuesta)
   if (useSemantic) try { const qv = await embed(question); if (qv) { semantic = topK(qv, ragIndex(), 22).filter((x) => x.s > 0.45).map((x) => x.it); semanticOk = true } } catch {}
   const ctxItems = [], seen = new Set()
-  for (const it of semantic) { if (seen.has(it.id)) continue; seen.add(it.id); ctxItems.push({ ts: it.ts, label: it.kind === "note" ? "🧠 " + it.ref : it.ref, text: it.text }) }
-  try { for (const r of dbSearch(question, { limit: 22, byRank: true })) { const k = "fts:" + r.id; if (seen.has(k)) continue; seen.add(k); ctxItems.push({ ts: r.ts, label: `${r.channel} ${stripWA(r.grp || r.name || "")}`, text: cleanMsg(r.text) }) } } catch {}
-  try { for (const r of dbSearchBody(question, { limit: 8 })) { const k = "body:" + r.thread + ":" + r.ts; if (seen.has(k)) continue; seen.add(k); ctxItems.push({ ts: r.ts, label: `email ${stripWA(r.name || "")}`, text: cleanMsg(String(r.snip || "").replace(/<[^>]+>/g, " ")) }) } } catch {}
+  // 🔒 el RAG NUNCA ve mensajes de fuente secreta (ni 100%-secretos ni el canal secreto de un contacto parcial) → no se filtran en respuestas de IA
+  let secretKeys = new Set(), isSecret = () => false; try { const S = await import("../secret.mjs"); secretKeys = S.secretThreadKeys(); isSecret = S.isSecretMsg } catch {}
+  for (const it of semantic) { if (seen.has(it.id) || (it.thread && (secretKeys.has(it.thread) || isSecret(it)))) continue; seen.add(it.id); ctxItems.push({ ts: it.ts, label: it.kind === "note" ? "🧠 " + it.ref : it.ref, text: it.text }) }
+  try { for (const r of dbSearch(question, { limit: 22, byRank: true })) { const k = "fts:" + r.id; if (seen.has(k) || secretKeys.has(r.thread) || isSecret(r)) continue; seen.add(k); ctxItems.push({ ts: r.ts, label: `${r.channel} ${stripWA(r.grp || r.name || "")}`, text: cleanMsg(r.text) }) } } catch {}
+  try { for (const r of dbSearchBody(question, { limit: 8 })) { const k = "body:" + r.thread + ":" + r.ts; if (seen.has(k) || secretKeys.has(r.thread) || isSecret({ ...r, channel: "email" })) continue; seen.add(k); ctxItems.push({ ts: r.ts, label: `email ${stripWA(r.name || "")}`, text: cleanMsg(String(r.snip || "").replace(/<[^>]+>/g, " ")) }) } } catch {}
   ctxItems.sort((a, b) => (a.ts || 0) - (b.ts || 0))
   return { items: ctxItems.slice(0, limit), semanticOk }
 }
@@ -77,6 +79,10 @@ export async function routerSearch(question) {
   let r = activateGraph(question), engine = "grafo"       // v2: activación por difusión sobre el grafo ponderado
   if (!r.confident) { r = routeFacets(question); engine = "facetas" } // v1: presencia de facetas (fallback)
   if (!r.confident) { const a = await ask(question); return { mode: "rag", type: "answer", ...a, matched: r.matched } } // sin nodo claro → RAG de siempre (no perdemos recall)
+  // 🔒 el router-search (0 tokens, sin gate aguas abajo) NO expone fuentes secretas: dropea hilos 100%-secretos del ranking y
+  // filtra por-mensaje cada fuente (find/FTS/bodies/recientes) para hilos parciales.
+  let hide = new Set(), isSecret = () => false; try { const S = await import("../secret.mjs"); hide = S.secretThreadKeys(); isSecret = S.isSecretMsg } catch {}
+  r.ranked = (r.ranked || []).filter((x) => !hide.has(x.thread))
   const threads = r.ranked.map((x) => x.thread)
   const convs = dbConvsByThreads(threads)
   const cmap = Object.fromEntries(convs.map((c) => [c.thread, c]))
@@ -88,6 +94,7 @@ export async function routerSearch(question) {
     const docs = r.intent.want === "doc"
     let rows = docs ? dbFilesByTerms(r.matched, threads, { docs: true, limit: 40 }) : dbMediaInThreads(threads, { docs: false, limit: 40 })
     if (!docs && rows.length < 3) rows = [...rows, ...dbFilesByTerms(r.matched, [], { docs: false, limit: 20 })].filter((m, i, a) => a.findIndex((x) => x.id === m.id) === i) // supl. global por término
+    rows = rows.filter((m) => !hide.has(m.thread) && !isSecret(m)) // 🔒 media/adjuntos de fuente secreta fuera
     return { mode: "facets", engine, type: "find", want: r.intent.want, tokens: 0, matched: r.matched, threads: srcThreads,
       results: rows.slice(0, 40).map((m) => ({ id: m.id, key: m.thread, name: m.name, ts: m.ts, channel: m.channel, media: m.media, mediaType: m.mediaType, filename: m.filename, text: m.text })) }
   }
@@ -96,13 +103,13 @@ export async function routerSearch(question) {
   const fmt = (ts) => new Date(ts).toISOString().slice(0, 10)
   const line = (m) => `- (${fmt(m.ts)}, ${m.dir === "out" ? ownerFirst() : (m.name || "?")}) ${cleanMsg(m.text).replace(/\s+/g, " ").slice(0, 180)}`
   const seenId = new Set(), msgLines = []
-  for (const m of dbSearch(question, { limit: 14, byRank: true })) { if (seenId.has(m.id) || !m.text) continue; seenId.add(m.id); msgLines.push(line(m)); if (m.thread && !srcThreads.find((s) => s.key === m.thread)) srcThreads.push({ key: m.thread, name: nameOf(m.thread), summary: cmap[m.thread]?.summary || "", score: 0 }) }
+  for (const m of dbSearch(question, { limit: 14, byRank: true })) { if (seenId.has(m.id) || !m.text || hide.has(m.thread) || isSecret(m)) continue; seenId.add(m.id); msgLines.push(line(m)); if (m.thread && !srcThreads.find((s) => s.key === m.thread)) srcThreads.push({ key: m.thread, name: nameOf(m.thread), summary: cmap[m.thread]?.summary || "", score: 0 }) } // 🔒
   // cuerpos de email (montos/fechas, fuera del FTS) — términos = entidades matcheadas + expansión por co-ocurrencia del grafo (juan→deuda)
   const stripB = (h) => String(h || "").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#\d+;|&gt;|&lt;|&amp;/g, " ").replace(/\s+/g, " ").trim()
-  for (const m of dbBodyMatch(threads.slice(0, 3), [...(r.matched || []), ...(r.expand || [])], { limit: 3 })) { const s = stripB(m.body).slice(0, 260); if (s) msgLines.push(`- (${fmt(m.ts)}, ${m.name || "email"}) ${s}`) }
+  for (const m of dbBodyMatch(threads.slice(0, 3), [...(r.matched || []), ...(r.expand || [])], { limit: 3 })) { if (hide.has(m.thread) || isSecret({ ...m, channel: "email" })) continue; const s = stripB(m.body).slice(0, 260); if (s) msgLines.push(`- (${fmt(m.ts)}, ${m.name || "email"}) ${s}`) } // 🔒
   // FTS sobre cuerpos de email: encuentra montos/fechas por la PREGUNTA aunque estén en un body no ruteado (ej: la deuda)
-  for (const m of dbSearchBody(question, { limit: 4 })) { const s = stripB(m.snip).replace(/\s+/g, " ").slice(0, 240); if (s) { msgLines.push(`- (${fmt(m.ts)}, ${m.name || "email"}) ${s}`); if (m.thread && !srcThreads.find((x) => x.key === m.thread)) srcThreads.push({ key: m.thread, name: nameOf(m.thread), summary: cmap[m.thread]?.summary || "", score: 0 }) } }
-  if (msgLines.length < 4) for (const t of threads.slice(0, 2)) for (const m of dbRecentInThread(t, { limit: 5 })) msgLines.push(line(m))
+  for (const m of dbSearchBody(question, { limit: 4 })) { if (hide.has(m.thread) || isSecret({ ...m, channel: "email" })) continue; const s = stripB(m.snip).replace(/\s+/g, " ").slice(0, 240); if (s) { msgLines.push(`- (${fmt(m.ts)}, ${m.name || "email"}) ${s}`); if (m.thread && !srcThreads.find((x) => x.key === m.thread)) srcThreads.push({ key: m.thread, name: nameOf(m.thread), summary: cmap[m.thread]?.summary || "", score: 0 }) } } // 🔒
+  if (msgLines.length < 4) for (const t of threads.slice(0, 2)) for (const m of dbRecentInThread(t, { limit: 5 })) { if (!isSecret({ ...m, thread: t })) msgLines.push(line(m)) } // 🔒 (threads ya sin 100%-secretos; filtra parciales)
   const ctx = srcThreads.slice(0, 4).map((s) => `• ${s.name}: ${s.summary}`).filter(Boolean).join("\n") + "\n\nMENSAJES:\n" + msgLines.slice(0, 16).join("\n")
   const prompt = `Sos el asistente personal de ${ownerFirst()}. Abajo hay RESÚMENES y MENSAJES reales de sus conversaciones más relevantes para la pregunta.
 Respondé en 1 a 4 frases, en español, usando SOLO eso. Nombrá personas, proyectos y montos concretos. Si no alcanza, decí qué falta. NO inventes.

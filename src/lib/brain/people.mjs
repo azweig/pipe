@@ -12,6 +12,7 @@ import { phoneOf, MY_NUMBERS, nameExtends } from "../thread.mjs"
 import { ownerFirst, company } from "../hub.mjs"
 import { llm } from "../llm.mjs"
 import { threadTargets } from "./reply.mjs" // contactProfile compone los destinos del contacto (hoisted, llamada en runtime)
+import { isSecretMsg, secretThreadKeys } from "../secret.mjs" // 🔒 fichas/tarjetas/timeline no muestran mensajes de fuente secreta sin 2º PIN
 
 // PERFIL de contacto (rico, desde la DB → confiable y completo). Para la página de persona.
 export function contactProfile(key) {
@@ -49,7 +50,7 @@ export function personView(nameOrKey) {
     for (const c of (fm(card, "channels")).split(",").map((s) => s.trim()).filter(Boolean)) chans.add(c)
     filter = (e) => chans.has(channelId(e)) || names.has((e.name || "").toLowerCase())
   } else filter = (e) => `${e.channel}:${e.jid || e.account}` === nameOrKey
-  const timeline = events.filter(filter).sort((a, b) => (a.ts || 0) - (b.ts || 0))
+  const timeline = events.filter(filter).filter((e) => !isSecretMsg(e)).sort((a, b) => (a.ts || 0) - (b.ts || 0)) // 🔒 saca los mensajes del canal secreto (contacto parcial); un contacto 100%-secreto queda con timeline vacío
     .map((e) => ({ ts: e.ts, channel: e.channel, dir: e.dir || "in", text: e.text || "", media: e.media || null, kind: e.kind || null, who: e.dir === "out" ? "Vos" : (e.name || canon || numOf(e.jid) || "?") }))
   const card = canon ? cardFor("People", canon) : ""
   const links = [...new Set([...card.matchAll(/\[\[([^\]]+)\]\]/g)].map((m) => m[1]))].filter((x) => x !== canon)
@@ -161,7 +162,8 @@ export async function genPersonCards({ topN = 1000, minMsgs = 15 } = {}) {
   const { listThreads } = await import("./inbox.mjs") // inbox ya es su propio módulo (M4b); people→inbox no tiene ciclo
   const mem = buildMembershipIndex() // 1 scan, compartido por todas las cards de esta corrida
   try { setMeta("membership_idx", JSON.stringify(mem)) } catch { } // guardar para on-demand; si el server tiene el lock, no es fatal (las cards ya usan `mem`)
-  const threads = listThreads({ limit: 1500 }).filter((t) => !t.group && !t.self && t.canon && t.bucket !== "spam" && (t.count || 0) >= minMsgs)
+  const _hide = secretThreadKeys() // 🔒 no pre-generar (ni cachear) tarjeta de un contacto 100%-secreto
+  const threads = listThreads({ limit: 1500 }).filter((t) => !t.group && !t.self && t.canon && t.bucket !== "spam" && !_hide.has(t.key) && (t.count || 0) >= minMsgs)
   const top = threads.sort((a, b) => (b.count || 0) - (a.count || 0)).slice(0, topN)
   let n = 0
   for (const t of top) {

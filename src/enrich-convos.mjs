@@ -5,6 +5,7 @@
 import { staleConversations, saveConversation, threadMessagesTail } from "./lib/db.mjs"
 import { llm, smartChain } from "./lib/llm.mjs"
 import { owner, ownerFirst } from "./lib/hub.mjs"
+import { secretThreadKeys } from "./lib/secret.mjs" // 🔒 no indexar hilos 100%-secretos en el router por facetas
 
 const BATCH = Number(process.env.ENRICH_BATCH || 25)
 const CHAIN = smartChain({ sensitive: true, feature: "enrich" }) // enrich procesa TODOS tus mensajes → sensible. FUENTE ÚNICA (smartChain); antes LLM_CHAIN_ENRICH era una puerta lateral SIN gate (el mismo bypass que LLM_CHAIN_SENSITIVE, mudado de var)
@@ -31,9 +32,11 @@ const stale = staleConversations(BATCH)
 if (!stale.length) { console.log("[enrich] nada que enriquecer"); process.exit(0) }
 console.log(`[enrich] ${stale.length} conversaciones (batch ${BATCH})`)
 let done = 0, failed = 0
+const _hide = secretThreadKeys()
 for (const s of stale) {
   try {
-    const msgs = threadMessagesTail(s.thread, { limit: 30 })
+    if (_hide.has(s.thread)) continue // 🔒 hilo 100%-secreto: NO crea fila conversations/conv_facets (queda fuera del router-search y del grafo)
+    const msgs = threadMessagesTail(s.thread, { limit: 30 }) // (ya filtra mensajes de canal secreto en hilos parciales)
     const text = convText(msgs)
     if (!text) { saveConversation(s.thread, { last_ts: s.last_ts, n_msgs: s.count, channels: s.channels }); continue } // marcar visto (evita reintentar hilos vacíos)
     const name = contactName(msgs)

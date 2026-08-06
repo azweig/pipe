@@ -2,6 +2,12 @@
 // Cuerpos movidos verbatim desde db.mjs; `db` = alias de handle() de db-core.
 import { handle as db } from "./db-core.mjs"
 import { owner } from "./hub.mjs"
+import { isSecretSelfNote, secretSelfClause, secretThreadKeys, isSecretRow } from "./secret.mjs"
+
+// helper: appende " AND NOT (<secret>)" a un WHERE de self-notes (thread='self') si hay cuentas secretas. Idempotente si no hay nada.
+function _selfSecretAnd(alias = "m") { const c = secretSelfClause(alias); return c.clause ? { sql: ` AND NOT (${c.clause})`, params: c.params } : { sql: "", params: [] } }
+// helper: excluye hilos 100%-secretos (gate.hide) de un agregado — " AND <col> NOT IN (...)". Para conteos/KPIs sin fila representativa.
+function _hideAnd(col = "thread") { const h = [...secretThreadKeys()]; return h.length ? { sql: ` AND ${col} NOT IN (${h.map(() => "?").join(",")})`, params: h } : { sql: "", params: [] } }
 
 const escLike = (s) => String(s).replace(/[\\%_]/g, "\\$&") // escapa comodines LIKE del DOMINIO (cliente_1 → cliente\_1); el '!%:' queda literal (ese % es intencional)
 const mdomLike = (prefix = "") => prefix + "!%:%" // AGNÓSTICO del dominio Matrix: matchea salas portal !<id>:<dominio> de cualquier server (el server_name que sea) → no depende de MATRIX_DOMAIN
@@ -41,7 +47,9 @@ export function threadMessages(thread, { limit = 200 } = {}) {
   return db().prepare("SELECT * FROM messages WHERE thread=? ORDER BY ts ASC LIMIT ?").all(thread, limit)
 }
 export function threadMessagesTail(thread, { limit = 60 } = {}) {
-  const rows = db().prepare("SELECT * FROM messages WHERE thread=? ORDER BY ts DESC LIMIT ?").all(thread, limit)
+  // 🔒 lector de RESUMEN/derivados (enrich-convos, meetings, scheduleIntent) — NO es el visor del hilo (ése usa threadPage con secretOn).
+  // Filtramos mensajes de canal secreto para que ningún cron sin 2º PIN los meta en facetas/tarjetas/prep.
+  const rows = db().prepare("SELECT * FROM messages WHERE thread=? ORDER BY ts DESC LIMIT ?").all(thread, limit).filter((m) => !isSecretRow(m))
   return rows.reverse()
 }
 // página de historial: los `limit` mensajes anteriores a `before` (0 = los más recientes). Para paginar hacia atrás.
@@ -74,25 +82,28 @@ export function inboundUnansweredThreads(sinceTs, { limit = 500 } = {}) {
   return db().prepare(`SELECT m.thread, m.name, m.jid, m.text, MAX(m.ts) ts FROM messages m
     WHERE m.dir!='out' AND m.ts > ? AND m.thread!='self' AND m.grp IS NULL AND m.thread NOT LIKE '%@g.us' AND length(m.text) > 12
     AND m.thread NOT IN (SELECT DISTINCT thread FROM messages WHERE dir='out')
-    GROUP BY m.thread ORDER BY ts DESC LIMIT ?`).all(sinceTs, limit)
+    GROUP BY m.thread ORDER BY ts DESC LIMIT ?`).all(sinceTs, limit).filter((r) => !isSecretRow(r)) // 🔒
 }
 // notas propias (thread='self') desde una marca, más nuevas primero — texto + resumen de nota de voz. (era notes-ai.recentNotes)
 export function selfNotesSince(since, { limit = 120 } = {}) {
+  const s = _selfSecretAnd("messages") // 🔒 excluye notas de canal secreto (sin 2º PIN el cron/chat no debe verlas)
   return db().prepare(`SELECT text, summary, mediaType, ts FROM messages
-    WHERE thread='self' AND ts > ? ORDER BY ts DESC LIMIT ?`).all(since, limit)
+    WHERE thread='self' AND ts > ?${s.sql} ORDER BY ts DESC LIMIT ?`).all(since, ...s.params, limit)
 }
 // ── NOTAS categorizadas: self-notes (thread='self') + note_meta (categoría/estado/pin) ──
 // self-notes todavía SIN categorizar (para el cron notes-categorize)
 export function uncategorizedSelfNotes({ limit = 30 } = {}) {
+  const s = _selfSecretAnd("m") // 🔒 no categorizar (ni mandar al LLM) notas de canal secreto
   return db().prepare(`SELECT m.id, m.text, m.summary, m.mediaType, m.channel, m.ts FROM messages m
     LEFT JOIN note_meta n ON n.id = m.id
-    WHERE m.thread='self' AND n.id IS NULL ORDER BY m.ts DESC LIMIT ?`).all(limit)
+    WHERE m.thread='self' AND n.id IS NULL${s.sql} ORDER BY m.ts DESC LIMIT ?`).all(...s.params, limit)
 }
 // BACKFILL: notas YA activas pero sin el enriquecimiento nuevo (catkey/acciones/veredicto) — para poblar lo existente sin re-junkear.
 export function activeNotesMissingEnrichment({ limit = 30 } = {}) {
+  const s = _selfSecretAnd("m") // 🔒
   return db().prepare(`SELECT m.id, m.text, m.summary, m.mediaType, m.channel, m.ts FROM messages m
     JOIN note_meta n ON n.id = m.id
-    WHERE n.status='active' AND n.catkey IS NULL ORDER BY m.ts DESC LIMIT ?`).all(limit)
+    WHERE n.status='active' AND n.catkey IS NULL${s.sql} ORDER BY m.ts DESC LIMIT ?`).all(...s.params, limit)
 }
 export function setNoteMeta(id, { category = null, title = null, status = "active", ts = null, catkey = null, actions = null, verdict = null } = {}) {
   // catkey/actions/verdict son opcionales: si vienen null NO pisan lo ya guardado (COALESCE), así re-aprobar desde junk no borra el enriquecimiento.
@@ -112,22 +123,25 @@ export function listNotes({ category = null, status = "active", limit = 80 } = {
   const parts = ["n.status = @status"], p = { status, limit }
   if (category && category !== "all") { parts.push("n.category = @category"); p.category = category }
   // LEFT JOIN clips: el enriquecimiento de links/videos (título descriptivo + "para qué sirve") vive en `clips`, keyeado por m.id.
-  return db().prepare(`SELECT id, text, summary, mediaType, media, channel, ts, category, title, clip_title, para, status, pinned, catkey, actions, verdict FROM (
-      SELECT m.id, m.text, m.summary, m.mediaType, m.media, m.channel, m.ts, n.category, n.title, cl.title AS clip_title, cl.para AS para, n.status, n.catkey, n.actions, n.verdict,
+  // 🔒 traemos account/jid para descartar en JS las notas de canal secreto (no se puede mezclar params ? con los @named de acá).
+  return db().prepare(`SELECT id, text, summary, mediaType, media, channel, account, jid, ts, category, title, clip_title, para, status, pinned, catkey, actions, verdict FROM (
+      SELECT m.id, m.text, m.summary, m.mediaType, m.media, m.channel, m.account, m.jid, m.ts, n.category, n.title, cl.title AS clip_title, cl.para AS para, n.status, n.catkey, n.actions, n.verdict,
              MAX(n.pinned) OVER (PARTITION BY ${NKEY}) pinned,
              ROW_NUMBER() OVER (PARTITION BY ${NKEY} ORDER BY m.ts DESC, m.id DESC) rn
       FROM note_meta n JOIN messages m ON m.id = n.id
       LEFT JOIN clips cl ON cl.id = m.id
       WHERE ${parts.join(" AND ")})
-    WHERE rn = 1 ORDER BY pinned DESC, ts DESC LIMIT @limit`).all(p)
+    WHERE rn = 1 ORDER BY pinned DESC, ts DESC LIMIT @limit`).all(p).filter((r) => !isSecretSelfNote(r))
 }
 export function noteCategories() {
+  const s = _selfSecretAnd("m") // 🔒 no contar categorías provenientes de notas secretas
   return db().prepare(`SELECT category, COUNT(*) n FROM (
     SELECT n.category FROM note_meta n JOIN messages m ON m.id = n.id
-    WHERE n.status='active' AND n.category IS NOT NULL GROUP BY ${NKEY}) GROUP BY category ORDER BY n DESC`).all()
+    WHERE n.status='active' AND n.category IS NOT NULL${s.sql} GROUP BY ${NKEY}) GROUP BY category ORDER BY n DESC`).all(...s.params)
 }
 export function noteJunkCount() {
-  return db().prepare(`SELECT COUNT(*) c FROM (SELECT 1 FROM note_meta n JOIN messages m ON m.id = n.id WHERE n.status='junk' GROUP BY ${NKEY})`).get().c
+  const s = _selfSecretAnd("m") // 🔒
+  return db().prepare(`SELECT COUNT(*) c FROM (SELECT 1 FROM note_meta n JOIN messages m ON m.id = n.id WHERE n.status='junk'${s.sql} GROUP BY ${NKEY})`).get(...s.params).c
 }
 export function noteAction(id, action, category = null) {
   const D = db()
@@ -210,26 +224,27 @@ export function messageById(id) {
 // ── absorbidas en Wave 4 (signals — señales para coach/home) ──
 // mensajes salientes recientes (para detectar promesas cumplidas/pendientes). (era signals.promises)
 export function recentOutbound(since) {
-  return db().prepare("SELECT m.thread, m.text, m.ts, m.channel, s.last_ts FROM messages m LEFT JOIN thread_stats s ON s.thread=m.thread WHERE m.dir='out' AND m.ts>? AND length(m.text)>6 ORDER BY m.ts DESC LIMIT 800").all(since)
+  return db().prepare("SELECT m.thread, m.jid, m.text, m.ts, m.channel, m.account, s.last_ts FROM messages m LEFT JOIN thread_stats s ON s.thread=m.thread WHERE m.dir='out' AND m.ts>? AND length(m.text)>6 ORDER BY m.ts DESC LIMIT 800").all(since).filter((r) => !isSecretRow(r)) // 🔒
 }
 // hilos cuyo ÚLTIMO mensaje es entrante y tiene "?" (preguntas sin responder, sin grupos). (era signals.unansweredQuestions)
 export function lastInboundQuestions(since, { limit } = {}) {
-  return db().prepare(`SELECT m.thread, m.name, m.text, m.ts, m.channel, m.jid FROM messages m JOIN thread_stats s ON s.thread=m.thread AND s.last_ts=m.ts
-    WHERE m.dir!='out' AND m.ts>? AND m.text LIKE '%?%' AND length(m.text)>6 AND m.grp IS NULL AND m.thread NOT LIKE '%@g.us' ORDER BY m.ts DESC LIMIT ?`).all(since, limit)
+  return db().prepare(`SELECT m.thread, m.name, m.text, m.ts, m.channel, m.account, m.jid FROM messages m JOIN thread_stats s ON s.thread=m.thread AND s.last_ts=m.ts
+    WHERE m.dir!='out' AND m.ts>? AND m.text LIKE '%?%' AND length(m.text)>6 AND m.grp IS NULL AND m.thread NOT LIKE '%@g.us' ORDER BY m.ts DESC LIMIT ?`).all(since, limit).filter((r) => !isSecretRow(r)) // 🔒
 }
 // hilos cuyo ÚLTIMO mensaje es TUYO (saliente) — bola en su cancha. (era signals.waitingOnThem)
 export function lastOutboundPerThread(since, { limit } = {}) {
-  return db().prepare(`SELECT m.thread, m.text, m.ts, m.channel FROM messages m JOIN thread_stats s ON s.thread=m.thread AND s.last_ts=m.ts
-    WHERE m.dir='out' AND m.ts>? AND length(m.text)>10 AND m.thread NOT LIKE 'whatsapp:%@g.us' AND m.thread!='self' ORDER BY m.ts DESC LIMIT ?`).all(since, limit)
+  return db().prepare(`SELECT m.thread, m.text, m.ts, m.channel, m.account, m.jid FROM messages m JOIN thread_stats s ON s.thread=m.thread AND s.last_ts=m.ts
+    WHERE m.dir='out' AND m.ts>? AND length(m.text)>10 AND m.thread NOT LIKE 'whatsapp:%@g.us' AND m.thread!='self' ORDER BY m.ts DESC LIMIT ?`).all(since, limit).filter((r) => !isSecretRow(r)) // 🔒
 }
 // hilos cuyo ÚLTIMO mensaje es entrante (pendientes de respuesta, sin grupos). (era signals.pendingReplies)
 export function lastInboundPerThread(since, maxTs, { limit } = {}) {
-  return db().prepare(`SELECT m.thread, m.name, m.text, m.ts, m.channel, m.jid FROM messages m JOIN thread_stats s ON s.thread=m.thread AND s.last_ts=m.ts
-    WHERE m.dir!='out' AND m.ts>? AND m.ts<? AND length(m.text)>8 AND m.thread!='self' AND m.grp IS NULL AND m.thread NOT LIKE '%@g.us' ORDER BY m.ts DESC LIMIT ?`).all(since, maxTs, limit)
+  return db().prepare(`SELECT m.thread, m.name, m.text, m.ts, m.channel, m.account, m.jid FROM messages m JOIN thread_stats s ON s.thread=m.thread AND s.last_ts=m.ts
+    WHERE m.dir!='out' AND m.ts>? AND m.ts<? AND length(m.text)>8 AND m.thread!='self' AND m.grp IS NULL AND m.thread NOT LIKE '%@g.us' ORDER BY m.ts DESC LIMIT ?`).all(since, maxTs, limit).filter((r) => !isSecretRow(r)) // 🔒
 }
 // texto de las notas propias (Mis Notas) recientes. (era signals.recentNotes)
 export function selfNotesText({ limit } = {}) {
-  return db().prepare("SELECT text, ts FROM messages WHERE thread='self' AND text!='' AND length(text)>4 ORDER BY ts DESC LIMIT ?").all(limit)
+  const s = _selfSecretAnd("messages") // 🔒
+  return db().prepare(`SELECT text, ts FROM messages WHERE thread='self' AND text!='' AND length(text)>4${s.sql} ORDER BY ts DESC LIMIT ?`).all(...s.params, limit)
 }
 
 // ── absorbidas en Wave 4 (extract-actions + home-brief) ──
@@ -239,28 +254,32 @@ export function maxMessageTs(fallback = 0) {
 }
 // hilos 1:1 reales con actividad nueva desde una marca (excluye email/grupos/status/spam/self). (era extract-actions)
 export function activeThreadsSince(since, { limit } = {}) {
+  const h = _hideAnd("thread") // 🔒 excluye hilos 100%-secretos del extractor de acciones
   return db().prepare(`SELECT thread, MAX(ts) mx, MAX(name) name FROM messages
   WHERE ts > ? AND thread NOT LIKE '%@g.us' AND thread NOT LIKE 'whatsapp:!%' AND thread NOT LIKE 'email:%'
     AND thread NOT LIKE 'spam:%' AND thread NOT LIKE '%@newsletter%' AND thread NOT LIKE '%@broadcast%'
-    AND thread!='self' AND thread!=''
-  GROUP BY thread ORDER BY mx DESC LIMIT ?`).all(since, limit)
+    AND thread!='self' AND thread!=''${h.sql}
+  GROUP BY thread ORDER BY mx DESC LIMIT ?`).all(since, ...h.params, limit)
 }
 // cola de mensajes con texto de un hilo (para armar el transcript del extractor). (era extract-actions)
 export function threadTextTail(thread, { limit = 22 } = {}) {
-  return db().prepare("SELECT dir,name,text,ts FROM messages WHERE thread=? AND text IS NOT NULL AND text!='' ORDER BY ts DESC LIMIT ?").all(thread, limit)
+  // 🔒 transcript para el extractor de acciones — descarta mensajes de canal secreto (no generan todos/promesas sin 2º PIN)
+  return db().prepare("SELECT dir,name,text,ts,channel,account,jid FROM messages WHERE thread=? AND text IS NOT NULL AND text!='' ORDER BY ts DESC LIMIT ?").all(thread, limit).filter((m) => !isSecretRow({ ...m, thread }))
 }
 // mensajes (thread/ts/dir) para calcular la tasa de respuesta <24h de la Home. (era home-brief.computeKpis)
 export function messagesForResponseRate(since) {
+  const h = _hideAnd("thread") // 🔒 no computar la tasa de respuesta con hilos 100%-secretos
   return db().prepare(`SELECT thread, ts, dir FROM messages WHERE ts > ? AND dir IN ('in','out')
-      AND thread NOT LIKE '%@g.us' AND thread NOT LIKE 'whatsapp:!%' AND thread NOT LIKE 'email:%' AND thread!='self' AND thread!='' ORDER BY thread, ts`).all(since)
+      AND thread NOT LIKE '%@g.us' AND thread NOT LIKE 'whatsapp:!%' AND thread NOT LIKE 'email:%' AND thread!='self' AND thread!=''${h.sql} ORDER BY thread, ts`).all(since, ...h.params)
 }
 // nº de hilos 1:1 distintos a los que escribí desde una marca (contactos activos). (era home-brief)
 export function activeOutboundThreads(since) {
-  return db().prepare("SELECT COUNT(DISTINCT thread) c FROM messages WHERE dir='out' AND ts>? AND thread NOT LIKE '%@g.us' AND thread NOT LIKE 'whatsapp:!%' AND thread!='self'").get(since).c || 0
+  const h = _hideAnd("thread") // 🔒
+  return db().prepare(`SELECT COUNT(DISTINCT thread) c FROM messages WHERE dir='out' AND ts>? AND thread NOT LIKE '%@g.us' AND thread NOT LIKE 'whatsapp:!%' AND thread!='self'${h.sql}`).get(since, ...h.params).c || 0
 }
 // llamadas entrantes/perdidas recientes (mediaType='call'). (era home-brief.computeCalls)
 export function recentCalls(since, { limit = 30 } = {}) {
-  return db().prepare("SELECT thread, name, text, ts FROM messages WHERE mediaType='call' AND dir!='out' AND ts > ? ORDER BY ts DESC LIMIT ?").all(since, limit)
+  return db().prepare("SELECT thread, name, text, ts, jid, channel, account FROM messages WHERE mediaType='call' AND dir!='out' AND ts > ? ORDER BY ts DESC LIMIT ?").all(since, limit).filter((r) => !isSecretRow(r)) // 🔒
 }
 
 // ── absorbidas en Wave 5 (brain.mjs — reads) ──
@@ -328,7 +347,8 @@ export function topThreadsSince(since, { limit = 12 } = {}) {
 }
 // todos los mensajes de un hilo (cualquier dir) desde una marca. (era brain.summarizeChat)
 export function threadMessagesSinceAll(key, since, { limit = 500 } = {}) {
-  return db().prepare("SELECT * FROM messages WHERE thread=? AND ts > ? ORDER BY ts ASC LIMIT ?").all(key, since, limit)
+  // 🔒 resumen "lo que me perdí" — sin mensajes de canal secreto (hilos parciales)
+  return db().prepare("SELECT * FROM messages WHERE thread=? AND ts > ? ORDER BY ts ASC LIMIT ?").all(key, since, limit).filter((m) => !isSecretRow(m))
 }
 // filas para el índice de membresía de grupos (remitentes por grupo). (era brain.buildMembershipIndex)
 export function groupMembershipRows() {
@@ -354,7 +374,9 @@ export function threadInboundSenders(key, { limit = 30 } = {}) {
 }
 // rowids de mensajes con texto útil de un hilo (para muestrear la relación). (era brain.buildPersonCard)
 export function threadTextRowids(key) {
-  return db().prepare("SELECT rowid FROM messages WHERE thread=? AND text!='' AND text NOT LIKE 'http%' AND text NOT LIKE '%Nota de voz%' ORDER BY ts").all(key)
+  // 🔒 el person-card no debe muestrear mensajes de canal secreto (contacto parcial con línea secreta + no-secreta)
+  return db().prepare("SELECT rowid, channel, account, jid FROM messages WHERE thread=? AND text!='' AND text NOT LIKE 'http%' AND text NOT LIKE '%Nota de voz%' ORDER BY ts").all(key)
+    .filter((r) => !isSecretRow({ ...r, thread: key })).map((r) => ({ rowid: r.rowid }))
 }
 // mensajes (dir,text) por un set de rowids, en orden cronológico. (era brain.buildPersonCard)
 export function messagesByRowids(rowids = []) {

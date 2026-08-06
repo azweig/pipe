@@ -2,6 +2,10 @@
 // Cuerpos movidos verbatim desde db.mjs; `db` = alias de handle() de db-core.
 // Los identificadores dinámicos de tabla se resuelven por allowlist (ver clipFlag: field ∈ {pinned, archived}).
 import { handle as db, withRetry } from "./db-core.mjs"
+import { secretSelfClause, secretThreadKeys } from "./secret.mjs"
+
+// 🔒 " AND NOT (<secret>)" para queries de 'self' (Notas): oculta clips de canal secreto sin 2º PIN.
+function _selfSecretAnd(alias = "m") { const c = secretSelfClause(alias); return c.clause ? { sql: ` AND NOT (${c.clause})`, params: c.params } : { sql: "", params: [] } }
 
 // pin/archivo de un clip (por id del mensaje self). Crea la fila de clip si no existía (aún sin enriquecer).
 export function clipFlag(id, field, on) {
@@ -13,16 +17,20 @@ export function clipFlag(id, field, on) {
 }
 
 export function getMeta(k) { const r = db().prepare("SELECT v FROM meta WHERE k=?").get(k); return r ? r.v : null }
+export function delMeta(k) { return withRetry(() => db().prepare("DELETE FROM meta WHERE k=?").run(k)) }
+// borra por PREFIJO (personcard:/mtgcard:/espcard:). El prefijo es literal (sin comodines del dominio) → no escapamos.
+export function delMetaLike(prefix) { return withRetry(() => db().prepare("DELETE FROM meta WHERE k LIKE ?").run(String(prefix) + "%")) }
 export function setMeta(k, v) { return withRetry(() => db().prepare("INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=?").run(k, String(v), String(v))) }
 export function count() { return db().prepare("SELECT COUNT(*) c FROM messages").get().c }
 
 // ── clips absorbidos en Wave 3 ──
 // mensajes de 'self' que aún no tienen fila en clips (candidatos a enriquecer). (era clips.run)
 export function clipCandidates({ limit } = {}) {
+  const s = _selfSecretAnd("m") // 🔒 no enriquecer (ni persistir) clips de notas secretas
   return db().prepare(`SELECT m.id, m.text, m.mediaType, m.media, m.filename, m.summary, m.ts FROM messages m
     LEFT JOIN clips c ON c.id = m.id
-    WHERE m.thread='self' AND c.id IS NULL AND (m.text IS NOT NULL OR m.mediaType IS NOT NULL)
-    ORDER BY m.ts DESC LIMIT ?`).all(limit)
+    WHERE m.thread='self' AND c.id IS NULL AND (m.text IS NOT NULL OR m.mediaType IS NOT NULL)${s.sql}
+    ORDER BY m.ts DESC LIMIT ?`).all(...s.params, limit)
 }
 // inserta un clip enriquecido (idempotente por id, OR IGNORE). archived=1 oculta spam/sin-sentido. (era clips.run)
 export function insertClip(id, ts, kind, url, title, para, archived, created) {
@@ -42,15 +50,17 @@ export function insertPromesa(id, text, thread, name, due, ts, created, cita) {
 }
 // listados de PENDIENTES (para el server MCP read-only). Solo lo no-hecho, con la cita textual que respalda cada ítem.
 export function listTodos({ limit = 50 } = {}) {
-  return db().prepare("SELECT id, text, thread, name, due, cita, ts, created FROM todos WHERE done=0 ORDER BY created DESC LIMIT ?").all(Math.min(+limit || 50, 100))
+  const sk = secretThreadKeys() // 🔒 el MCP read-only tampoco expone acciones de hilos secretos
+  return db().prepare("SELECT id, text, thread, name, due, cita, ts, created FROM todos WHERE done=0 ORDER BY created DESC LIMIT ?").all(Math.min(+limit || 50, 100)).filter((r) => !sk.has(r.thread))
 }
 export function listPromesas({ limit = 50 } = {}) {
-  return db().prepare("SELECT id, text, thread, name, due, cita, ts, created FROM promesas WHERE done=0 ORDER BY created DESC LIMIT ?").all(Math.min(+limit || 50, 100))
+  const sk = secretThreadKeys() // 🔒
+  return db().prepare("SELECT id, text, thread, name, due, cita, ts, created FROM promesas WHERE done=0 ORDER BY created DESC LIMIT ?").all(Math.min(+limit || 50, 100)).filter((r) => !sk.has(r.thread))
 }
 // ítems abiertos (done=0) de todos|promesas. kind por allowlist. Defensivo (nunca tira). (era home-brief.openActions)
 export function openActionItems(kind, { limit = 6 } = {}) {
   const tbl = _ACTION_TABLES[kind]; if (!tbl) return []
-  try { return db().prepare(`SELECT id,text,name,due,thread,ts FROM ${tbl} WHERE done=0 ORDER BY ts DESC LIMIT ?`).all(limit) } catch { return [] }
+  try { const sk = secretThreadKeys(); return db().prepare(`SELECT id,text,name,due,thread,ts FROM ${tbl} WHERE done=0 ORDER BY ts DESC LIMIT ?`).all(limit).filter((r) => !sk.has(r.thread)) } catch { return [] } // 🔒
 }
 // marca una tarea/promesa como hecha. kind: "prom"→promesas, cualquier otro→todos (fiel al original). Tabla por allowlist, nunca input crudo. (era brain.actionDone)
 const _DONE_TABLES = { prom: "promesas", promesas: "promesas", todo: "todos", todos: "todos" }
@@ -79,9 +89,11 @@ export function clipsForNotes({ kind = "all", before = 0, limit = 40 } = {}) {
   else if (kind === "todo") where += " AND c.kind='todo'"
   else if (kind === "archived") where += " AND c.archived=1"
   if (kind !== "archived") where += " AND (c.archived IS NULL OR c.archived=0)" // los archivados NO estorban salvo que los pidas
-  return db().prepare(`${_CLIP_SEL} WHERE ${where} ORDER BY m.ts DESC LIMIT ?`).all(b, limit)
+  const s = _selfSecretAnd("m") // 🔒 el feed de Notas no muestra clips de canal secreto sin 2º PIN
+  return db().prepare(`${_CLIP_SEL} WHERE ${where}${s.sql} ORDER BY m.ts DESC LIMIT ?`).all(b, ...s.params, limit)
 }
 // clips fijados (self, no archivados) para mostrar arriba. (era brain.notesClips)
 export function pinnedNotesClips() {
-  return db().prepare(`${_CLIP_SEL} WHERE m.thread='self' AND c.pinned=1 AND (c.archived IS NULL OR c.archived=0) ORDER BY m.ts DESC`).all()
+  const s = _selfSecretAnd("m") // 🔒
+  return db().prepare(`${_CLIP_SEL} WHERE m.thread='self' AND c.pinned=1 AND (c.archived IS NULL OR c.archived=0)${s.sql} ORDER BY m.ts DESC`).all(...s.params)
 }

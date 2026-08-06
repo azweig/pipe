@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync, existsSync } from "fs"
 import { tz } from "./lib/hub.mjs"
 import { inbound1to1Since, totalUnread as getTotalUnread } from "./lib/db.mjs"
 import { threadIsSpam } from "./lib/spam.mjs"
+import { secretThreadKeys, secretUnread, isSecretMsg } from "./lib/secret.mjs"
 
 const F = "./data/msg-push-state.json"
 const NOW = Date.now()
@@ -12,7 +13,8 @@ const since = st.lastTs || NOW - 5 * 60000
 const THROTTLE = 10 * 60000, MAX = 6
 
 // mensajes entrantes nuevos, SOLO de conversaciones 1:1 (excluye grupos/canales/spam)
-const rows = inbound1to1Since(since)
+// 🔒 POR-MENSAJE: nunca notificar un mensaje de un número/cuenta secreto (aunque el hilo sea parcial, el preview delataría)
+const rows = inbound1to1Since(since).filter((r) => !isSecretMsg(r))
 
 const maxTs = rows.reduce((m, r) => Math.max(m, r.ts || 0), st.lastTs || 0)
 // agrupar por hilo → contar + último texto
@@ -32,10 +34,12 @@ const muted = new Set(prefs.mutedThreads || [])
 // avatar del remitente (foto) + total de no-leídos para el badge del ícono
 const avatars = existsSync("./data/avatars.json") ? JSON.parse(readFileSync("./data/avatars.json", "utf8")) : {}
 const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s*\(wa\)$/, "").trim()
-const totalUnread = getTotalUnread()
+const secretKeys = secretThreadKeys()                     // 🔒 hilos de cuentas secretas → NUNCA notificar ni contar (el preview delataría)
+const totalUnread = Math.max(0, getTotalUnread() - secretUnread())
 
 const toPush = []
 for (const [thread, m] of byThread) {
+  if (secretKeys.has(thread)) continue // 🔒 cuenta secreta → sin push (aunque el server esté "bloqueado", el mensaje NO se anuncia)
   if (NOW - (st.byThread[thread] || 0) < THROTTLE) continue // ya avisé de este hilo hace poco
   if (muted.has(thread)) continue // hilo silenciado por el usuario
   if (threadIsSpam(thread, m.jid, m.name, m.last)) continue // NO notificar spam (estructural o veredicto LLM), salvo des-marcado

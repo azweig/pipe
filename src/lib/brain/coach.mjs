@@ -4,12 +4,14 @@ import { ownerFirst, company } from "../hub.mjs"
 import { llm } from "../llm.mjs"
 import { promises as sigPromises, unansweredQuestions as sigQuestions, waitingOnThem as sigWaiting } from "../signals.mjs"
 import { latestThreadLike, sentCountSince, recvCountSince, topThreadsSince, markDone } from "../db.mjs"
+import { secretThreadKeys } from "../secret.mjs" // 🔒 el coach lee nudges de un archivo CACHEADO por cron → filtrar en LECTURA por hilo secreto (el cache puede ser previo a marcar la cuenta)
 import { jf, threadName } from "./kernel/contacts.mjs"
 import { matchObjetivo } from "./kernel/objetivos.mjs"
 
 const SELF_MODEL = "./vault/_Brain/self-model.md" // path compartido con brain (const puro, se copia para no importar de la fachada en eval-time)
 
 let _coachCache = { ts: 0 } // la pestaña IA/Coach la pide seguido; los datos cambian lento (coach cada 4h)
+export function invalidateCoach() { _coachCache = { ts: 0 } } // 🔒 al marcar/desmarcar una cuenta secreta (o feedback de nudge)
 export function coachData() {
   // stale-while-revalidate: si hay data (aunque venza), la devuelvo YA y refresco en background → siempre instantáneo
   if (_coachCache.data) {
@@ -33,7 +35,9 @@ function _computeCoach() {
     if (num) { try { const r = latestThreadLike(`whatsapp:${num[1]}@%`); if (r?.thread) return r.thread } catch {} }
     return null
   }
+  const _sk = secretThreadKeys() // 🔒 hilos 100%-secretos → ningún nudge/proposal que apunte a ellos, aunque el cache sea viejo
   const mk = (n) => ({ key: n.key, convKey: _convKey(n), subject: n.subject || n.title, type: n.type, insight: n.insight || n.rationale || "", steps: n.steps || [], priority: prio(n), times: n.times_surfaced || 1 })
+  const notSecret = (n) => !(n.convKey && _sk.has(n.convKey))
   const dedup = (arr) => { const seen = {}; for (const n of arr) { const k = (n.subject || "").toLowerCase().trim(); if (!seen[k] || n.priority > seen[k].priority) seen[k] = n } return Object.values(seen) }
   // señales crudas (accionables, tappables al hilo) — Fase 1
   let promises = [], questions = [], waiting = []
@@ -45,8 +49,8 @@ function _computeCoach() {
   const data = {
     brief: jf("coach-brief.json") || null,
     promises, questions, waiting,
-    nudges: dedup(open.filter((n) => n.kind === "nudge").map(mk)).sort((a, b) => b.priority - a.priority || b.times - a.times),
-    proposals: dedup(open.filter((n) => n.kind === "proposal").map(mk)),
+    nudges: dedup(open.filter((n) => n.kind === "nudge").map(mk).filter(notSecret)).sort((a, b) => b.priority - a.priority || b.times - a.times),
+    proposals: dedup(open.filter((n) => n.kind === "proposal").map(mk).filter(notSecret)),
     updated: existsSync("./data/coach-report.md") ? (readFileSync("./data/coach-report.md", "utf8").match(/# 🧠 Coach — (.*)/)?.[1] || "") : "",
   }
   _coachCache = { ts: Date.now(), data }

@@ -1,6 +1,7 @@
 // espacios-repo — matching de mensajes por reglas de espacio (email/dominio/teléfono/nombre).
 // Cuerpo movido verbatim desde db.mjs; `db` = alias de handle() de db-core.
 import { handle as db } from "./db-core.mjs"
+import { secretMsgExcludeSql, isSecretRow } from "./secret.mjs" // 🔒 los espacios (rollup + inbox + vista) no incluyen fuente secreta sin 2º PIN
 
 // mensajes que matchean las reglas de un espacio: email exacto, dominio (@colegio.edu.pe), teléfono, o nombre.
 // matchea mensajes por reglas (email/dominio/teléfono/nombre) DINÁMICAMENTE → retroactivo por diseño (toda la DB, pasado y futuro).
@@ -23,8 +24,11 @@ export function espacioMessages(rules = [], { limit = 20, exclude = [], sinceTs 
   let where = "(" + inc.clauses.join(" OR ") + ")"
   const args = [...inc.args]
   if (exc.clauses.length) { where += " AND NOT (" + exc.clauses.join(" OR ") + ")"; args.push(...exc.args) }
+  const sec = secretMsgExcludeSql() // 🔒 resta mensajes de fuente secreta del count/unread/recent
+  if (sec.clause) { where += ` AND NOT (${sec.clause})`; args.push(...sec.params) }
   const count = db().prepare(`SELECT COUNT(*) c FROM messages WHERE ${where}`).get(...args).c
-  const recent = db().prepare(`SELECT channel,name,text,ts,dir,thread FROM messages WHERE ${where} ORDER BY ts DESC LIMIT ?`).all(...args, limit)
+  // recent trae jid/account para el filtro fino por-mensaje (cubre también imports sin dueño en hilo parcial secreto)
+  const recent = db().prepare(`SELECT channel,name,text,ts,dir,thread,jid,account FROM messages WHERE ${where} ORDER BY ts DESC LIMIT ?`).all(...args, limit).filter((r) => !isSecretRow(r))
   // no leídos: entrantes más nuevos que la última vez que abrí el espacio
   const unread = sinceTs ? db().prepare(`SELECT COUNT(*) c FROM messages WHERE ${where} AND dir='in' AND ts>?`).get(...args, sinceTs).c : 0
   return { count, recent, unread }

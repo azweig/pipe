@@ -4,6 +4,7 @@ import { writeFileSync } from "fs"
 import { tz, ownerFirst } from "./lib/hub.mjs"
 import { setBusyTimeout, upsertMetric, metricHistory, messagesForResponseRate, activeOutboundThreads, recentCalls, openActionItems, setMeta } from "./lib/db.mjs"
 import { listThreads, agenda, coachData } from "./lib/brain.mjs"
+import { secretGate } from "./lib/secret.mjs" // 🔒 la Home (cron, sin 2º PIN) no hornea nada de fuente secreta
 import { llm } from "./lib/llm.mjs"
 import { tts } from "./lib/voice.mjs"
 import { newsSearch, hasWebSearch } from "./lib/research.mjs"
@@ -178,7 +179,10 @@ Devolvé SOLO el texto del briefing.`
 export async function generateHomeBrief() {
   const t0 = Date.now()
   try { setBusyTimeout(8000) } catch {} // esperar el lock del server en vez de fallar (SQLITE_BUSY)
-  const threads = listThreads({ limit: 400 })
+  let threads = listThreads({ limit: 400 })
+  // 🔒 igual que /api/threads pero SIN 2º PIN (el cron nunca tiene sesión): saca hilos 100%-secretos y parcha el preview de los parciales
+  const _g = secretGate()
+  if (_g.any) threads = threads.filter((t) => !_g.hide.has(t.key)).map((t) => { const p = _g.preview.get(t.key); return p ? { ...t, lastText: (p.text || "").slice(0, 120), ts: p.ts } : t })
   const ag = agenda()
   const coach = coachData()
   const today = new Date().toISOString().slice(0, 10)
@@ -212,6 +216,7 @@ export async function generateHomeBrief() {
   const focoName = (foco?.name || "").toLowerCase()
   const n0 = (coach.nudges || []).find((n) => {
     if (!n.subject || !n.insight) return false // nudge malformado (sin datos) → descartar
+    if (n.convKey && _g.hide.has(n.convKey)) return false // 🔒 nudge de un hilo 100%-secreto → nunca en la Home
     const s = (n.subject || "").toLowerCase()
     if (focoName && s.includes(focoName.split(" ")[0])) return false // mismo contacto que el foco → no repetir
     return true
