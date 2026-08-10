@@ -222,3 +222,17 @@ test("audioExt: mime → extensión canónica que Whisper acepta por nombre de a
     assert.equal(inlineCidImages("<p>sin imágenes</p>", [att], read), "<p>sin imágenes</p>")
   })
 }
+
+{
+  const { inlineCidImages } = await import("../src/lib/email-inline.mjs")
+  test("inlineCidImages: la MISMA imagen repetida se lee del CAS una sola vez", () => {
+    const png = Buffer.alloc(64, 7)
+    let reads = 0
+    const read = () => { reads++; return png }
+    const att = { cas: "/cas/aa/h.png", cid: "logo@x", mime: "image/png", size: png.length, inline: true }
+    const html = Array.from({ length: 20 }, () => '<img src="cid:logo@x">').join("")
+    const out = inlineCidImages(html, [att], read)
+    assert.equal(reads, 1, "debe leer el blob una vez, no una por ocurrencia")
+    assert.equal((out.match(/data:image\/png/g) || []).length, 20, "las 20 ocurrencias quedan resueltas")
+  })
+}
