@@ -12,6 +12,8 @@ import { ImapFlow } from "imapflow"
 import { simpleParser } from "mailparser"
 import { readFileSync, existsSync, writeFileSync } from "fs"
 import { PublicClientApplication } from "@azure/msal-node"
+import { loadEnv } from "./lib/env.mjs"
+loadEnv() // standalone (no lo lanza el daemon) → sin esto no hay MS_CLIENT_ID y Outlook queda afuera
 import { emailsMissingInline, setAttachments, getAttachments } from "./lib/db.mjs"
 import { casPutBuffer } from "./lib/cas.mjs"
 import { decSecret } from "./lib/secrets.mjs"
@@ -39,11 +41,27 @@ const pend = emailsMissingInline({ limit: LIMIT })
 console.log(`[inline] ${pend.length} correos sin sus imágenes inline (lote de ${LIMIT})`)
 if (!pend.length) { console.log("[inline] 0 pendientes — nada que hacer"); process.exit(0) }
 
-// Graph usa ids opacos; IMAP usa el Message-ID entre <>. Ese es el discriminador.
+// Tres formatos de id conviven: IMAP = "email:<message-id>", Graph = "email:AQMk…" (opaco),
+// y los SINTÉTICOS viejos "email:<ts>:<remitente>" — esos no tienen con qué volver al origen: se saltean.
 const isImap = (id) => id.startsWith("email:<")
-const graph = pend.filter((r) => !isImap(r.id))
+const isSynthetic = (id) => /^email:\d+:/.test(id)
+const skipped = pend.filter((r) => isSynthetic(r.id))
+const graph = pend.filter((r) => !isImap(r.id) && !isSynthetic(r.id))
 const imap = pend.filter((r) => isImap(r.id))
+if (skipped.length) console.log(`[inline] ${skipped.length} sin referencia al origen (id sintético viejo) → no recuperables`)
 let done = 0, imgs = 0
+// la DB la comparte el daemon (que escribe seguido) → un UPDATE puede chocar. Reintentar con backoff en vez de perder el trabajo.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+async function saveAtts(id, json) {
+  for (let i = 0; i < 6; i++) {
+    try { setAttachments(id, json); return true } catch (e) {
+      if (!/locked|busy/i.test(e.message)) throw e
+      await sleep(250 * (i + 1))
+    }
+  }
+  console.log("[inline] ✗ DB ocupada, no pude guardar", id.slice(0, 30))
+  return false
+}
 
 // ── Outlook / Microsoft Graph ──
 if (graph.length) {
@@ -70,7 +88,7 @@ if (graph.length) {
           const cas = casPutBuffer(buf, extOf(a.name, a.contentType), "email/attach")
           inl.push({ name: a.name || "imagen", cas, mime: a.contentType || "", size: buf.length, inline: true, cid: String(a.contentId || "").replace(/^<|>$/g, "") })
         }
-        if (inl.length && !DRY) setAttachments(row.id, merge(row.id, inl))
+        if (inl.length && !DRY) { if (!(await saveAtts(row.id, merge(row.id, inl)))) continue }
         if (inl.length) { done++; imgs += inl.length; console.log(`[inline] ✓ ${inl.length} img · ${String(row.text || "").slice(0, 50)}`) }
       } catch (e) { console.log("[inline] ✗ graph:", e.message) }
     }
@@ -103,7 +121,7 @@ if (imap.length) {
           inl.push({ name: a.filename || "imagen", cas, mime: a.contentType || "", size: a.content.length, inline: true, cid: String(a.cid || a.contentId || "").replace(/^<|>$/g, "") })
         }
         pending.delete(msgid)
-        if (inl.length && !DRY) setAttachments(row.id, merge(row.id, inl))
+        if (inl.length && !DRY) { if (!(await saveAtts(row.id, merge(row.id, inl)))) continue }
         if (inl.length) { done++; imgs += inl.length; console.log(`[inline] ✓ ${inl.length} img · ${String(row.text || "").slice(0, 50)}`) }
       } catch (e) { console.log("[inline] ✗ imap:", e.message) }
     }
@@ -111,6 +129,6 @@ if (imap.length) {
   }
 }
 
-console.log(`[inline] LISTO${DRY ? " (dry-run)" : ""}: ${done}/${pend.length} correos completados · ${imgs} imágenes al CAS`)
+console.log(`[inline] LISTO${DRY ? " (dry-run)" : ""}: ${done}/${pend.length - skipped.length} recuperables completados · ${imgs} imágenes al CAS`)
 console.log("[inline] volvé a correrlo para el siguiente lote (termina cuando diga '0 pendientes')")
 process.exit(0)
