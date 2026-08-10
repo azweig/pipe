@@ -8,11 +8,13 @@ import { join, basename } from "path"
 import { execFile } from "child_process"
 import { promisify } from "util"
 import { tmpdir } from "os"
-import { threadsSummary as dbThreads, repliedThreads, getBody as dbGetBody, threadMediaGallery, threadPage as dbThreadPage, threadCount as dbThreadCount, threadMessagesTail as dbThreadMsgs, threadSince as dbThreadSince, threadUnreadCount as dbUnreadCount, search as dbSearch, threadMessagesSinceAll, threadDelta as dbThreadDelta, threadMaxRev as dbThreadMaxRev } from "../db.mjs"
+import { threadsSummary as dbThreads, repliedThreads, getBody as dbGetBody, getAttachments as dbGetAttachments, threadMediaGallery, threadPage as dbThreadPage, threadCount as dbThreadCount, threadMessagesTail as dbThreadMsgs, threadSince as dbThreadSince, threadUnreadCount as dbUnreadCount, search as dbSearch, threadMessagesSinceAll, threadDelta as dbThreadDelta, threadMaxRev as dbThreadMaxRev } from "../db.mjs"
 import { autopilotSentIds, listAutopilot, getAutopilot, listEscalations, clearEscalation } from "./autopilot.mjs" // 🤖 tag de mensajes/contactos del piloto automático
 import { secretThreadKeys, isSecretMsg } from "../secret.mjs" // 🔒 cuentas/números secretos (excluir de bandeja/búsqueda; filtrar por-mensaje en el hilo)
 import { jidOfKey, canonOfKey, numOf, initials, stripWA, norm, plural, isContainerJid } from "./kernel/keys.mjs"
 import { enrichCovert, getCovert } from "./covert.mjs"
+import { casReadBuffer } from "../cas.mjs" // imágenes inline del email (cid:) → data: URI
+import { inlineCidImages } from "../email-inline.mjs"
 import { jf, waGroups, avatarMap, contactName, photoFor } from "./kernel/contacts.mjs"
 import { peopleNodes, cardFor, fm } from "./kernel/vault.mjs"
 import { cleanMsg } from "./kernel/convo.mjs"
@@ -129,7 +131,15 @@ export function listThreads({ limit = 200 } = {}, { cache = true } = {}) {
 }
 
 // ── LECTURAS DE HILO / BANDEJA (movidas desde brain en M4 tranche b) ──
-export function emailBody(id) { return dbGetBody(id) }
+// Cuerpo del email listo para mostrar: las imágenes INLINE (src="cid:xxx") se reemplazan por data: URIs leídas del CAS.
+// Por qué data: y no /cas/… → el visor es un iframe SANDBOXEADO (origin null, sin cookies): una URL del hub daría 401. Y el
+// CSP del visor sólo permite img-src data:, que es justo lo que bloquea los pixeles de tracking remotos. Las dos cosas conviven.
+export function emailBody(id) {
+  const body = dbGetBody(id)
+  if (!body || !/\bcid:/i.test(body)) return body
+  let atts = []; try { atts = JSON.parse(dbGetAttachments(id) || "[]") || [] } catch {}
+  return inlineCidImages(body, atts, casReadBuffer)
+}
 
 // GALERÍA: todos los adjuntos (fotos/docs/videos/audios) intercambiados en un hilo. Para la vista "📎 Adjuntos" del contacto.
 export function threadMedia(key) {

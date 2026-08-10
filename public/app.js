@@ -2599,11 +2599,12 @@ window.loadOlder = async () => {
     renderConv()
   } else { d.hasMore = false; idbSave(d.key, [], { hasMore: false }); renderConv() }
 }
-const emailIframe = (it) => {
+const emailIframe = (it, allowRemote = false) => {
   const raw = it.body || `<pre style="white-space:pre-wrap;font-family:system-ui;font-size:14px">${(it.full || it.text || "").replace(/</g, "&lt;").replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#4f46e5">$1</a>')}</pre>`
   // CSP dentro del email: bloquea TODO recurso remoto (img-src data: → sin imágenes remotas). Mata pixeles de tracking /
   // read-receipts (el remitente no se entera de que abriste ni tu IP). Las imágenes inline (data:) sí se ven. Como Gmail.
-  const csp = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; font-src data:">'
+  // allowRemote=true solo cuando VOS tocás "Mostrar imágenes" en ese correo (decisión explícita, no por defecto).
+  const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:${allowRemote ? " https:" : ""}; style-src 'unsafe-inline'; font-src data:">`
   const doc = '<!doctype html>' + csp + '<meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>body{margin:0;padding:12px;font-family:system-ui;color:#111;line-height:1.5;word-break:break-word}img{max-width:100%!important;height:auto}table{max-width:100%!important}</style>' + raw
   const srcdoc = doc.replace(/&/g, "&amp;").replace(/"/g, "&quot;") // escape para el atributo srcdoc
   // sandbox sin allow-scripts (bloquea JS/XSS) pero permite imágenes; allow-popups deja abrir links en pestaña nueva
@@ -2615,10 +2616,36 @@ window.showEmailFull = async (id) => {
   openSheet(`<div class="row" style="gap:8px">${ORB}<b>Abriendo ${mtg ? "transcripción" : "email"}…</b></div>`)
   let body = it.body
   if (!body && it.hasBody) { const r = await api("/api/email/body?id=" + enck(id)); body = r && r.body }
-  let atts = []; try { atts = JSON.parse(it.attachments || "[]") } catch {}
+  // los adjuntos INLINE (las imágenes del cuerpo, cid:) ya se ven dentro del correo → no se listan como archivos
+  let atts = []; try { atts = (JSON.parse(it.attachments || "[]") || []).filter((a) => !a.inline) } catch {}
   const kb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB")
   const attHtml = atts.length ? `<div style="margin:8px 0 4px;font-weight:600;font-size:14px">📎 ${atts.length} adjunto${atts.length > 1 ? "s" : ""}</div><div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">${atts.map((a) => `<div class="card itemtap" style="padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:pointer" onclick="window.open(${escj(a.cas)},'_blank')"><span style="font-size:20px">📄</span><div style="flex:1;min-width:0"><div class="b" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(a.name)}</div><div class="sub">${esc((a.mime || "").split("/").pop() || "archivo")} · ${kb(a.size || 0)}</div></div><span style="color:var(--accent)">↓</span></div>`).join("")}</div>` : ""
-  openSheet(`<h2 style="margin:0">${mtg ? "🎙 Reunión" : "📧 Email"}</h2><div class="sub" style="margin:6px 0 10px">${esc((it.text || "").split(" — ")[0].replace(/^📅\s*/, ""))} · ${esc(it.name || "")}</div>${attHtml}${emailIframe({ ...it, body })}`)
+  _emailOpen = { id, body, mtg } // para "responder" y "mostrar imágenes" desde los botones de la hoja
+  const remote = /<img[^>]+src=["']https?:/i.test(body || "") // el CSP las bloquea por defecto (anti-tracking) → ofrecer mostrarlas
+  openSheet(`<h2 style="margin:0">${mtg ? "🎙 Reunión" : "📧 Email"}</h2><div class="sub" style="margin:6px 0 10px">${esc((it.text || "").split(" — ")[0].replace(/^📅\s*/, ""))} · ${esc(it.name || "")}</div>
+    ${mtg ? "" : `<div class="row" style="gap:8px;margin-bottom:10px">
+      <button class="btn" style="flex:1" onclick="replyToEmail(false)">✍️ Responder</button>
+      <button class="btn ghost" style="flex:1" onclick="replyToEmail(true)">✨ Responder con IA</button></div>`}
+    ${remote ? `<div id="emImgBar" class="card" style="padding:9px 12px;margin-bottom:10px;display:flex;align-items:center;gap:10px"><span style="font-size:17px">🖼</span><div style="flex:1;min-width:0"><div class="b" style="font-size:13.5px">Imágenes remotas bloqueadas</div><div class="tiny muted">Se bloquean para que el remitente no sepa que lo abriste</div></div><button class="btn" style="padding:6px 12px;flex:0 0 auto" onclick="showRemoteImages()">Mostrar</button></div>` : ""}
+    ${attHtml}<div id="emailFrame">${emailIframe({ ...it, body })}</div>`)
+}
+let _emailOpen = null
+// re-renderiza el visor permitiendo imágenes remotas SOLO para este correo (decisión explícita, como el "mostrar imágenes" de Gmail)
+window.showRemoteImages = () => {
+  if (!_emailOpen) return
+  const box = document.getElementById("emailFrame"); if (!box) return
+  box.innerHTML = emailIframe({ body: _emailOpen.body }, true)
+  const bar = document.getElementById("emImgBar"); if (bar) bar.remove()
+}
+// responder el correo desde el visor: cierra la hoja, apunta el compositor al canal EMAIL y (opcional) pide el borrador a la IA
+window.replyToEmail = (withAi) => {
+  const em = (convState.targets || []).find((t) => t.channel === "email")
+  if (em) convState.target = em
+  closeSheet()
+  renderConv()
+  if (withAi) return aiSuggest()
+  const inp = document.getElementById("msgInput")
+  if (inp) { inp.focus(); inp.scrollIntoView({ block: "center" }) }
 }
 window.viewMedia = async (key) => {
   openSheet(`<div class="row" style="gap:8px">${ORB}<b>Cargando adjuntos…</b></div>`)

@@ -64,10 +64,17 @@ async function poll(token) {
         const at = await graph(token, `/me/messages/${m.id}/attachments`)
         const atts = []
         for (const a of (at.value || [])) {
-          if (a["@odata.type"] !== "#microsoft.graph.fileAttachment" || a.isInline || !a.contentBytes) continue // inline (cid:) o no-archivo → saltar
+          if (a["@odata.type"] !== "#microsoft.graph.fileAttachment" || !a.contentBytes) continue // no-archivo → saltar
           const buf = Buffer.from(a.contentBytes, "base64")
           if (buf.length > 25 * 1024 * 1024) continue // cap 25MB
-          try { const cas = casPutBuffer(buf, attExt(a.name, a.contentType), "email/attach"); atts.push({ name: a.name || "adjunto", cas, mime: a.contentType || "", size: buf.length }) } catch {}
+          // las INLINE (isInline, referenciadas por cid: en el HTML) también se guardan: son las imágenes del cuerpo.
+          // Antes se descartaban y el visor mostraba recuadros vacíos. Marcadas inline:true + cid → el server las mete como data:.
+          try {
+            const cas = casPutBuffer(buf, attExt(a.name, a.contentType), "email/attach")
+            const rec2 = { name: a.name || (a.isInline ? "imagen" : "adjunto"), cas, mime: a.contentType || "", size: buf.length }
+            if (a.isInline) { rec2.inline = true; rec2.cid = String(a.contentId || "").replace(/^<|>$/g, "") }
+            atts.push(rec2)
+          } catch {}
         }
         if (atts.length) { rec.attachments = JSON.stringify(atts); console.log(`   📎 ${atts.length} adjunto(s)`) }
       } catch (e) { console.log("[outlook] adjuntos no bajaron:", e.message) }

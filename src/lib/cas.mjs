@@ -83,6 +83,16 @@ export function casUrlByHash(hash) {
   return row ? pubOf(hash, row.ext) : null
 }
 
+// lee un blob por su ruta pública (/cas/xx/<hash><ext>) → Buffer, o null si no está. Para inlinear imágenes de email como data: URI.
+export function casReadBuffer(pub) {
+  const hash = hashOf(pub)
+  if (!/^[a-f0-9]{64}$/.test(hash)) return null
+  const row = db().prepare("SELECT ext FROM blobs WHERE hash=?").get(hash)
+  const ext = row?.ext ?? ("." + (String(pub).split(".").pop() || "bin"))
+  const dest = join(CAS, hash.slice(0, 2), hash + ext)
+  try { return existsSync(dest) ? readFileSync(dest) : null } catch { return null }
+}
+
 // borra un blob por su ruta pública → libera disco. El caller decide la seguridad (que nadie lo referencie). Devuelve bytes liberados.
 export function casDelete(pub) {
   const hash = hashOf(pub)

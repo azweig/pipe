@@ -50,9 +50,18 @@ async function parseBody(source) {
     const body = p.html || (p.textAsHtml ? p.textAsHtml : (p.text ? `<pre>${p.text}</pre>` : null))
     const atts = []
     for (const a of (p.attachments || [])) {
-      if (a.related || !a.content || !a.content.length) continue // imagen inline (cid: del HTML) o vacío → no es adjunto de verdad
-      if (a.content.length > 25 * 1024 * 1024) continue          // cap 25MB (no reventar el CAS con un adjunto gigante)
-      try { const cas = casPutBuffer(a.content, attExt(a.filename, a.contentType), "email/attach"); atts.push({ name: a.filename || "adjunto", cas, mime: a.contentType || "", size: a.content.length }) } catch (e) { console.log("[imap] adjunto no bajó:", e.message) }
+      if (!a.content || !a.content.length) continue               // vacío → no es adjunto
+      if (a.content.length > 25 * 1024 * 1024) continue           // cap 25MB (no reventar el CAS con un adjunto gigante)
+      // las INLINE (a.related, referenciadas por cid: en el HTML) también se guardan: son las imágenes del cuerpo (tablas,
+      // capturas, firma). Antes se descartaban y el visor mostraba recuadros vacíos. Van marcadas inline:true + su cid,
+      // para que el server las inline como data: al servir el cuerpo y la lista de adjuntos no se llene de logos.
+      const inline = !!a.related
+      try {
+        const cas = casPutBuffer(a.content, attExt(a.filename, a.contentType), "email/attach")
+        const at = { name: a.filename || (inline ? "imagen" : "adjunto"), cas, mime: a.contentType || "", size: a.content.length }
+        if (inline) { at.inline = true; at.cid = String(a.cid || a.contentId || "").replace(/^<|>$/g, "") }
+        atts.push(at)
+      } catch (e) { console.log("[imap] adjunto no bajó:", e.message) }
     }
     return { preview, body, attachments: atts.length ? JSON.stringify(atts) : null }
   } catch { return { preview: "", body: null, attachments: null } }

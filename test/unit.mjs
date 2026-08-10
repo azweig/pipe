@@ -186,3 +186,39 @@ test("audioExt: mime → extensión canónica que Whisper acepta por nombre de a
   assert.equal(audioExt("audio/flac"), "flac")
   assert.equal(audioExt("audio/x-raro"), "webm") // default
 })
+
+// ── Imágenes INLINE de email (cid: → data:) ──────────────────────────────────────────────────────
+// El visor es un iframe sandboxeado con CSP img-src data:, así que las imágenes del cuerpo tienen que
+// viajar embebidas. Antes ni se guardaban y el correo mostraba recuadros vacíos.
+{
+  const { inlineCidImages } = await import("../src/lib/email-inline.mjs")
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47])
+  const read = (pub) => (pub === "/cas/aa/hash.png" ? png : null)
+  const att = { cas: "/cas/aa/hash.png", cid: "image001.png@01DD", mime: "image/png", size: png.length, inline: true }
+
+  test("inlineCidImages: reemplaza el cid: por el data: URI del blob", () => {
+    const out = inlineCidImages('<img src="cid:image001.png@01DD">', [att], read)
+    assert.equal(out, `<img src="data:image/png;base64,${png.toString("base64")}">`)
+  })
+  test("inlineCidImages: el cid es case-insensitive y tolera <> alrededor", () => {
+    const out = inlineCidImages("<img src='cid:IMAGE001.PNG@01dd'>", [{ ...att, cid: "<image001.png@01DD>" }], read)
+    assert.ok(out.includes("data:image/png;base64,"))
+  })
+  test("inlineCidImages: si el blob no está en el CAS deja el cid: (no rompe el resto del correo)", () => {
+    const out = inlineCidImages('<p>hola</p><img src="cid:falta@x">', [{ ...att, cid: "falta@x", cas: "/cas/bb/otro.png" }], read)
+    assert.equal(out, '<p>hola</p><img src="cid:falta@x">')
+  })
+  test("inlineCidImages: sin adjuntos inline devuelve el cuerpo intacto", () => {
+    const html = '<img src="cid:x@y">'
+    assert.equal(inlineCidImages(html, [], read), html)
+    assert.equal(inlineCidImages(html, [{ cas: "/cas/aa/hash.png", mime: "image/png" }], read), html) // adjunto sin cid → no matchea
+  })
+  test("inlineCidImages: una imagen gigante NO se inlinea (tope por imagen)", () => {
+    const out = inlineCidImages('<img src="cid:image001.png@01DD">', [{ ...att, size: 9 * 1024 * 1024 }], read)
+    assert.ok(out.includes("cid:image001.png@01DD"))
+  })
+  test("inlineCidImages: cuerpo vacío o sin cid: pasa de largo", () => {
+    assert.equal(inlineCidImages(null, [att], read), null)
+    assert.equal(inlineCidImages("<p>sin imágenes</p>", [att], read), "<p>sin imágenes</p>")
+  })
+}

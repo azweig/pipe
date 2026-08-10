@@ -17,6 +17,13 @@ export function recentInThread(thread, { limit = 6 } = {}) {
 }
 
 export function getBody(id) { const r = db().prepare("SELECT body FROM messages WHERE id=?").get(id); return r?.body || null } // cuerpo HTML del email, on-demand
+export function getAttachments(id) { const r = db().prepare("SELECT attachments FROM messages WHERE id=?").get(id); return r?.attachments || null } // JSON de adjuntos (incluye los inline cid:)
+export function setAttachments(id, json) { db().prepare("UPDATE messages SET attachments=? WHERE id=?").run(json, id) } // el trigger de rev bumpea solo → los clientes re-sincronizan
+// emails cuyo cuerpo referencia imágenes inline (cid:) pero que NO tienen esas imágenes guardadas → candidatos al backfill
+export function emailsMissingInline({ limit = 50 } = {}) {
+  return db().prepare(`SELECT id, account, ts, text FROM messages WHERE channel='email' AND body LIKE '%cid:%'
+    AND (attachments IS NULL OR attachments NOT LIKE '%"inline":true%') ORDER BY ts DESC LIMIT ?`).all(limit)
+}
 
 // ── consultas ──
 // resumen por hilo (para la bandeja) — agrega en SQL, no carga todo en memoria

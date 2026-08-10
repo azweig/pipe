@@ -16,6 +16,8 @@ const EGRESS_ALLOW = new Set([
   "src/lib/llm.mjs", "src/lib/voice.mjs", "src/calendar-outlook.mjs", "src/files-sharepoint.mjs", "src/holidays.mjs",
   "src/lib/briefing.mjs", "src/lib/calendar.mjs", "src/lib/mail-archive.mjs", "src/lib/research.mjs",
   "src/mail-backfill.mjs", "src/mail-outlook.mjs", "src/teams.mjs",
+  // MS Graph para re-bajar las imágenes inline (cid:) de TUS correos ya ingeridos. Mismo egress que mail-outlook. Deliberado.
+  "src/mail-inline-backfill.mjs",
   // Egress de canales de MENSAJERÍA (no IA): la API de Slack de TU propia cuenta conectada. Revisado y deliberado.
   "src/lib/brain/reply.mjs", // chat.postMessage: envía TU respuesta a Slack
   "src/lib/integrations.mjs", // auth.test: valida TU token de Slack antes de guardarlo
