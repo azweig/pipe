@@ -1514,7 +1514,8 @@ function renderInboxList() {
     if (t.silenced) return false // en el resto de pestañas: nunca mostrar los silenciados
     return (!cats.length || cats.some((gid) => inGroup(t, gid))) && (!chans.length || chans.includes(chanOf(t))) && (!statuses.length || statuses.some((s) => statusPred(s, t)))
   }
-  const shown = inboxRows.filter(matchAll)
+  // los que trajo el server ya matchearon allá (clave o nombre del remitente): entran sin volver a pasar por matchQuery
+  const shown = inboxRows.filter(matchAll).concat(q ? _remoteHits.filter((t) => bucketCat(t) !== "spam") : [])
   if (!q) shown.sort((a, b) => (b.escalated ? 1 : 0) - (a.escalated ? 1 : 0) || (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)) // escalados por el piloto arriba de todo, luego fijados (sort estable mantiene recencia); en búsqueda no reordena
   const meta = document.getElementById("ibxmeta")
   if (meta) meta.innerHTML = q ? `<span>${shown.length} ${shown.length === 1 ? "resultado" : "resultados"} para “${esc(ST.q.trim())}”</span>` : ""
@@ -1578,9 +1579,26 @@ window.grpToggle = async (id, keyEnc, el) => {
 window.onInboxSearch = (v) => {
   ST.q = v; const w = document.querySelector(".ibx-search"); if (w) w.classList.toggle("has-q", !!v)
   if (_aiSearch) { const box = document.getElementById("ibxai"); if (box) box.innerHTML = v.trim() ? `<div class="ibx-aihint">${IC_ROBOT}<span>Enter para preguntarle a la IA</span></div>` : ""; return } // en modo IA no filtramos por letra (la IA cuesta) → se dispara con Enter
+  remoteInboxSearch(v)
   renderInboxList()
 }
-window.clearInboxSearch = () => { ST.q = ""; const inp = document.getElementById("ibxq"); if (inp) { inp.value = ""; inp.focus() } const w = document.querySelector(".ibx-search"); if (w) w.classList.remove("has-q"); const box = document.getElementById("ibxai"); if (box) box.innerHTML = ""; renderInboxList() }
+// La bandeja carga los hilos más recientes; con miles de conversaciones, filtrar SOLO lo cargado deja afuera a
+// cualquiera con quien no hablaste últimamente y parece que el contacto no existe. El server busca sobre TODOS
+// los hilos (clave + nombre por índice FTS) y sus filas se suman a la lista.
+let _remoteHits = [], _remoteT = null
+function remoteInboxSearch(v) {
+  const nq = String(v || "").trim()
+  clearTimeout(_remoteT)
+  if (nq.length < 2) { _remoteHits = []; return }
+  _remoteT = setTimeout(async () => {
+    const r = await api("/api/threads?limit=60&q=" + encodeURIComponent(nq)).catch(() => null)
+    if (!Array.isArray(r) || (ST.q || "").trim() !== nq) return // llegó tarde: el usuario ya siguió escribiendo
+    const known = new Set((inboxRows || []).map((t) => t.key))
+    _remoteHits = r.filter((t) => !known.has(t.key))
+    if (_remoteHits.length) renderInboxList()
+  }, 220)
+}
+window.clearInboxSearch = () => { ST.q = ""; _remoteHits = []; const inp = document.getElementById("ibxq"); if (inp) { inp.value = ""; inp.focus() } const w = document.querySelector(".ibx-search"); if (w) w.classList.remove("has-q"); const box = document.getElementById("ibxai"); if (box) box.innerHTML = ""; renderInboxList() }
 // ── robotito: buscar con IA (Jarvis) desde la bandeja ──
 window.toggleAiSearch = () => {
   _aiSearch = !_aiSearch

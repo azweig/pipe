@@ -8,7 +8,7 @@ import { join, basename } from "path"
 import { execFile } from "child_process"
 import { promisify } from "util"
 import { tmpdir } from "os"
-import { threadsSummary as dbThreads, repliedThreads, getBody as dbGetBody, getAttachments as dbGetAttachments, threadMediaGallery, threadPage as dbThreadPage, threadCount as dbThreadCount, threadMessagesTail as dbThreadMsgs, threadSince as dbThreadSince, threadUnreadCount as dbUnreadCount, search as dbSearch, threadMessagesSinceAll, threadDelta as dbThreadDelta, threadMaxRev as dbThreadMaxRev } from "../db.mjs"
+import { threadsSummary as dbThreads, searchThreadKeys as dbSearchThreadKeys, repliedThreads, getBody as dbGetBody, getAttachments as dbGetAttachments, threadMediaGallery, threadPage as dbThreadPage, threadCount as dbThreadCount, threadMessagesTail as dbThreadMsgs, threadSince as dbThreadSince, threadUnreadCount as dbUnreadCount, search as dbSearch, threadMessagesSinceAll, threadDelta as dbThreadDelta, threadMaxRev as dbThreadMaxRev } from "../db.mjs"
 import { autopilotSentIds, listAutopilot, getAutopilot, listEscalations, clearEscalation } from "./autopilot.mjs" // 🤖 tag de mensajes/contactos del piloto automático
 import { secretThreadKeys, isSecretMsg } from "../secret.mjs" // 🔒 cuentas/números secretos (excluir de bandeja/búsqueda; filtrar por-mensaje en el hilo)
 import { jidOfKey, canonOfKey, numOf, initials, stripWA, norm, plural, isContainerJid } from "./kernel/keys.mjs"
@@ -36,9 +36,14 @@ function peopleTagsCached() {
 }
 let _ltCache = { ts: 0 } // resultado de la bandeja — cache corto (6s) para que navegar entre pestañas sea instantáneo
 export function invalidateThreads() { _ltCache = { ts: 0 } } // llamar tras enviar/archivar/pinear
-export function listThreads({ limit = 200 } = {}, { cache = true } = {}) {
+// `q` = BUSCAR entre TODOS los hilos, no solo en la ventana de los más recientes. La bandeja muestra los N últimos;
+// con miles de hilos, un contacto con el que hablás seguido pero no esta semana quedaba afuera y no había forma de
+// llegar a él (el buscador de las apps filtra lo que ya está cargado). Con q, el server resuelve las claves por índice
+// y el armado de la fila es EXACTAMENTE el mismo → misma foto, mismos buckets, mismos filtros de privacidad.
+export function listThreads({ limit = 200, q = "" } = {}, { cache = true } = {}) {
+  if (q) cache = false // una búsqueda no debe pisar ni leer el cache de la bandeja
   if (cache && _ltCache.data && _ltCache.limit === limit && Date.now() - _ltCache.ts < 15000) return _ltCache.data // 15s: la ingesta es cada 15s, no hace falta recomputar el inbox más seguido
-  const rows = dbThreads({ limit: Math.min(limit * 3, 600) }) // amplio: mostrar TODO (menos spam)
+  const rows = q ? dbThreads({ keys: dbSearchThreadKeys(q, { limit: Math.min(limit, 60) }) }) : dbThreads({ limit: Math.min(limit * 3, 600) }) // amplio: mostrar TODO (menos spam)
   const grpNames = waGroups()
   const cats = (jf("contact-overrides.json") || {}).categories || {} // categorías manuales del usuario (familia/amigos/trabajo)
   const pinned = new Set(jf("pins.json") || []) // hilos fijados arriba
@@ -122,7 +127,10 @@ export function listThreads({ limit = 200 } = {}, { cache = true } = {}) {
     if (esc[r.key]) { if (r.lastDir === "out") clearEscalation(r.key); else { escalated = true; escalatedReason = esc[r.key].reason || null } }
     return { key: r.key, canon, self, group: kind === "group", name: clean, photo, initials: avatar, channels: r.channels || [], lastChannel: r.lastChannel, count: r.count, unread: r.unread || 0, unseen, suggested, email: emailAddr, account: r.account || null, ident, ts: r.ts, lastText: lt.slice(0, 120) || "…", lastDir: r.lastDir, bucket, pinned: pinned.has(r.key), silenced: sil.has(r.key), autopilot: autoOn.has(r.key), escalated, escalatedReason }
   }).filter((t) => t.key !== "self" && !arch.has(t.key) && !inEspacio(t.key, t.name) && !/whatsapp status broadcast/i.test(t.name || "")) // self va en su pestaña; archivados ocultos; los de un espacio viven ahí; status no es conversación
-  for (const er of espacioThreads(seen)) result.push(er) // los espacios entran como una conversación más
+  // los espacios entran como una conversación más. En una BÚSQUEDA solo si el nombre matchea: si no, aparecían
+  // los mismos 3 espacios encabezando cualquier resultado y tapaban al contacto que estabas buscando.
+  const nq = q.trim().toLowerCase()
+  for (const er of espacioThreads(seen)) { if (!nq || String(er.name || "").toLowerCase().includes(nq)) result.push(er) }
   result = result
     .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.ts || 0) - (a.ts || 0)) // fijados arriba, resto por recencia (incluido "Mis Notas")
     .slice(0, limit)

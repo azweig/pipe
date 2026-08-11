@@ -27,9 +27,39 @@ export function emailsMissingInline({ limit = 50 } = {}) {
 
 // ── consultas ──
 // resumen por hilo (para la bandeja) — agrega en SQL, no carga todo en memoria
-export function threadsSummary({ limit = 200 } = {}) {
+// CLAVES DE HILO que matchean un texto — sobre TODOS los hilos, no solo los recientes.
+// Por qué existe: la bandeja carga los N más recientes. Con 3400 hilos, un contacto con el que hablás seguido pero
+// hace dos semanas queda fuera de la ventana y era INENCONTRABLE (el buscador de las apps filtraba solo lo cargado).
+// Dos fuentes, las dos con índice:
+//   · la CLAVE del hilo (thread_stats es chica; ahí caen emails, teléfonos y los chats importados que se llaman como la persona),
+//   · el NOMBRE del remitente vía FTS5 (`name:<q>*`) → milisegundos aunque haya millones de mensajes.
+export function searchThreadKeys(q, { limit = 60 } = {}) {
+  const raw = String(q || "").trim()
+  if (raw.length < 2) return []
+  const d = db()
+  const like = `%${raw.toLowerCase()}%`
+  const keys = new Map() // key → last_ts
+  for (const r of d.prepare("SELECT thread, last_ts FROM thread_stats WHERE lower(thread) LIKE ? ORDER BY last_ts DESC LIMIT ?").all(like, limit)) keys.set(r.thread, r.last_ts)
+  // FTS5 tiene sintaxis propia (comillas, NEAR, *): se sanitiza a tokens alfanuméricos antes de armar el MATCH
+  const tokens = raw.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((t) => t.length >= 2)
+  if (tokens.length) {
+    const match = tokens.map((t) => `name:${t}*`).join(" AND ")
+    try {
+      for (const r of d.prepare(`SELECT DISTINCT m.thread, ts.last_ts FROM messages_fts f JOIN messages m ON m.rowid=f.rowid
+        LEFT JOIN thread_stats ts ON ts.thread=m.thread WHERE messages_fts MATCH ? ORDER BY ts.last_ts DESC LIMIT ?`).all(match, limit)) {
+        if (!keys.has(r.thread)) keys.set(r.thread, r.last_ts || 0)
+      }
+    } catch { /* MATCH inválido → alcanza con lo que dio el LIKE */ }
+  }
+  return [...keys.entries()].sort((a, b) => (b[1] || 0) - (a[1] || 0)).slice(0, limit).map(([k]) => k)
+}
+
+export function threadsSummary({ limit = 200, keys = null } = {}) {
   // top-N hilos desde thread_stats (índice, instantáneo). Sin subqueries pesados por hilo.
-  const tops = db().prepare("SELECT thread, last_ts, count, unread, channels, nsenders FROM thread_stats ORDER BY last_ts DESC LIMIT ?").all(limit)
+  // Con `keys` se piden hilos PUNTUALES (búsqueda) en vez de la ventana por recencia — el resto del armado es idéntico.
+  const tops = keys
+    ? (keys.length ? db().prepare(`SELECT thread, last_ts, count, unread, channels, nsenders FROM thread_stats WHERE thread IN (${keys.map(() => "?").join(",")}) ORDER BY last_ts DESC`).all(...keys) : [])
+    : db().prepare("SELECT thread, last_ts, count, unread, channels, nsenders FROM thread_stats ORDER BY last_ts DESC LIMIT ?").all(limit)
   const lastMsg = db().prepare("SELECT channel AS lastChannel, text AS lastText, dir AS lastDir, grp, media, mediaType, account FROM messages WHERE thread=? AND ts=? LIMIT 1")
   const emailAcct = db().prepare("SELECT account FROM messages WHERE thread=? AND channel='email' AND account!='' ORDER BY ts DESC LIMIT 1") // a qué cuenta MÍA llegó
   // NOMBRE del contacto = último mensaje ENTRANTE (nunca el mío saliente); si solo escribí yo, queda null y listThreads resuelve por número/agenda.
