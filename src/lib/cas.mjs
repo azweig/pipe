@@ -27,8 +27,51 @@ function db() {
   _db.pragma("synchronous = NORMAL")
   _db.exec(`CREATE TABLE IF NOT EXISTS blobs (hash TEXT PRIMARY KEY, ext TEXT, size INTEGER, refcount INTEGER DEFAULT 1, trashed_at INTEGER, trash_msgs TEXT);
             CREATE INDEX IF NOT EXISTS idx_blobs_trashed ON blobs(trashed_at);`)
+  // OPTIMIZACIÓN DE MEDIA (ver src/media-optimize.mjs). `hash` sigue siendo la DIRECCIÓN = sha256 del archivo ORIGINAL,
+  // aunque el archivo en disco pase a ser el optimizado. Eso es a propósito: la URL /cas/… no cambia (nada que reescribir,
+  // ningún cliente con caché se rompe) y el dedup sigue siendo perfecto — si el MISMO original vuelve a entrar, su hash
+  // matchea, sumamos refcount y no se re-optimiza nada. Es el "antes y después": `hash`+`orig_size` = antes, `opt_hash`+`size` = después.
+  for (const [col, ddl] of [
+    ["orig_size", "ALTER TABLE blobs ADD COLUMN orig_size INTEGER"], // tamaño ANTES de optimizar (null = intacto)
+    ["opt", "ALTER TABLE blobs ADD COLUMN opt TEXT"],                // qué se aplicó: jpegtran|optipng|h265|none|skip
+    ["opt_hash", "ALTER TABLE blobs ADD COLUMN opt_hash TEXT"],      // sha256 del contenido optimizado → la integridad sigue siendo verificable
+    ["phash", "ALTER TABLE blobs ADD COLUMN phash TEXT"],            // huella perceptual (dhash 64 bits hex) → casi-duplicados entre canales
+  ]) {
+    if (!_db.prepare("PRAGMA table_info(blobs)").all().some((c) => c.name === col)) { try { _db.exec(ddl) } catch {} }
+  }
+  try { _db.exec("CREATE INDEX IF NOT EXISTS idx_blobs_phash ON blobs(phash) WHERE phash IS NOT NULL") } catch {}
   migrateFromJson(_db)
   return _db
+}
+// ruta en disco de un blob (por hash) — para que los optimizadores trabajen sobre el archivo sin pasar por Buffers gigantes
+export function casPathOf(hash, ext) { return join(CAS, String(hash).slice(0, 2), hash + (ext || "")) }
+// blobs todavía SIN pasar por el optimizador, del tipo pedido y por encima de un mínimo de tamaño (los chiquitos no pagan el CPU)
+export function casPendingOptimize(exts, { limit = 50, minSize = 0 } = {}) {
+  const q = exts.map(() => "?").join(",")
+  return db().prepare(`SELECT hash, ext, size FROM blobs WHERE opt IS NULL AND trashed_at IS NULL AND ext IN (${q}) AND size >= ?
+                       ORDER BY size DESC LIMIT ?`).all(...exts, minSize, limit)
+}
+// registra el resultado. `opt`='none'/'skip' marca "ya lo intenté, no re-procesar" (así el runner converge y no gira en falso).
+export function casMarkOptimized(hash, { opt, size = null, optHash = null, origSize = null } = {}) {
+  db().prepare("UPDATE blobs SET opt=?, size=COALESCE(?,size), opt_hash=?, orig_size=COALESCE(?,orig_size) WHERE hash=?")
+    .run(opt, size, optHash, origSize, hash)
+}
+// blobs sin huella perceptual todavía (para el detector de casi-duplicados)
+export function casPendingPhash(exts, { limit = 200, minSize = 0 } = {}) {
+  const q = exts.map(() => "?").join(",")
+  return db().prepare(`SELECT hash, ext, size FROM blobs WHERE phash IS NULL AND trashed_at IS NULL AND ext IN (${q}) AND size >= ?
+                       ORDER BY size DESC LIMIT ?`).all(...exts, minSize, limit)
+}
+export function casSetPhash(hash, phash) { db().prepare("UPDATE blobs SET phash=? WHERE hash=?").run(phash, hash) }
+// grupos de blobs que comparten huella perceptual EXACTA = misma imagen re-codificada por otro canal (el dedup por contenido no los ve)
+export function casPhashGroups({ min = 2 } = {}) {
+  return db().prepare(`SELECT phash, count(*) n, sum(size) bytes, min(size) keep FROM blobs
+    WHERE phash IS NOT NULL AND phash != '' AND trashed_at IS NULL GROUP BY phash HAVING n >= ? ORDER BY (bytes - keep) DESC`).all(min)
+}
+// resumen de lo que el optimizador ya recuperó
+export function casOptimizeStats() {
+  return db().prepare(`SELECT opt, count(*) n, sum(COALESCE(orig_size,size)) antes, sum(size) despues FROM blobs
+    WHERE opt IS NOT NULL AND trashed_at IS NULL GROUP BY opt`).all()
 }
 // migración one-time: si la tabla está vacía y existe el cas-index.json viejo, lo importa. Idempotente (no re-importa si ya hay filas).
 function migrateFromJson(d) {

@@ -236,3 +236,54 @@ test("audioExt: mime → extensión canónica que Whisper acepta por nombre de a
     assert.equal((out.match(/data:image\/png/g) || []).length, 20, "las 20 ocurrencias quedan resueltas")
   })
 }
+
+// ── Huella perceptual + optimización de media ────────────────────────────────────────────────────
+{
+  const { dhashFromGray9x8, hamming, isVideoExt, ffmpegPhashArgs } = await import("../src/lib/phash.mjs")
+  const { optimizerFor, acceptResult } = await import("../src/lib/media-optimize.mjs")
+
+  // gradiente creciente por fila → cada píxel es MENOR que el de su derecha → todos los bits en 0
+  const gray = (fn) => Buffer.from(Array.from({ length: 72 }, (_, i) => fn(i % 9, Math.floor(i / 9))))
+
+  test("dhash: 64 bits en 16 hex", () => {
+    const h = dhashFromGray9x8(gray((x) => x * 20))
+    assert.equal(h.length, 16)
+    assert.equal(h, "0000000000000000") // siempre creciente hacia la derecha
+  })
+  test("dhash: gradiente invertido da el complemento", () => {
+    assert.equal(dhashFromGray9x8(gray((x) => 200 - x * 20)), "ffffffffffffffff")
+  })
+  test("dhash: buffer corto o vacío → null (no inventa huella)", () => {
+    assert.equal(dhashFromGray9x8(Buffer.alloc(10)), null)
+    assert.equal(dhashFromGray9x8(null), null)
+  })
+  test("hamming: 0 entre iguales, 64 entre opuestas, y compara de a bits", () => {
+    assert.equal(hamming("0000000000000000", "0000000000000000"), 0)
+    assert.equal(hamming("ffffffffffffffff", "0000000000000000"), 64)
+    assert.equal(hamming("0000000000000001", "0000000000000000"), 1)
+    assert.equal(hamming("abc", null), 64) // defensivo: sin huella → lo más lejos posible
+  })
+  test("ffmpegPhashArgs: en video busca un fotograma adentro, en imagen no", () => {
+    assert.ok(isVideoExt(".mp4") && !isVideoExt(".jpg"))
+    assert.ok(ffmpegPhashArgs("/x.mp4", ".mp4").includes("-ss"))
+    assert.ok(!ffmpegPhashArgs("/x.jpg", ".jpg").includes("-ss"))
+  })
+  test("optimizerFor: cada tipo a su herramienta; el video queda marcado como CON pérdida", () => {
+    assert.equal(optimizerFor(".jpg", "i", "o").tool, "jpegtran")
+    assert.ok(optimizerFor(".jpg", "i", "o").args.join(" ").includes("-copy all"), "el EXIF (orientación) se conserva")
+    assert.equal(optimizerFor(".JPEG", "i", "o").tool, "jpegtran") // case-insensitive
+    assert.equal(optimizerFor(".png", "i", "o").tool, "optipng")
+    assert.equal(optimizerFor(".mp4", "i", "o").lossy, true)
+    assert.equal(optimizerFor(".jpg", "i", "o").lossy, false)
+    assert.equal(optimizerFor(".pdf", "i", "o"), null) // no se toca lo que no es media
+  })
+  test("acceptResult: rechaza salida vacía, ganancia mínima y video con duración distinta", () => {
+    assert.equal(acceptResult({ origSize: 1000, newSize: 0, lossy: false }).ok, false)
+    assert.equal(acceptResult({ origSize: 1000, newSize: 990, lossy: false }).ok, false) // 1% no paga
+    assert.equal(acceptResult({ origSize: 1000, newSize: 500, lossy: false }).ok, true)
+    // video que se cortó a la mitad: MÁS chico pero inaceptable
+    assert.equal(acceptResult({ origSize: 1000, newSize: 400, lossy: true, origDur: 60, newDur: 30 }).ok, false)
+    assert.equal(acceptResult({ origSize: 1000, newSize: 400, lossy: true, origDur: 60, newDur: 60.2 }).ok, true)
+    assert.equal(acceptResult({ origSize: 1000, newSize: 400, lossy: true, origDur: null, newDur: null }).ok, false)
+  })
+}
