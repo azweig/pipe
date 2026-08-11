@@ -8,6 +8,7 @@ import { Logger } from "telegram/extensions/index.js"
 import { mkdirSync, readFileSync, existsSync, writeFileSync, unlinkSync } from "fs"
 import { appendMessage } from "./lib/lock.mjs"
 import { owner } from "./lib/hub.mjs"
+import { tgRecord } from "./lib/telegram-store.mjs" // misma forma de fila que el importador de historial
 
 mkdirSync("./data", { recursive: true })
 mkdirSync("./auth", { recursive: true })
@@ -65,17 +66,11 @@ let lastTs = existsSync(SINCE) ? (JSON.parse(readFileSync(SINCE, "utf8")).ts || 
 const saveSince = () => { try { writeFileSync(SINCE, JSON.stringify({ ts: lastTs })) } catch {} }
 
 async function store(msg, { live = true } = {}) {
-  if (!msg) return
-  const mine = !!msg.out // capturamos también lo que VOS enviás
-  let name = mine ? owner() : "?"
-  if (!mine) try { const s = await msg.getSender(); name = s?.firstName || s?.username || s?.title || String(msg.senderId || "?") } catch {}
-  const text = msg.message || "[media/otro]"
-  // id NATIVO estable (chatId:msgId) → sin colisiones de dedup; ts = fecha REAL del mensaje (msg.date en segundos).
-  const id = `telegram:${msg.chatId}:${msg.id}`
-  const ts = msg.date ? Number(msg.date) * 1000 : Date.now()
-  appendMessage({ id, channel: "telegram", account: "tg", jid: String(msg.chatId), name, text, ts, dir: mine ? "out" : "in" })
-  if (ts > lastTs) { lastTs = ts; saveSince() }
-  if (live) console.log(`${mine ? "➡️ " : "💬"} [telegram] ${name}: ${text.slice(0, 80)}`)
+  const rec = await tgRecord(msg, owner()) // id NATIVO (chatId:msgId) + ts real — compartido con telegram-backfill
+  if (!rec) return
+  appendMessage(rec)
+  if (rec.ts > lastTs) { lastTs = rec.ts; saveSince() }
+  if (live) console.log(`${rec.dir === "out" ? "➡️ " : "💬"} [telegram] ${rec.name}: ${rec.text.slice(0, 80)}`)
 }
 
 // CATCH-UP: recupera lo que llegó mientras el proceso estuvo caído (dedup por id en la DB cubre solapamientos).
