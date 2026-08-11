@@ -18,6 +18,14 @@ export function dhashFromGray9x8(buf) {
   return hex
 }
 
+// Huella DEGENERADA = sin poder discriminativo. Una imagen plana (un fotograma negro, un fondo liso) da todos los
+// píxeles iguales → 0000…/ffff… . Dos videos que arrancan en negro darían la MISMA huella sin tener nada que ver:
+// tratarlas como duplicado sería decirle al usuario que borre archivos distintos. Se descartan.
+export function isDegenerateHash(h) {
+  if (!h || h.length !== 16) return true
+  return /^(.)\1{15}$/.test(h) // los 16 nibbles iguales
+}
+
 // distancia de Hamming entre dos huellas hex (0 = idénticas). ≤5 sobre 64 bits ya es "la misma imagen".
 export function hamming(a, b) {
   if (!a || !b || a.length !== b.length) return 64

@@ -15,8 +15,6 @@ import { execFile } from "child_process"
 import { promisify } from "util"
 import { statSync, existsSync, renameSync, rmSync, readFileSync } from "fs"
 import { createHash } from "crypto"
-import { tmpdir } from "os"
-import { join } from "path"
 import { casPendingOptimize, casMarkOptimized, casPathOf, casOptimizeStats } from "./lib/cas.mjs"
 import { optimizerFor, acceptResult, IMG_LOSSLESS, VIDEO_EXTS, pct, mb } from "./lib/media-optimize.mjs"
 
@@ -25,6 +23,9 @@ const arg = (n, d) => { const i = process.argv.indexOf(n); return i > 0 ? proces
 const KIND = arg("--kind", "img")
 const LIMIT = Number(arg("--limit", 100))
 const CRF = Number(arg("--crf", 28))
+// preset fast por defecto: medido sobre videos reales del CAS da 48% de ahorro a ~1.3x tiempo real. `medium` apenas mejora
+// la compresión y tarda 3-4x más — con 29 GB de video encima, eso es la diferencia entre un par de días y varias semanas.
+const PRESET = arg("--preset", "fast")
 const MIN = Number(arg("--min-kb", KIND === "video" ? 1024 : 40)) * 1024 // por debajo de esto no paga el CPU
 const DRY = process.argv.includes("--dry")
 
@@ -53,8 +54,12 @@ let antes = 0, despues = 0, hechos = 0, saltados = 0
 for (const b of rows) {
   const src = casPathOf(b.hash, b.ext)
   if (!existsSync(src)) { if (!DRY) casMarkOptimized(b.hash, { opt: "skip" }); saltados++; continue } // en el índice pero no en disco
-  const out = join(tmpdir(), `casopt-${process.pid}-${b.hash.slice(0, 12)}${b.ext}`)
-  const o = optimizerFor(b.ext, src, out, { crf: CRF })
+  // el temporal va AL LADO del destino, no en /tmp: mismo filesystem → el rename es atómico y no falla con EXDEV
+  // (en muchas instalaciones /tmp es tmpfs = RAM, y un video de 300 MB ahí es un problema aparte).
+  // ⚠️ la extensión REAL va al final: ffmpeg deduce el contenedor del nombre y con un ".tmp" tira
+  //    "Unable to find a suitable output format".
+  const out = `${src}.opt.${process.pid}${b.ext}`
+  const o = optimizerFor(b.ext, src, out, { crf: CRF, preset: PRESET })
   if (!o) { if (!DRY) casMarkOptimized(b.hash, { opt: "skip" }); saltados++; continue }
   if (missing.has(o.bin) || !(await have(o.bin))) { missing.add(o.bin); saltados++; continue } // sin la herramienta: NO marcar (se reintenta cuando esté)
   try {

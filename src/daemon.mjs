@@ -116,6 +116,18 @@ function runVideoFetch() {
   p.on("exit", () => { videoRunning = false })
 }
 
+// OPTIMIZACIÓN DE MEDIA — recomprime lo que va entrando, venga del canal que venga. Lotes chicos y espaciados a propósito:
+// esto es trabajo de fondo, no puede competir con la ingesta. La imagen es SIN pérdida; el video es H.265 (con pérdida) y
+// se hace mucho más espaciado porque es caro en CPU. Ver src/media-optimize.mjs para el diseño del "antes y después".
+let mediaOptRunning = false
+function runMediaOptimize(kind, limit) {
+  if (mediaOptRunning) return // un solo optimizador a la vez (imagen y video comparten el flag)
+  if (kind === "video" && process.env.MEDIA_OPT_VIDEO !== "1") return // el transcode con pérdida es OPT-IN explícito
+  mediaOptRunning = true
+  const p = spawnLogged("mediaopt", NODE, ["src/media-optimize.mjs", "--kind", kind, "--limit", String(limit)])
+  p.on("exit", () => { mediaOptRunning = false })
+}
+
 // --- piloto automático / modo vacaciones: responde por los contactos habilitados (harness estricto, fail-closed) ---
 let autopilotRunning = false
 function runAutopilot() {
@@ -364,6 +376,8 @@ setTimeout(runIngest, 15000) // primera ingesta a la DB a los 15s
 setInterval(runIngest, 15000) // ingesta JSONL→DB cada 15s (mensajes nuevos consultables casi al toque)
 setTimeout(runVideoFetch, 180000) // primera descarga de videos a los 3 min
 setInterval(runVideoFetch, 4 * 60000) // baja videos de links nuevos cada 4 min (pocos por corrida, throttled)
+setInterval(() => runMediaOptimize("img", 150), 30 * 60000)          // imágenes nuevas: sin pérdida, cada 30 min
+setInterval(() => runMediaOptimize("video", 3), 3 * 3600000)         // video: caro y CON pérdida → 3 por vez, cada 3h, y solo con MEDIA_OPT_VIDEO=1
 setTimeout(runAutopilot, 60000) // primera corrida del piloto automático al minuto
 setInterval(runAutopilot, 60000) // revisa contactos con piloto automático cada 1 min (fail-closed; la mayoría de corridas no hacen nada)
 setTimeout(runEmbedWatchdog, 30000); setInterval(runEmbedWatchdog, 5 * 60000) // mantiene caliente el motor semántico + reinicia Ollama si muere

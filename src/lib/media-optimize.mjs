@@ -9,7 +9,7 @@ export const IMG_LOSSLESS = { ".jpg": "jpegtran", ".jpeg": "jpegtran", ".png": "
 export const VIDEO_EXTS = [".mp4", ".webm", ".mov"]
 
 // argumentos del optimizador para (entrada → salida). null = no hay optimizador para ese tipo.
-export function optimizerFor(ext, inPath, outPath, { crf = 28, preset = "medium" } = {}) {
+export function optimizerFor(ext, inPath, outPath, { crf = 28, preset = "fast" } = {}) {
   const e = String(ext || "").toLowerCase()
   // -copy all conserva el EXIF a propósito: ahí vive la ORIENTACIÓN, y sin ella las fotos verticales se ven de costado.
   // Medido sobre los JPEG más pesados del CAS: copy none 17% vs copy all 16% — un punto no vale rotar las fotos de nadie.

@@ -287,3 +287,24 @@ test("audioExt: mime → extensión canónica que Whisper acepta por nombre de a
     assert.equal(acceptResult({ origSize: 1000, newSize: 400, lossy: true, origDur: null, newDur: null }).ok, false)
   })
 }
+
+{
+  const { ffmpegPhashArgs } = await import("../src/lib/phash.mjs")
+  test("ffmpegPhashArgs ya incluye el '-' de salida a stdout (no duplicarlo en el caller)", () => {
+    const a = ffmpegPhashArgs("/x.jpg", ".jpg")
+    assert.equal(a[a.length - 1], "-")
+    assert.equal(a.filter((x) => x === "-").length, 1)
+  })
+}
+
+{
+  const { isDegenerateHash } = await import("../src/lib/phash.mjs")
+  test("isDegenerateHash: una imagen plana (fotograma negro) no puede agrupar como duplicado", () => {
+    assert.equal(isDegenerateHash("0000000000000000"), true)  // todo negro / liso
+    assert.equal(isDegenerateHash("ffffffffffffffff"), true)
+    assert.equal(isDegenerateHash("6d6d6d6d6d6d6f6d"), false) // patrón repetido PERO con señal
+    assert.equal(isDegenerateHash("e773565f4b8f0e16"), false)
+    assert.equal(isDegenerateHash(""), true)
+    assert.equal(isDegenerateHash(null), true)
+  })
+}

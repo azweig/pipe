@@ -14,14 +14,15 @@ import { execFile } from "child_process"
 import { promisify } from "util"
 import { existsSync } from "fs"
 import { casPendingPhash, casSetPhash, casPathOf, casPhashGroups } from "./lib/cas.mjs"
-import { dhashFromGray9x8, ffmpegPhashArgs, PHASH_EXTS } from "./lib/phash.mjs"
+import { dhashFromGray9x8, ffmpegPhashArgs, PHASH_EXTS, isDegenerateHash } from "./lib/phash.mjs"
 
 const pexec = promisify(execFile)
 const arg = (n, d) => { const i = process.argv.indexOf(n); return i > 0 ? process.argv[i + 1] : d }
 const mb = (n) => (n / 1048576).toFixed(1) + " MB"
 
 if (process.argv.includes("--report")) {
-  const g = casPhashGroups({ min: 2 })
+  // el filtro de degeneradas también acá: si quedaron huellas planas de una corrida anterior, no deben agrupar
+  const g = casPhashGroups({ min: 2 }).filter((r) => !isDegenerateHash(r.phash))
   const waste = g.reduce((a, r) => a + (r.bytes - r.keep), 0)
   console.log(`[dupes] ${g.length} grupos de casi-duplicados · ${mb(waste)} en copias redundantes`)
   for (const r of g.slice(0, 15)) console.log(`  ${r.n} copias · ${mb(r.bytes)} (sobran ${mb(r.bytes - r.keep)}) · huella ${r.phash}`)
@@ -42,10 +43,12 @@ for (const b of rows) {
   if (!existsSync(p)) { casSetPhash(b.hash, ""); fail++; continue } // "" = intentado, no reintentar
   try {
     // ffmpeg escupe el raw 9x8 en gris por stdout; encoding buffer para no romper los bytes
-    const { stdout } = await pexec("ffmpeg", ["-loglevel", "error", ...ffmpegPhashArgs(p, b.ext), "-"], { encoding: "buffer", maxBuffer: 1 << 22 })
+    const { stdout } = await pexec("ffmpeg", ["-loglevel", "error", ...ffmpegPhashArgs(p, b.ext)], { encoding: "buffer", maxBuffer: 1 << 22 })
     const h = dhashFromGray9x8(stdout)
-    casSetPhash(b.hash, h || "")
-    h ? ok++ : fail++
+    // "" = intentado y sin huella útil (ilegible o imagen plana) → no se reintenta ni agrupa
+    const usable = h && !isDegenerateHash(h)
+    casSetPhash(b.hash, usable ? h : "")
+    usable ? ok++ : fail++
   } catch { casSetPhash(b.hash, ""); fail++ }
 }
 console.log(`[dupes] ${ok} huellas nuevas · ${fail} no se pudieron leer`)
