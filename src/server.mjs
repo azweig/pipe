@@ -557,6 +557,10 @@ const server = createServer(async (req, res) => {
       if (path === "/api/llm-config/test" && req.method === "POST") { const b = await body(req); return json(res, 200, await testKey(b)) } // probar una key (ping mínimo): {keyId} o {provider,token}
       // CONFIG POR-HUB (base multi-cliente): dueño, empresa, números/mails propios, timezone
       if (path === "/api/hub-config") return json(res, 200, hub.hubConfig())
+      // 🤖 ASISTENTE en tu propio chat: te contesta si le PREGUNTÁS algo (las notas no se tocan). Apagado por defecto.
+      if (path === "/api/assistant" && req.method !== "POST") return json(res, 200, { ...brain.getAssistant(), state: brain.assistantState() }) // ⚠️ el !== POST es necesario: sin él, esta línea atrapa también el guardado
+      if (path === "/api/assistant" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setAssistant(b)) }
+      if (path === "/api/assistant/try" && req.method === "POST") { const b = await body(req); const r = await brain.answerQuestion(String(b.q || "").slice(0, 500), { web: brain.getAssistant().web }); return json(res, 200, r) } // probarlo sin mandar nada por WhatsApp
       // ✍️ FIRMAS de correo, por cuenta ("*" = la de por defecto). Un email se responde con firma; un WhatsApp no.
       if (path === "/api/signatures") return json(res, 200, { signatures: sig.listSignatures(), fallback: sig.defaultSignature() })
       if (path === "/api/signature" && req.method === "POST") { const b = await body(req); return json(res, 200, { signatures: sig.setSignature(b.account || "*", { text: b.text, html: b.html }) }) }

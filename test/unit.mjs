@@ -337,3 +337,61 @@ test("audioExt: mime → extensión canónica que Whisper acepta por nombre de a
     assert.ok(textToHtml("mirá https://pipe.one acá").includes('<a href="https://pipe.one">'))
   })
 }
+
+// ── Asistente en tu propio chat ──────────────────────────────────────────────────────────────────
+// El riesgo no es que falle una respuesta: es que se meta en las notas (ruido) o que se responda
+// a sí mismo (bucle infinito, porque el bridge hace ECO de lo que mandamos).
+{
+  const { classify, needsWeb, MARK } = await import("../src/lib/brain/assistant.mjs")
+  const si = (t) => classify(t).answer === true
+  const no = (t) => classify(t).answer === false
+
+  test("ANTI-BUCLE: nunca contesta algo que empiece con su propia marca", () => {
+    assert.ok(no(MARK + "El vuelo sale 14:30 (fuente.com)"))
+    assert.ok(no(MARK + "¿querés que busque otra cosa?"), "ni siquiera si su propia respuesta trae un signo de pregunta")
+  })
+  test("NO se mete en tus notas", () => {
+    assert.ok(no("comprar pilas AA y pasar por la farmacia"))
+    assert.ok(no("https://github.com/algo/interesante"), "un link solo se guarda, no se comenta")
+    assert.ok(no("reunion viernes 3pm oficina"))
+    assert.ok(no("ok"))
+    assert.ok(no("Juan me dijo que cuándo salía el pago"), "es una nota sobre lo que dijo otro, no una pregunta")
+    assert.ok(no("pendiente: revisar el contrato"))
+  })
+  test("SÍ contesta preguntas de verdad", () => {
+    assert.ok(si("¿cuánto me debe Soltrak?"))
+    assert.ok(si("cuando sale el vuelo a lima?"))
+    assert.ok(si("qué reunión tengo mañana"))
+    assert.ok(si("buscá el precio del dólar hoy"))
+    assert.ok(si("decime el teléfono de la clínica"))
+  })
+  test("el nombre es la salida de emergencia: contesta aunque no parezca pregunta", () => {
+    const c = classify("pipe necesito el link del deploy ya")
+    assert.equal(c.answer, true)
+    assert.equal(c.explicit, true)
+    assert.equal(c.question, "necesito el link del deploy ya", "quita el prefijo antes de preguntar")
+    assert.ok(no("pipe"), "solo el nombre no es una pregunta")
+  })
+  test("no contesta textos larguísimos (una nota pegada) ni vacíos", () => {
+    assert.ok(no("a".repeat(1600) + "?"))
+    assert.ok(no(""))
+    assert.ok(no(null))
+  })
+  test("needsWeb: lo personal se responde con tu historial, no sale a internet", () => {
+    assert.equal(needsWeb("¿qué acordé con Milagros sobre la factura?"), false)
+    assert.equal(needsWeb("¿cuánto me debe ese cliente?"), false)
+    assert.equal(needsWeb("¿a cuánto está el dólar?"), true)
+    assert.equal(needsWeb("quién es el CEO de Anthropic"), true)
+  })
+}
+
+{
+  const { classify } = await import("../src/lib/brain/assistant.mjs")
+  // regresión del bug de acentos: en JS \b es ASCII, así que una palabra que TERMINA en vocal acentuada
+  // no tenía frontera y quedaba mal clasificada. Estas son justo las que fallaban.
+  test("clasifica bien las palabras acentuadas (regresión \\b ASCII)", () => {
+    for (const t of ["qué reunión tengo mañana", "buscá el precio del dólar", "cuál es la clave del wifi", "cuándo cierra el banco", "averiguá el horario"]) {
+      assert.equal(classify(t).answer, true, `debería contestar: ${t}`)
+    }
+  })
+}

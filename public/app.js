@@ -356,6 +356,7 @@ const CFG_SECS = [
   { id: "msg", icon: SVG.chat, name: "Mensajería", kick: "Chat", title: "WhatsApp, Telegram y más", desc: "Sumá tus chats a la bandeja unificada." },
   { id: "send", icon: IC_SEND, name: "Estado de envío", kick: "Diagnóstico", title: "¿Tus mensajes salen?", desc: "El hub se autoprueba mandándote un mensaje y te avisa si algo no sale." },
   { id: "autopilot", icon: IC_ROBOT, name: "Piloto automático", kick: "Automatización", title: "Qué escala el piloto", desc: "Elegí qué temas el piloto NO responde solo — esos te los deja a vos." },
+  { id: "asistente", icon: IC_ROBOT, name: "Asistente en tu chat", kick: "Automatización", title: "Asistente en tu propio chat", desc: "Escribile a tu propio WhatsApp: si le PREGUNTÁS algo te responde (busca en internet y en tu historial). Tus notas no se tocan." },
   { id: "train", icon: IC_ROBOT, name: "Entrená tu IA", kick: "Automatización", title: "Corregí lo que respondería tu IA", desc: "Te muestra un mensaje real y lo que tu IA contestaría. Aprobalo o corregilo — así aprende tu estilo." },
   { id: "voice", icon: IC_ROBOT, name: "Tu voz", kick: "Automatización", title: "Cómo te detecta la IA", desc: "La IA analiza tus mensajes y detecta tu tonalidad: idiomas, dialecto/nacionalidad, tono. Así te imita mejor." },
   { id: "sync", icon: IC_SYNC, name: "Sincronización", kick: "Mantenimiento", title: "Reconstruir / resincronizar", desc: "Si algo se desincronizó, reconstruilo desde acá. No borra nada." },
@@ -493,6 +494,7 @@ function renderCfgSection(id) {
   }
   if (id === "storage") body = `<div id="storageCfg" class="cfg-card">Cargando…</div>`
   if (id === "autopilot") body = `<div id="apPolicyCfg" class="cfg-card">Cargando…</div>`
+  if (id === "asistente") body = `<div id="asistCfg" class="cfg-card">Cargando…</div>`
   if (id === "train") body = `<div id="trainDeck" class="cfg-card">Cargando…</div>`
   if (id === "voice") body = `<div id="voiceCfg" class="cfg-card">Cargando…</div>`
   if (id === "enrich") body = `<div id="apifyCfg">Cargando…</div>`
@@ -505,6 +507,7 @@ function renderCfgSection(id) {
   if (id === "mail") loadSignatures()
   if (id === "storage") loadStorageCfg()
   if (id === "autopilot") loadAutopilotPolicy()
+  if (id === "asistente") loadAsistente()
   if (id === "train") loadTrainDeck()
   if (id === "voice") loadVoiceProfile()
   if (id === "enrich") loadApifyCfg()
@@ -750,6 +753,37 @@ window.sigSave = async () => {
 window.sigClear = async () => {
   const r = await post("/api/signature", { account: _sigAcct, text: "" }).catch(() => null)
   if (r) { _sigData.sigs = r.signatures || {}; renderSignatures(); flash("firma quitada") }
+}
+// 🤖 ASISTENTE EN TU PROPIO CHAT — distinto del piloto: acá la IA te habla A VOS, no se hace pasar por vos.
+let _asist = null
+async function loadAsistente() {
+  const box = document.getElementById("asistCfg"); if (!box) return
+  _asist = await api("/api/assistant").catch(() => null)
+  renderAsistente()
+}
+function renderAsistente() {
+  const box = document.getElementById("asistCfg"); if (!box || !_asist) return
+  const on = !!_asist.enabled, st = _asist.state || {}
+  box.innerHTML = `<div class="cfg-r"><div class="ric">${IC_ROBOT}</div><div class="rm"><b>Responderme cuando pregunte</b><span>Le escribís a tu propio WhatsApp y, si es una pregunta, te contesta. Las notas y links los deja pasar.</span></div>
+      <button class="switch${on ? " on" : ""}" role="switch" aria-checked="${on}" aria-label="Asistente" onclick="asistToggle(${!on})"></button></div>
+    <div class="cfg-r"><div class="ric">🌐</div><div class="rm"><b>Puede buscar en internet</b><span>Para precios, horarios o datos que no están en tu historial.</span></div>
+      <button class="switch${_asist.web ? " on" : ""}" role="switch" aria-checked="${!!_asist.web}" aria-label="Internet" onclick="asistWeb(${!_asist.web})"></button></div>
+    <div class="cfg-r"><div class="ric">📊</div><div class="rm"><b>Tope diario</b><span>Hoy respondió ${st.usedToday || 0} de ${_asist.maxPerDay}.</span></div>
+      <input class="inp" style="width:80px;margin:0;text-align:center" value="${_asist.maxPerDay}" onchange="asistMax(this.value)"></div>
+    <div class="cfg-note" style="margin-top:10px">${IC_INFO}<div>Para forzarlo, empezá el mensaje con <b>“pipe”</b> — así responde aunque no parezca pregunta. Sus respuestas arrancan con 🤖.</div></div>
+    <div class="cfg-card" style="padding:13px 15px;margin-top:10px"><div style="font-weight:600;font-size:14px;margin-bottom:8px">Probarlo sin mandar nada</div>
+      <div style="display:flex;gap:8px"><input id="asist-q" class="inp" placeholder="ej: ¿a cuánto está el dólar?" style="flex:1;margin:0" onkeydown="if(event.key==='Enter')asistTry()"><button class="btn" style="width:auto;flex:none;padding:11px 18px" onclick="asistTry()">Probar</button></div>
+      <div id="asist-out" class="tiny muted" style="margin-top:9px;line-height:1.5"></div></div>`
+}
+window.asistToggle = async (on) => { _asist = await post("/api/assistant", { enabled: on }).catch(() => _asist); const s = await api("/api/assistant"); _asist = s; renderAsistente(); flash(on ? "🤖 asistente activado" : "asistente apagado") }
+window.asistWeb = async (on) => { await post("/api/assistant", { web: on }).catch(() => {}); _asist = await api("/api/assistant"); renderAsistente() }
+window.asistMax = async (v) => { await post("/api/assistant", { maxPerDay: +v || 30 }).catch(() => {}); _asist = await api("/api/assistant"); renderAsistente() }
+window.asistTry = async () => {
+  const q = (document.getElementById("asist-q") || {}).value || ""
+  const out = document.getElementById("asist-out"); if (!q.trim() || !out) return
+  out.innerHTML = "Pensando…"
+  const r = await post("/api/assistant/try", { q }).catch(() => null)
+  out.innerHTML = r && r.text ? `${esc(r.text)}<div class="tiny muted" style="margin-top:6px">${r.usedWeb ? "🌐 usó internet" : "solo tu historial"} · ${r.ownMatches} fragmentos tuyos</div>` : "No pude responder ahora."
 }
 window.toggleGlobalMedia = async (store) => { await post("/api/media-policy", { def: store ? "store" : "skip" }).catch(() => {}); loadStorageCfg() }
 window.freeAllMedia = async () => {

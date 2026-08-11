@@ -119,6 +119,16 @@ function runVideoFetch() {
 // OPTIMIZACIÓN DE MEDIA — recomprime lo que va entrando, venga del canal que venga. Lotes chicos y espaciados a propósito:
 // esto es trabajo de fondo, no puede competir con la ingesta. La imagen es SIN pérdida; el video es H.265 (con pérdida) y
 // se hace mucho más espaciado porque es caro en CPU. Ver src/media-optimize.mjs para el diseño del "antes y después".
+// 🤖 ASISTENTE: mira tu chat con vos mismo y contesta si le hacés una pregunta (las notas no se tocan).
+// Apagado por defecto; se prende en Configuración. Sale por su propio módulo, NO por el piloto (no se hace pasar por vos).
+let assistantRunning = false
+function runAssistant() {
+  if (assistantRunning) return
+  assistantRunning = true
+  const p = spawnLogged("asistente", NODE, ["src/assistant-tick.mjs"])
+  p.on("exit", () => { assistantRunning = false })
+}
+
 let mediaOptRunning = false
 function runMediaOptimize(kind, limit) {
   if (mediaOptRunning) return // un solo optimizador a la vez (imagen y video comparten el flag)
@@ -379,7 +389,8 @@ setInterval(runVideoFetch, 4 * 60000) // baja videos de links nuevos cada 4 min 
 setInterval(() => runMediaOptimize("img", 150), 30 * 60000)          // imágenes nuevas: sin pérdida, cada 30 min
 setInterval(() => runMediaOptimize("video", 3), 3 * 3600000)         // video: caro y CON pérdida → 3 por vez, cada 3h, y solo con MEDIA_OPT_VIDEO=1
 setTimeout(runAutopilot, 60000) // primera corrida del piloto automático al minuto
-setInterval(runAutopilot, 60000) // revisa contactos con piloto automático cada 1 min (fail-closed; la mayoría de corridas no hacen nada)
+setInterval(runAutopilot, 60000)
+setInterval(runAssistant, 60000) // 🤖 asistente en TU propio chat: contesta solo si le preguntás algo (apagado por defecto) // revisa contactos con piloto automático cada 1 min (fail-closed; la mayoría de corridas no hacen nada)
 setTimeout(runEmbedWatchdog, 30000); setInterval(runEmbedWatchdog, 5 * 60000) // mantiene caliente el motor semántico + reinicia Ollama si muere
 setTimeout(runBridgeSync, 8 * 60000) // sync del bridge (fotos+nombres) a los 8 min
 setInterval(runBridgeSync, 6 * 3600000) // fotos de perfil + nombres de grupo cada 6h (mautrix DB)
