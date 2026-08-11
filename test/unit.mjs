@@ -308,3 +308,32 @@ test("audioExt: mime → extensión canónica que Whisper acepta por nombre de a
     assert.equal(isDegenerateHash(null), true)
   })
 }
+
+// ── Firmas de correo ─────────────────────────────────────────────────────────────────────────────
+// Un email se responde CON firma; un WhatsApp no. Antes los dos salían como texto pelado.
+{
+  const { composeEmailBody, looksSigned, textToHtml } = await import("../src/lib/signature.mjs")
+  test("composeEmailBody: agrega la firma y arma la parte HTML", () => {
+    const r = composeEmailBody("Confirmo el pago el lunes.", "no-existe@x")
+    assert.ok(r.text.includes("Confirmo el pago el lunes."))
+    assert.ok(r.text.includes("--"), "la firma por defecto lleva el separador estándar")
+    assert.ok(r.html.startsWith("<div>"), "siempre hay parte HTML (si no, la firma se ve rota)")
+  })
+  test("composeEmailBody: con skip NO firma (el texto ya venía firmado)", () => {
+    const r = composeEmailBody("Saludos,\nAlvaro", "x", { skip: true })
+    assert.equal(r.text, "Saludos,\nAlvaro")
+  })
+  test("looksSigned: detecta el separador -- para no duplicar la firma", () => {
+    assert.equal(looksSigned("Listo, mañana lo veo.\n\n--\nAlvaro"), true)
+    assert.equal(looksSigned("Listo, mañana lo veo."), false)
+    assert.equal(looksSigned(""), false)
+  })
+  test("textToHtml: escapa HTML del usuario y respeta los saltos de línea", () => {
+    const h = textToHtml("hola <script>alert(1)</script>\nchau")
+    assert.ok(!h.includes("<script>"), "no se puede inyectar HTML desde el compositor")
+    assert.ok(h.includes("&lt;script&gt;") && h.includes("<br>"))
+  })
+  test("textToHtml: los links quedan clicables", () => {
+    assert.ok(textToHtml("mirá https://pipe.one acá").includes('<a href="https://pipe.one">'))
+  })
+}

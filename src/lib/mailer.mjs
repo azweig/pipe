@@ -4,6 +4,7 @@ import nodemailer from "nodemailer"
 import { readFileSync, existsSync } from "node:fs"
 import { decSecret } from "./secrets.mjs"
 import { gmailAccessToken } from "./google.mjs"
+import { composeEmailBody, looksSigned } from "./signature.mjs"
 
 const imapAccounts = () => (existsSync("./auth/imap-accounts.json") ? JSON.parse(readFileSync("./auth/imap-accounts.json", "utf8")) : [])
 
@@ -44,12 +45,28 @@ export async function sendEmail({ to, subject, text, html, fromName = "pipe", re
 }
 
 // RESPUESTA a un hilo de email: usa el SMTP de la cuenta que recibió el hilo (Gmail, Mailcow, lo que sea).
-export async function sendEmailReply(toRaw, text, { account, subject } = {}) {
+// Un correo NO es un mensaje de texto: va con FIRMA, con parte HTML (para que la firma se vea) y con las cabeceras
+// de hilo (In-Reply-To/References) para que el cliente del otro lo enganche a la conversación en vez de abrir una nueva.
+// `inReplyTo` es el Message-ID del correo que estás respondiendo (nuestro id de mensaje es "email:<Message-ID>").
+export async function sendEmailReply(toRaw, text, { account, subject, inReplyTo, fromName } = {}) {
   const to = String(toRaw).replace(/^email:/, "").trim()
   if (!/^[^@\s]+@[^@\s]+$/.test(to)) return { error: "dirección de email inválida" }
   const acc = sendableAccount(account); if (!acc) return { error: "sin cuenta configurada para enviar" }
   const subj = subject ? (/^re:/i.test(subject) ? subject : `Re: ${subject}`) : "Re:"
   const { t, from, error } = await transportFor(acc); if (error) return { error }
-  try { await t.sendMail({ from, to, subject: subj, text }); return { ok: true, from } }
-  catch (e) { return { error: `SMTP: ${e.message}` } }
+  const body = composeEmailBody(text, acc.label || acc.user, { skip: looksSigned(text) })
+  const ref = normalizeMsgId(inReplyTo)
+  try {
+    await t.sendMail({
+      from: fromName ? `"${fromName}" <${from}>` : from,
+      to, subject: subj, text: body.text, html: body.html,
+      ...(ref ? { inReplyTo: ref, references: [ref] } : {}),
+    })
+    return { ok: true, from }
+  } catch (e) { return { error: `SMTP: ${e.message}` } }
+}
+// nuestro id es "email:<abc@host>" (IMAP) o "email:AQMk…" (Graph, opaco). Solo el primero sirve como Message-ID RFC.
+function normalizeMsgId(id) {
+  const raw = String(id || "").replace(/^email:/, "").trim()
+  return /^<[^>]+@[^>]+>$/.test(raw) ? raw : null
 }

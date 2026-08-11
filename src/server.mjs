@@ -17,6 +17,7 @@ import * as tglogin from "./lib/telegram-login.mjs"
 import { loggedOutNumbers } from "./matrix.mjs"
 import { llmConfigMasked, setLlmConfig, smartChain, testKey } from "./lib/llm.mjs"
 import * as hub from "./lib/hub.mjs"
+import * as sig from "./lib/signature.mjs"
 import * as meetings from "./lib/meetings.mjs"
 import * as auth from "./lib/auth.mjs"
 import * as secret from "./lib/secret.mjs"
@@ -556,6 +557,9 @@ const server = createServer(async (req, res) => {
       if (path === "/api/llm-config/test" && req.method === "POST") { const b = await body(req); return json(res, 200, await testKey(b)) } // probar una key (ping mínimo): {keyId} o {provider,token}
       // CONFIG POR-HUB (base multi-cliente): dueño, empresa, números/mails propios, timezone
       if (path === "/api/hub-config") return json(res, 200, hub.hubConfig())
+      // ✍️ FIRMAS de correo, por cuenta ("*" = la de por defecto). Un email se responde con firma; un WhatsApp no.
+      if (path === "/api/signatures") return json(res, 200, { signatures: sig.listSignatures(), fallback: sig.defaultSignature() })
+      if (path === "/api/signature" && req.method === "POST") { const b = await body(req); return json(res, 200, { signatures: sig.setSignature(b.account || "*", { text: b.text, html: b.html }) }) }
       if (path === "/api/hub-config/save" && req.method === "POST") { const b = await body(req); return json(res, 200, hub.setHubConfig(b)) }
       if (path === "/api/objetivos") return json(res, 200, ws.objetivos())
       if (path === "/api/objetivo" && req.method === "POST") return json(res, 200, ws.saveObjetivo(await body(req)))

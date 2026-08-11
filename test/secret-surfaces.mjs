@@ -92,3 +92,26 @@ test("desmarcar la cuenta secreta restaura la visibilidad en las superficies der
   assert.equal(calls.length, 1, "sin marca secreta, la llamada vuelve")
   secret.setSecretNumber("51999000001", true) // restaurar estado por si otro test corre después
 })
+
+// 🔒 EL BUSCADOR DE LA BANDEJA: buscar por nombre no puede ser una puerta trasera a un hilo 100% secreto.
+// (regresión: la búsqueda server-side se agregó para llegar a contactos fuera de la ventana de recientes;
+//  si no respetara el gate, escribir el nombre revelaría que esa conversación existe).
+test("searchThreadKeys encuentra el hilo secreto, pero el gate lo tapa antes de salir", () => {
+  const keys = tr.searchThreadKeys("solo", { limit: 20 })
+  assert.ok(keys.includes("solo"), "el índice sí lo encuentra (por eso el gate es imprescindible)")
+  const hide = secret.secretThreadKeys()
+  assert.equal(hide.has("solo"), true, "un hilo 100% secreto NO puede salir en resultados de búsqueda")
+  // el parcial sí puede aparecer: se muestra filtrado por-mensaje, no oculto
+  assert.equal(hide.has("mili"), false)
+})
+
+test("searchThreadKeys: sin query o con 1 letra no devuelve nada (no barre la base entera)", () => {
+  assert.deepEqual(tr.searchThreadKeys("", { limit: 20 }), [])
+  assert.deepEqual(tr.searchThreadKeys("a", { limit: 20 }), [])
+})
+
+test("searchThreadKeys: tolera sintaxis de FTS5 sin explotar", () => {
+  for (const q of ['"', 'a OR b', 'x NEAR(y)', "mili*", "((("]) {
+    assert.ok(Array.isArray(tr.searchThreadKeys(q, { limit: 5 })), `no debe tirar con: ${q}`)
+  }
+})

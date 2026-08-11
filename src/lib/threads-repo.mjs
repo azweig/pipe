@@ -445,7 +445,7 @@ export function lastEmailByAddress(address) {
 }
 // último email (cuenta+texto) de un hilo. (era brain.sendReply)
 export function lastEmailInThread(key) {
-  return db().prepare("SELECT account, text FROM messages WHERE thread=? AND channel='email' ORDER BY ts DESC LIMIT 1").get(key)
+  return db().prepare("SELECT id, account, text FROM messages WHERE thread=? AND channel='email' AND dir!='out' ORDER BY ts DESC LIMIT 1").get(key) || db().prepare("SELECT id, account, text FROM messages WHERE thread=? AND channel='email' ORDER BY ts DESC LIMIT 1").get(key)
 }
 // último jid gestionado por Unipile de un hilo (WhatsApp híbrido). (era brain.sendReply)
 export function lastUnipileJid(key) {

@@ -14,7 +14,7 @@ import { casPutBuffer } from "../cas.mjs"
 import { llm } from "../llm.mjs"
 import { maskLinks, unmaskLinks, isOnlyLinks } from "../linkmask.mjs" // #1: los links nunca se corrigen
 import { harden, UNTRUSTED_NOTE } from "../safety.mjs"
-import { ownerFirst } from "../hub.mjs"
+import { ownerFirst, owner } from "../hub.mjs"
 import { buildStyleProfile, buildStyleProfiles, styleExamples, categoryOf } from "../style.mjs"
 import { jf, contactName } from "./kernel/contacts.mjs"
 import { canonOfKey, stripWA } from "./kernel/keys.mjs"
@@ -86,7 +86,7 @@ export async function sendReply(key, text, { channel, target } = {}) {
   // destino EXPLÍCITO elegido por el usuario
   if (channel === "email" && target) {
     const last = lastEmailByAddress(target) || lastEmailInThread(key)
-    const r = await sendEmailReply(target, text, { account: last?.account, subject: (last?.text || "").split(" — ")[0] })
+    const r = await sendEmailReply(target, text, { account: last?.account, subject: (last?.text || "").split(" — ")[0], inReplyTo: last?.id, fromName: owner() })
     return r.error ? r : { ok: true, channel: "email" }
   }
   if (channel === "whatsapp" && target) {
@@ -101,7 +101,7 @@ export async function sendReply(key, text, { channel, target } = {}) {
   // AUTO (sin destino): email si el key es email, si no la última sala de WhatsApp
   if (String(key).startsWith("email:")) {
     const last = lastEmailInThread(key)
-    const r = await sendEmailReply(key, text, { account: last?.account, subject: (last?.text || "").split(" — ")[0] })
+    const r = await sendEmailReply(key, text, { account: last?.account, subject: (last?.text || "").split(" — ")[0], inReplyTo: last?.id, fromName: owner() })
     return r.error ? r : { ok: true, channel: "email" }
   }
   // ¿el contacto se maneja por Unipile? (sus mensajes recientes vienen con account='unipile') → enviar por Unipile, NO por el

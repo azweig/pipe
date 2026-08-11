@@ -455,7 +455,9 @@ function renderCfgSection(id) {
       + (sOn ? "" : `<button class="btn ghost" onclick="secretUnlockConfig()">PIN</button>`)
       + `<button class="btn" onclick="addConnectionSheet('correo')">➕ Agregar cuenta de correo</button>
       <div class="cfg-note">${IC_INFO}<div>El hub trae solo lo reciente. ¿Falta un correo viejo (un cliente, una deuda)? Traelo del archivo por nombre, dominio o palabra.</div></div>
-      <div class="cfg-card" style="padding:13px 15px"><div style="display:flex;gap:8px;align-items:center"><input id="bf-q" class="inp" placeholder="ej: soltrak, @viacorreo.com.ar" style="flex:1;margin:0" onkeydown="if(event.key==='Enter')runBackfill()"><button class="btn" style="width:auto;flex:none;padding:11px 18px" onclick="runBackfill()">Traer</button></div><div id="bf-status" class="tiny muted" style="margin-top:9px;line-height:1.4"></div></div>`
+      <div class="cfg-card" style="padding:13px 15px"><div style="display:flex;gap:8px;align-items:center"><input id="bf-q" class="inp" placeholder="ej: soltrak, @viacorreo.com.ar" style="flex:1;margin:0" onkeydown="if(event.key==='Enter')runBackfill()"><button class="btn" style="width:auto;flex:none;padding:11px 18px" onclick="runBackfill()">Traer</button></div><div id="bf-status" class="tiny muted" style="margin-top:9px;line-height:1.4"></div></div>
+      <div class="cfg-note">${IC_INFO}<div>Un correo se responde con firma. Elegí la cuenta y escribí la tuya — si dejás la de “Todas”, se usa esa.</div></div>
+      <div id="sigBox" class="cfg-card" style="padding:13px 15px">Cargando…</div>`
   } else if (id === "msg") {
     const nums = (a.messaging && a.messaging[0] && a.messaging[0].numbers) || []
     const sOn = window.secretOn && window.secretOn()
@@ -500,6 +502,7 @@ function renderCfgSection(id) {
     ${body}
   </div>`, "cuenta")
   if (id === "send") loadSelfTest()
+  if (id === "mail") loadSignatures()
   if (id === "storage") loadStorageCfg()
   if (id === "autopilot") loadAutopilotPolicy()
   if (id === "train") loadTrainDeck()
@@ -717,6 +720,36 @@ window.loadStorageCfg = async () => {
       ${saved ? `<div class="stor-bar"><i style="width:${saved}%"></i></div><div class="stor-cap" style="margin-top:8px">${saved}% ahorrado por deduplicación — los archivos repetidos se guardan una sola vez.</div>` : ""}
     </div>
     <button class="btn ghost btn-danger" onclick="freeAllMedia()"><span class="ei">${IC_TRASH}</span>Liberar espacio</button>`
+}
+// ✍️ FIRMAS: una por cuenta ("*" = la que se usa si esa cuenta no tiene la suya). El correo se manda con firma;
+// el WhatsApp no. Sin configurar nada, se usa una mínima armada con tu nombre y empresa.
+let _sigData = null, _sigAcct = "*"
+async function loadSignatures() {
+  const box = document.getElementById("sigBox"); if (!box) return
+  const [r, a] = await Promise.all([api("/api/signatures"), api("/api/accounts").catch(() => ({ email: [] }))])
+  _sigData = { sigs: (r && r.signatures) || {}, fallback: (r && r.fallback) || { text: "" }, accounts: (a && a.email) || [] }
+  renderSignatures()
+}
+function renderSignatures() {
+  const box = document.getElementById("sigBox"); if (!box || !_sigData) return
+  const cur = _sigData.sigs[_sigAcct.toLowerCase()] || _sigData.sigs[_sigAcct]
+  const val = cur ? cur.text : (_sigAcct === "*" ? (_sigData.fallback.text || "") : "")
+  const opts = [["*", "Todas las cuentas"], ..._sigData.accounts.map((e) => [e.label || e.user, e.name || e.user])]
+  box.innerHTML = `<div style="font-weight:600;font-size:14px;margin-bottom:9px">✍️ Firma</div>
+    <select class="inp" style="margin-bottom:9px" onchange="sigPick(this.value)">${opts.map(([v, l]) => `<option value="${esc(v)}"${v === _sigAcct ? " selected" : ""}>${esc(l)}${_sigData.sigs[String(v).toLowerCase()] ? " ✓" : ""}</option>`).join("")}</select>
+    <textarea id="sigText" class="inp" rows="5" placeholder="--\nTu nombre\nTu empresa" style="resize:vertical;font-family:inherit">${esc(val)}</textarea>
+    <div class="tiny muted" style="margin:6px 0 10px">${cur ? "Personalizada para esta cuenta." : _sigAcct === "*" ? "Es la de por defecto (armada con tu nombre y empresa). Editala para fijarla." : "Sin firma propia: usa la de “Todas las cuentas”."}</div>
+    <div style="display:flex;gap:8px"><button class="btn" style="flex:1" onclick="sigSave()">Guardar</button>${cur ? `<button class="btn ghost" style="flex:0 0 auto;width:auto;padding:11px 16px" onclick="sigClear()">Quitar</button>` : ""}</div>`
+}
+window.sigPick = (v) => { _sigAcct = v; renderSignatures() }
+window.sigSave = async () => {
+  const t = (document.getElementById("sigText") || {}).value || ""
+  const r = await post("/api/signature", { account: _sigAcct, text: t }).catch(() => null)
+  if (r) { _sigData.sigs = r.signatures || {}; renderSignatures(); flash("✍️ firma guardada") } else alert("No se pudo guardar.")
+}
+window.sigClear = async () => {
+  const r = await post("/api/signature", { account: _sigAcct, text: "" }).catch(() => null)
+  if (r) { _sigData.sigs = r.signatures || {}; renderSignatures(); flash("firma quitada") }
 }
 window.toggleGlobalMedia = async (store) => { await post("/api/media-policy", { def: store ? "store" : "skip" }).catch(() => {}); loadStorageCfg() }
 window.freeAllMedia = async () => {
@@ -2284,6 +2317,9 @@ window.secretAccountToggleSheet = async (ch, ac) => { const want = !secretIsAcco
 function secretLock() {
   if (!_secretTok) return
   _secretTok = null; clearTimeout(_secretIdle)
+  // 🔒 los resultados que trajo el buscador MIENTRAS estabas desbloqueado pueden incluir hilos secretos: al bloquear
+  // se tiran. Si no, el contacto seguía listado (y al abrirlo aparecía vacío) = delata que esa conversación existe.
+  _remoteHits = []; if ((ST.q || "").trim()) remoteInboxSearch(ST.q)
   post("/api/secret/lock", {}).catch(() => {})
   try { for (const k of Object.keys(localStorage)) if (/^c:\/api\/thread/.test(k)) localStorage.removeItem(k) } catch {} // borra cualquier rastro cacheado
   _repaintForSecret()
