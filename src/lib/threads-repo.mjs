@@ -126,7 +126,7 @@ export function selfNotesSince(since, { limit = 120 } = {}) {
   const s = _selfSecretAnd("messages") // 🔒 excluye notas de canal secreto (sin 2º PIN el cron/chat no debe verlas)
   // jid = la SALA de origen. Con varios teléfonos, el asistente tiene que contestar DONDE preguntaste,
   // no en "la última sala del hilo" (que puede ser la de otro celular).
-  return db().prepare(`SELECT text, summary, mediaType, ts, jid FROM messages
+  return db().prepare(`SELECT text, summary, mediaType, media, filename, ts, jid FROM messages
     WHERE thread='self' AND ts > ?${s.sql} ORDER BY ts DESC LIMIT ?`).all(since, ...s.params, limit)
 }
 // Notas propias INCLUYENDO las de líneas secretas. Solo para el ASISTENTE y solo con su opt-in explícito.
@@ -134,7 +134,7 @@ export function selfNotesSince(since, { limit = 120 } = {}) {
 // lo vea), no "inexistente". El asistente contesta DENTRO de ese mismo chat de WhatsApp, donde el dueño ya ve todo:
 // no expone nada a una superficie nueva. Distinto de coach/home/vault, que SÍ mostrarían ese contenido en otro lado.
 export function selfNotesSinceAll(since, { limit = 120 } = {}) {
-  return db().prepare(`SELECT text, summary, mediaType, ts, jid FROM messages
+  return db().prepare(`SELECT text, summary, mediaType, media, filename, ts, jid FROM messages
     WHERE thread='self' AND ts > ? ORDER BY ts DESC LIMIT ?`).all(since, limit)
 }
 // ¿esta nota vino de una línea secreta? → para decidir si se responde con modelo LOCAL (no mandar eso a la nube)
