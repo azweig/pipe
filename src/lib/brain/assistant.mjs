@@ -89,7 +89,7 @@ const markSent = (txt) => { const s = load(STATE(), {}); s.lastReplyTs = Date.no
 export function assistantState() { const s = load(STATE(), {}); return { ...s, usedToday: (s.today || []).filter((x) => Date.now() - x < 86400000).length } }
 
 // ¿la respuesta del RAG es en realidad un "no sé"? (varias formas, con y sin acento)
-const EMPTYISH = /(no (hay|tengo|se encontr|dispongo|puedo)|sin (información|informacion|datos)|no (aparece|figura|consta)|los (datos|fragmentos) no (alcanzan|permiten))/i
+const EMPTYISH = /(no (hay|tengo|se encontr|dispongo|puedo)|sin (información|informacion|datos)|no (aparece|figura|consta|menciona|mencionan|contienen|incluyen)|los (datos|fragmentos) no (alcanzan|permiten))/i
 export const looksEmptyAnswer = (t) => { const x = String(t || "").trim(); return !x || (x.length < 260 && EMPTYISH.test(x)) }
 
 /** Responde UNA pregunta con todo lo que tenemos: tu historial (RAG) + internet si hace falta. */
@@ -131,7 +131,16 @@ RESULTADOS WEB:
 ${webCtx || "(no se buscó en internet)"}
 
 RESPUESTA:`
-  const out = await llm(prompt, { system: sys + "\n" + UNTRUSTED_NOTE, feature: "ask", temperature: 0.3, task: "assistant", bypassCap: true, ...(localOnly ? { chain: smartChain({ sensitive: true }) } : {}) }).then((s) => (s || "").trim()).catch(() => "")
+  const call = (pr, sy) => llm(pr, { system: sy + "\n" + UNTRUSTED_NOTE, feature: "ask", temperature: 0.3, task: "assistant", bypassCap: true, ...(localOnly ? { chain: smartChain({ sensitive: true }) } : {}) }).then((s) => (s || "").trim()).catch(() => "")
+  let out = await call(prompt, sys)
+  // A veces el modelo se aferra a "tu historial no lo menciona" aunque la pregunta sea de conocimiento general
+  // (pasó con "¿cuánta gente vive en Arequipa?"). Un reintento explícito, sin el contexto personal que lo distrae.
+  if (looksEmptyAnswer(out) && !PERSONAL.test(question)) {
+    const retry = `PREGUNTA: ${question}\n\n${webCtx ? `RESULTADOS WEB:\n${webCtx}\n\n` : ""}RESPUESTA:`
+    const sys2 = harden(`Sos el asistente personal de ${ownerFirst()}. Es una pregunta de CONOCIMIENTO GENERAL: respondé con lo que sabés${webCtx ? " y con los resultados web" : ""}, en 1 a 3 frases, en español. No digas que te faltan datos de su historial: la pregunta no es sobre él.`)
+    const second = await call(retry, sys2)
+    if (second && !looksEmptyAnswer(second)) out = second
+  }
   return { text: out, usedWeb: useWeb && !!webCtx, ownMatches: own.matches || 0, localOnly }
 }
 
