@@ -66,12 +66,70 @@ export async function redditSearch(q, { limit = 5, t = "week" } = {}) {
 const FEEDS_FILE = "./data/feeds.json"
 // Arranque razonable si no configuraste nada: agencias e internacionales en español e inglés.
 export const DEFAULT_FEEDS = [
-  { name: "BBC Mundo", url: "https://feeds.bbci.co.uk/mundo/rss.xml" },
-  { name: "El País", url: "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada" },
-  { name: "Reuters World", url: "https://www.reutersagency.com/feed/?best-topics=world&post_type=best" },
-  { name: "AP Top News", url: "https://rsshub.app/apnews/topics/apf-topnews" },
-  { name: "Infobae", url: "https://www.infobae.com/feeds/rss/" },
-  { name: "El Comercio (PE)", url: "https://elcomercio.pe/arcio/rss/" },
+  // — GLOBAL / agencias —
+  { name: "BBC World", url: "https://feeds.bbci.co.uk/news/world/rss.xml", tags: "global" },
+  { name: "BBC Mundo", url: "https://feeds.bbci.co.uk/mundo/rss.xml", tags: "global,es" },
+  { name: "The Guardian", url: "https://www.theguardian.com/world/rss", tags: "global" },
+  { name: "NYT World", url: "https://rss.nytimes.com/services/xml/rss/nyt/World.xml", tags: "global,us" },
+  { name: "NYT Home", url: "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml", tags: "us" },
+  { name: "Washington Post World", url: "https://feeds.washingtonpost.com/rss/world", tags: "us" },
+  { name: "CNN World", url: "http://rss.cnn.com/rss/edition_world.rss", tags: "global,us" },
+  { name: "Al Jazeera", url: "https://www.aljazeera.com/xml/rss/all.xml", tags: "global,me" },
+  { name: "Al Jazeera Español", url: "https://www.aljazeera.net/aljazeerarss/es/rss.xml", tags: "es,me" },
+  { name: "Haaretz", url: "https://www.haaretz.com/cmlink/1.4605102", tags: "il,me" },
+  { name: "France24 Español", url: "https://www.france24.com/es/rss", tags: "es,eu" },
+  { name: "DW Español", url: "https://rss.dw.com/rdf/rss-sp-all", tags: "es,eu" },
+  { name: "Euronews", url: "https://www.euronews.com/rss", tags: "eu" },
+  { name: "Deutsche Welle", url: "https://rss.dw.com/rdf/rss-en-world", tags: "eu" },
+  { name: "SCMP (Asia)", url: "https://www.scmp.com/rss/91/feed", tags: "asia" },
+  { name: "The Japan Times", url: "https://www.japantimes.co.jp/feed/", tags: "asia" },
+  { name: "Times of India", url: "https://timesofindia.indiatimes.com/rssfeedstopstories.cms", tags: "asia" },
+  { name: "AllAfrica", url: "https://allafrica.com/tools/headlines/rdf/latest/headlines.rdf", tags: "africa" },
+  // — ESPAÑA —
+  { name: "El País", url: "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada", tags: "es" },
+  { name: "El Mundo", url: "https://e00-elmundo.uecdn.es/elmundo/rss/portada.xml", tags: "es" },
+  { name: "RTVE", url: "https://api2.rtve.es/rss/temas_noticias.xml", tags: "es" },
+  // — ARGENTINA —
+  { name: "Clarín", url: "https://www.clarin.com/rss/lo-ultimo/", tags: "ar" },
+  { name: "La Nación", url: "https://www.lanacion.com.ar/arc/outboundfeeds/rss/?outputType=xml", tags: "ar" },
+  // — PERÚ —
+  { name: "El Comercio (PE)", url: "https://elcomercio.pe/arcio/rss/", tags: "pe" },
+  { name: "RPP", url: "https://rpp.pe/feed", tags: "pe" },
+  { name: "Gestión", url: "https://gestion.pe/arcio/rss/", tags: "pe,economia" },
+  // — RESTO DE LATAM —
+  { name: "El Tiempo (CO)", url: "https://www.eltiempo.com/rss/colombia.xml", tags: "co" },
+  { name: "La Tercera (CL)", url: "https://www.latercera.com/arcio/rss/", tags: "cl" },
+  { name: "Folha (BR)", url: "https://feeds.folha.uol.com.br/emcimadahora/rss091.xml", tags: "br" },
+  { name: "El Observador (UY)", url: "https://www.elobservador.com.uy/rss/pages/portada.xml", tags: "uy" },
+  // — ECONOMÍA / NEGOCIOS —
+  { name: "FT World", url: "https://www.ft.com/world?format=rss", tags: "economia" },
+  { name: "Bloomberg Markets", url: "https://feeds.bloomberg.com/markets/news.rss", tags: "economia" },
+  { name: "CNBC", url: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114", tags: "economia" },
+  // — TECNOLOGÍA —
+  { name: "Hacker News", url: "https://hnrss.org/frontpage", tags: "tech" },
+  { name: "TechCrunch", url: "https://techcrunch.com/feed/", tags: "tech" },
+  { name: "Ars Technica", url: "https://feeds.arstechnica.com/arstechnica/index", tags: "tech" },
+  { name: "The Verge", url: "https://www.theverge.com/rss/index.xml", tags: "tech" },
+  // — TENDENCIAS / REDES (RSS públicos, sin credenciales) —
+  { name: "Google Trends (PE)", url: "https://trends.google.com/trending/rss?geo=PE", tags: "trends" },
+  { name: "Google Trends (AR)", url: "https://trends.google.com/trending/rss?geo=AR", tags: "trends" },
+  { name: "Google Trends (US)", url: "https://trends.google.com/trending/rss?geo=US", tags: "trends" },
+  { name: "Google Trends (ES)", url: "https://trends.google.com/trending/rss?geo=ES", tags: "trends" },
+  { name: "Reddit /r/worldnews", url: "https://www.reddit.com/r/worldnews/.rss", tags: "social" },
+  { name: "Reddit /r/news", url: "https://www.reddit.com/r/news/.rss", tags: "social" },
+  // — verificadas una por una con curl (las que daban 403/404 se sacaron, no se dejan "por las dudas") —
+  { name: "WSJ World", url: "https://feeds.a.dj.com/rss/RSSWorldNews.xml", tags: "global,us,economia" },
+  { name: "Jerusalem Post", url: "https://www.jpost.com/rss/rssfeedsfrontpage.aspx", tags: "il,me" },
+  { name: "Le Monde (EN)", url: "https://www.lemonde.fr/en/rss/une.xml", tags: "eu" },
+  { name: "France24 (FR)", url: "https://www.france24.com/fr/rss", tags: "eu" },
+  { name: "elDiario.es", url: "https://www.eldiario.es/rss/", tags: "es" },
+  { name: "El País Internacional", url: "https://elpais.com/rss/internacional/portada.xml", tags: "es,global" },
+  { name: "Perfil (AR)", url: "https://www.perfil.com/feed", tags: "ar" },
+  { name: "Ámbito (AR)", url: "https://www.ambito.com/rss/pages/home.xml", tags: "ar,economia" },
+  { name: "La República (PE)", url: "https://larepublica.pe/rss/politica/", tags: "pe" },
+  { name: "G1 Mundo (BR)", url: "https://g1.globo.com/rss/g1/mundo/", tags: "br" },
+  { name: "CBC World (CA)", url: "https://www.cbc.ca/webfeed/rss/rss-world", tags: "ca" },
+  { name: "ABC News (AU)", url: "https://www.abc.net.au/news/feed/51120/rss.xml", tags: "au" },
 ]
 export function listFeeds() {
   try { if (existsSync(FEEDS_FILE)) { const f = JSON.parse(readFileSync(FEEDS_FILE, "utf8")); if (Array.isArray(f) && f.length) return f } } catch {}
@@ -101,26 +159,64 @@ export function parseFeed(xml, feedName = "") {
   return out
 }
 
-/** ¿el ítem habla de lo que preguntamos? Match por palabras significativas (≥4 letras) del query. */
+// Palabras largas pero VACÍAS de contenido. Sin esta lista, "¿qué pasó con el papá de Messi?" matcheaba
+// "Turquía da un nuevo PASO hacia la paz" — un titular que no tiene nada que ver. El ruido es peor que el silencio:
+// una noticia irrelevante en el contexto puede hacer que el modelo conteste cualquier cosa.
+const STOP = new Set(["paso", "pasó", "pasa", "esta", "este", "esto", "eso", "sobre", "para", "como", "cuando", "cuándo",
+  "donde", "dónde", "hace", "todo", "toda", "mismo", "misma", "algo", "alguien", "tiene", "tienen", "hacer", "puede",
+  "semana", "mes", "año", "años", "dia", "día", "dias", "días", "hoy", "ayer", "ahora", "mucho", "poco", "otra", "otro",
+  "que", "the", "with", "from", "this", "that", "what", "when", "where", "about", "have", "has", "week", "today"])
+/** ¿el ítem habla de lo que preguntamos? Match por palabras con CONTENIDO (≥4 letras y fuera de la lista vacía). */
 export function feedMatches(item, q) {
-  const words = norm(q).split(/\s+/).filter((w) => w.length >= 4)
+  const words = norm(q).split(/\s+/).filter((w) => w.length >= 4 && !STOP.has(w))
   if (!words.length) return false
   const hay = norm(item.title + " " + item.snippet)
   return words.some((w) => hay.includes(w))
 }
 
-/** Busca en TUS feeds. Falla suave por feed: uno caído no rompe el resto. */
-export async function rssSearch(q, { feeds = listFeeds(), limit = 6, timeoutMs = 6000 } = {}) {
+// ── ÍNDICE LOCAL DE TITULARES ─────────────────────────────────────────────────────────────────────
+// Con ~50 fuentes, bajarlas en cada pregunta sería lentísimo (y una descortesía con los medios). Un job de fondo
+// las refresca cada 20 min a un índice local, y la pregunta se responde contra ese índice: instantáneo y sin red.
+const CACHE_FILE = "./data/feed-cache.json"
+const CACHE_MAX = 4000
+
+export function feedCache() {
+  try { const c = JSON.parse(readFileSync(CACHE_FILE, "utf8")); return Array.isArray(c.items) ? c : { items: [], at: 0 } } catch { return { items: [], at: 0 } }
+}
+
+/** Baja TODOS los feeds y refresca el índice. Cada feed falla por su cuenta: uno caído no arruina la corrida. */
+export async function refreshFeeds({ feeds = listFeeds(), timeoutMs = 9000, concurrency = 8 } = {}) {
+  const fetched = []
+  const errors = []
   const one = async (f) => {
     try {
-      const ctl = AbortSignal.timeout ? AbortSignal.timeout(timeoutMs) : undefined
-      const res = await fetch(f.url, { signal: ctl, headers: { "User-Agent": "pipe-assistant/1.0" } })
-      if (!res.ok) return []
-      return parseFeed(await res.text(), f.name).filter((it) => feedMatches(it, q))
-    } catch { return [] }
+      const res = await fetch(f.url, { signal: AbortSignal.timeout(timeoutMs), headers: { "User-Agent": "pipe-assistant/1.0 (+personal)" } })
+      if (!res.ok) { errors.push(`${f.name}: HTTP ${res.status}`); return }
+      const items = parseFeed(await res.text(), f.name)
+      if (!items.length) { errors.push(`${f.name}: sin ítems`); return }
+      for (const it of items) fetched.push({ ...it, tags: f.tags || "", seen: Date.now() })
+    } catch (e) { errors.push(`${f.name}: ${String(e.message).slice(0, 40)}`) }
   }
-  const all = await Promise.all(feeds.slice(0, 12).map(one))
-  return dedupeByTitle(all.flat()).slice(0, limit)
+  for (let i = 0; i < feeds.length; i += concurrency) await Promise.all(feeds.slice(i, i + concurrency).map(one))
+  // se conserva lo viejo para no perder contexto entre corridas; el dedupe deja la copia más reciente arriba
+  const prev = feedCache().items || []
+  const merged = dedupeByTitle([...fetched, ...prev]).slice(0, CACHE_MAX)
+  mkdirSync("./data", { recursive: true })
+  writeFileSync(CACHE_FILE, JSON.stringify({ at: Date.now(), items: merged }))
+  return { ok: fetched.length, feeds: feeds.length, fallaron: errors.length, errors: errors.slice(0, 8), total: merged.length }
+}
+
+/** Busca en el ÍNDICE (instantáneo). Si todavía está vacío, cae a bajar unos pocos feeds en vivo para no dejarte sin nada. */
+export async function rssSearch(q, { limit = 8 } = {}) {
+  const c = feedCache()
+  if (c.items?.length) return dedupeByTitle(c.items.filter((it) => feedMatches(it, q))).slice(0, limit)
+  const live = await Promise.all(listFeeds().slice(0, 6).map(async (f) => {
+    try {
+      const res = await fetch(f.url, { signal: AbortSignal.timeout(6000), headers: { "User-Agent": "pipe-assistant/1.0" } })
+      return res.ok ? parseFeed(await res.text(), f.name).filter((it) => feedMatches(it, q)) : []
+    } catch { return [] }
+  }))
+  return dedupeByTitle(live.flat()).slice(0, limit)
 }
 
 /**

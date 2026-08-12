@@ -96,9 +96,13 @@ const EMPTYISH = /(no (hay|tengo|se encontr|dispongo|puedo)|sin (información|in
 export const looksEmptyAnswer = (t) => { const x = String(t || "").trim(); return !x || (x.length < 260 && EMPTYISH.test(x)) }
 
 /** Responde UNA pregunta con todo lo que tenemos: tu historial (RAG) + internet si hace falta. */
-// `localOnly`: la pregunta vino de una línea SECRETA → se responde con modelos LOCALES y sin buscar en internet.
-// El dueño ya ve ese chat en su teléfono, pero su contenido no tiene por qué salir a un proveedor de nube.
+// `localOnly` (la pregunta vino de una línea SECRETA) significa **modelo LOCAL**, no "sin internet".
+// La distinción importa y la tenía mal: lo que sale a buscar es la PREGUNTA, no tus datos. "¿Qué pasó con el papá de
+// Messi?" es de interés público — bloquearla dejaba al asistente ciego justo cuando más servía. Lo que sí se cuida:
+//   · el modelo que redacta es local → tu contexto personal no viaja a una nube,
+//   · y si la PREGUNTA en sí es personal ("¿qué le respondo a Juan por la deuda?"), no se busca nada afuera.
 export async function answerQuestion(question, { web = true, localOnly = false } = {}) {
+  const personalQ = PERSONAL.test(String(question || "")) // pregunta sobre SUS cosas → no sale a ningún buscador
   if (isSmallTalk(question)) return { text: "Acá estoy. Preguntame lo que necesites — busco en tus conversaciones y en internet.", smallTalk: true, usedWeb: false, ownMatches: 0 }
   const own = await ask(question).catch(() => ({ answer: "", matches: 0 }))
   // Si el paso sobre TUS datos no encontró nada, suele devolver una NEGATIVA ("no hay información sobre…").
@@ -106,7 +110,7 @@ export async function answerQuestion(question, { web = true, localOnly = false }
   // general. Ej. real: "¿cuál es la capital de Israel?" → "no tengo información explícita". Se descarta.
   const ownText = looksEmptyAnswer(own.answer) ? "" : own.answer
   let webCtx = ""
-  const useWeb = web && !localOnly && hasWebSearch() && needsWeb(question)
+  const useWeb = web && !personalQ && hasWebSearch() && needsWeb(question)
   if (useWeb) {
     try {
       const rs = await webSearch(question, 5) // ⚠️ devuelve {answer, results[]}, NO un array
@@ -121,7 +125,7 @@ export async function answerQuestion(question, { web = true, localOnly = false }
   // ACTUALIDAD ("qué pasó esta semana con…"): la web genérica no alcanza — hay que ir a la prensa, y a la del país
   // que corresponda. Caso real: "el papá de Messi esta semana" vive en medios argentinos, no en el índice general.
   let curCtx = ""
-  if (!localOnly && web && isCurrentAffairs(question)) {
+  if (web && !personalQ && isCurrentAffairs(question)) {
     try { const g = await gatherCurrent(question); curCtx = g.text; if (g.text) console.log(`[asistente] fuentes: ${g.counts.news} prensa · ${g.counts.rss} rss · ${g.counts.reddit} reddit`) } catch {}
   }
   const sys = harden(`Sos el asistente personal de ${ownerFirst()}. Le hablás A ÉL, no a terceros: no te hagas pasar por él ni firmes como él.

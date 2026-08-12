@@ -468,3 +468,16 @@ test("audioExt: mime → extensión canónica que Whisper acepta por nombre de a
     assert.equal(out.length, 2)
   })
 }
+
+{
+  const { feedMatches } = await import("../src/lib/sources.mjs")
+  // Sin filtrar palabras vacías, "¿qué PASÓ con el papá de Messi?" matcheaba "Turquía da un nuevo PASO hacia la paz".
+  // Una noticia irrelevante en el contexto es peor que ninguna: el modelo puede contestar cualquier cosa.
+  test("feedMatches: las palabras vacías no generan falsos positivos", () => {
+    const turquia = { title: "Turquía da un nuevo paso hacia la paz con el PKK", snippet: "" }
+    assert.equal(feedMatches(turquia, "que paso con el papa de messi"), false)
+    const messi = { title: "Murió Jorge Messi, padre de Lionel", snippet: "" }
+    assert.equal(feedMatches(messi, "que paso con el papa de messi"), true)
+    assert.equal(feedMatches({ title: "Algo de esta semana", snippet: "" }, "que paso esta semana"), false)
+  })
+}
