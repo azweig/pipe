@@ -410,3 +410,61 @@ test("audioExt: mime → extensión canónica que Whisper acepta por nombre de a
     assert.equal(looksEmptyAnswer("La capital es Jerusalén."), false)
   })
 }
+
+// ── Fuentes de actualidad (prensa multi-país + RSS + Reddit) ─────────────────────────────────────
+// Caso que las motivó: "¿qué pasó esta semana con el papá de Messi?" → el asistente contestaba "no hay
+// información", porque buscaba en el índice web general en vez de en prensa (y en prensa peruana, no argentina).
+{
+  const { isCurrentAffairs, parseFeed, feedMatches, dedupeByTitle, DEFAULT_LOCALES } = await import("../src/lib/sources.mjs")
+
+  test("isCurrentAffairs: distingue actualidad de conocimiento estable", () => {
+    for (const t of ["que paso esta semana con el papa de messi?", "últimas noticias de Perú", "¿qué hay de nuevo con el dólar hoy?", "novedades del caso"]) {
+      assert.equal(isCurrentAffairs(t), true, `debería ser actualidad: ${t}`)
+    }
+    for (const t of ["cuál es la capital de Israel", "cuándo nació San Martín", "cómo se dice mesa en inglés"]) {
+      assert.equal(isCurrentAffairs(t), false, `NO es actualidad: ${t}`)
+    }
+  })
+  test("se consulta prensa de varios países (una sola no alcanza)", () => {
+    const gls = DEFAULT_LOCALES.map((l) => l.gl)
+    assert.ok(gls.includes("ar") && gls.includes("pe") && gls.includes("es"), "AR/PE/ES mínimo")
+    assert.ok(DEFAULT_LOCALES.length >= 4)
+  })
+  test("parseFeed: lee RSS clásico (title/link/description)", () => {
+    const xml = `<rss><channel>
+      <item><title>Messi habla de su padre</title><link>https://x.com/a</link><description>El futbolista contó…</description><pubDate>Mon, 11 Aug 2026</pubDate></item>
+      <item><title><![CDATA[Otra nota & más]]></title><link>https://x.com/b</link><description>texto</description></item>
+    </channel></rss>`
+    const items = parseFeed(xml, "Diario")
+    assert.equal(items.length, 2)
+    assert.equal(items[0].title, "Messi habla de su padre")
+    assert.equal(items[0].link, "https://x.com/a")
+    assert.equal(items[0].source, "Diario")
+    assert.equal(items[1].title, "Otra nota & más", "CDATA y entidades resueltas")
+  })
+  test("parseFeed: también lee Atom (link viene como atributo)", () => {
+    const xml = `<feed><entry><title>Nota atom</title><link href="https://y.com/1"/><summary>resumen</summary></entry></feed>`
+    const items = parseFeed(xml, "Atom")
+    assert.equal(items[0].title, "Nota atom")
+    assert.equal(items[0].link, "https://y.com/1")
+  })
+  test("parseFeed: XML basura no rompe", () => {
+    assert.deepEqual(parseFeed("", "x"), [])
+    assert.deepEqual(parseFeed("<html>no soy un feed</html>", "x"), [])
+    assert.deepEqual(parseFeed(null, "x"), [])
+  })
+  test("feedMatches: exige palabras significativas, no ruido", () => {
+    const it = { title: "Jorge Messi viajó a Barcelona", snippet: "" }
+    assert.equal(feedMatches(it, "que paso con messi"), true)
+    assert.equal(feedMatches(it, "cotización del dólar"), false)
+    assert.equal(feedMatches(it, "de la el"), false, "palabras cortas no alcanzan para matchear")
+  })
+  test("dedupeByTitle: la misma nota en cinco medios cuenta una vez", () => {
+    const out = dedupeByTitle([
+      { title: "Messi habló sobre su padre en Miami" },
+      { title: "Messi habló sobre su padre en Miami!" },
+      { title: "Otra cosa totalmente distinta acá" },
+    ])
+    assert.equal(out.length, 2)
+  })
+}

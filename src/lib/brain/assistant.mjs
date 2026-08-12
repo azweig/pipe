@@ -10,6 +10,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs"
 import { llm, smartChain } from "../llm.mjs"
 import { hasWebSearch, webSearch } from "../research.mjs"
+import { gatherCurrent, isCurrentAffairs } from "../sources.mjs"
 import { harden, UNTRUSTED_NOTE } from "../safety.mjs"
 import { ownerFirst } from "../hub.mjs"
 import { ask } from "./ask.mjs"
@@ -115,6 +116,12 @@ export async function answerQuestion(question, { web = true, localOnly = false }
   // Dos clases de pregunta, dos reglas. Antes había UNA sola ("usá solo el contexto") y por eso a "¿cuál es la capital
   // de Israel?" contestaba "no tengo información explícita": conocimiento general que cualquier modelo sabe, bloqueado
   // por un prompt pensado para los datos personales. Sobre SUS cosas hay que ser estricto; sobre el mundo, no.
+  // ACTUALIDAD ("qué pasó esta semana con…"): la web genérica no alcanza — hay que ir a la prensa, y a la del país
+  // que corresponda. Caso real: "el papá de Messi esta semana" vive en medios argentinos, no en el índice general.
+  let curCtx = ""
+  if (!localOnly && web && isCurrentAffairs(question)) {
+    try { const g = await gatherCurrent(question); curCtx = g.text; if (g.text) console.log(`[asistente] fuentes: ${g.counts.news} prensa · ${g.counts.rss} rss · ${g.counts.reddit} reddit`) } catch {}
+  }
   const sys = harden(`Sos el asistente personal de ${ownerFirst()}. Le hablás A ÉL, no a terceros: no te hagas pasar por él ni firmes como él.
 Respondé en español, directo y breve (WhatsApp): 1 a 5 frases, sin relleno ni saludos.
 
@@ -130,18 +137,21 @@ ${ownText || "(nada relevante en sus mensajes)"}
 RESULTADOS WEB:
 ${webCtx || "(no se buscó en internet)"}
 
+NOTICIAS Y FUENTES DE ACTUALIDAD (prensa de varios países, tus feeds RSS y Reddit):
+${curCtx || "(no aplica: la pregunta no es de actualidad)"}
+
 RESPUESTA:`
   const call = (pr, sy) => llm(pr, { system: sy + "\n" + UNTRUSTED_NOTE, feature: "ask", temperature: 0.3, task: "assistant", bypassCap: true, ...(localOnly ? { chain: smartChain({ sensitive: true }) } : {}) }).then((s) => (s || "").trim()).catch(() => "")
   let out = await call(prompt, sys)
   // A veces el modelo se aferra a "tu historial no lo menciona" aunque la pregunta sea de conocimiento general
   // (pasó con "¿cuánta gente vive en Arequipa?"). Un reintento explícito, sin el contexto personal que lo distrae.
   if (looksEmptyAnswer(out) && !PERSONAL.test(question)) {
-    const retry = `PREGUNTA: ${question}\n\n${webCtx ? `RESULTADOS WEB:\n${webCtx}\n\n` : ""}RESPUESTA:`
+    const retry = `PREGUNTA: ${question}\n\n${curCtx ? `NOTICIAS:\n${curCtx}\n\n` : ""}${webCtx ? `RESULTADOS WEB:\n${webCtx}\n\n` : ""}RESPUESTA:`
     const sys2 = harden(`Sos el asistente personal de ${ownerFirst()}. Es una pregunta de CONOCIMIENTO GENERAL: respondé con lo que sabés${webCtx ? " y con los resultados web" : ""}, en 1 a 3 frases, en español. No digas que te faltan datos de su historial: la pregunta no es sobre él.`)
     const second = await call(retry, sys2)
     if (second && !looksEmptyAnswer(second)) out = second
   }
-  return { text: out, usedWeb: useWeb && !!webCtx, ownMatches: own.matches || 0, localOnly }
+  return { text: out, usedWeb: useWeb && !!webCtx, usedNews: !!curCtx, ownMatches: own.matches || 0, localOnly }
 }
 
 /** Tick del daemon: mira lo NUEVO de tu chat con vos mismo y contesta solo si es una pregunta. */

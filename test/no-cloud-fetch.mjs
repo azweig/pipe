@@ -18,6 +18,9 @@ const EGRESS_ALLOW = new Set([
   "src/mail-backfill.mjs", "src/mail-outlook.mjs", "src/teams.mjs",
   // MS Graph para re-bajar las imágenes inline (cid:) de TUS correos ya ingeridos. Mismo egress que mail-outlook. Deliberado.
   "src/mail-inline-backfill.mjs",
+  // Fuentes de ACTUALIDAD del asistente: Serper /news, la API pública de Reddit y los feeds RSS que el dueño
+  // configure. No es IA: es prensa. La CONSULTA sale a esos servicios (el usuario lo activa a sabiendas).
+  "src/lib/sources.mjs",
   // Egress de canales de MENSAJERÍA (no IA): la API de Slack de TU propia cuenta conectada. Revisado y deliberado.
   "src/lib/brain/reply.mjs", // chat.postMessage: envía TU respuesta a Slack
   "src/lib/integrations.mjs", // auth.test: valida TU token de Slack antes de guardarlo
