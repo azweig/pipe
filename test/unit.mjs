@@ -378,7 +378,7 @@ test("audioExt: mime → extensión canónica que Whisper acepta por nombre de a
     assert.ok(no(null))
   })
   test("needsWeb: lo personal se responde con tu historial, no sale a internet", () => {
-    assert.equal(needsWeb("¿qué acordé con Milagros sobre la factura?"), false)
+    assert.equal(needsWeb("¿qué acordé con el proveedor sobre la factura?"), false)
     assert.equal(needsWeb("¿cuánto me debe ese cliente?"), false)
     assert.equal(needsWeb("¿a cuánto está el dólar?"), true)
     assert.equal(needsWeb("quién es el CEO de Anthropic"), true)
