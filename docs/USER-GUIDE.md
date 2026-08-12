@@ -200,6 +200,53 @@ Send a message that looks like an innocuous poem, story, recipe or prayer to any
 
 ---
 
+## 12. An assistant in your own chat
+
+> *Es:* escribile (o mandale un audio) a tu propio WhatsApp y, si le preguntás algo, te contesta.
+
+**What it is.** You already message yourself all day — notes, links, reminders. Now, if one of those messages is a **question**, Pipe answers it right there in the same chat. Everything else is left untouched: that's the whole point.
+
+**It's not the autopilot.** The autopilot impersonates *you* to *other people*. This one talks **to you**, as an assistant, and can look things up.
+
+| | Autopilot | Assistant |
+|---|---|---|
+| talks to | other people | you |
+| pretends to be you | yes | no |
+| can search the web | no | yes |
+
+**By voice too.** Send a voice note and it's transcribed **on your own box** (local whisper, ~1s) before being answered. The audio never leaves.
+
+**What it knows.**
+- **Your own history** — "what did I agree with that supplier about the invoice?"
+- **Current affairs** — press from ~56 outlets across many countries, your own RSS feeds and Reddit. A background job refreshes a local headline index every 20 min, so answers are instant and we don't hammer 56 sites per question.
+- **General knowledge** — from the model itself.
+
+**When it stays quiet.** The classifier is deliberately conservative: a false positive means the AI butting into your notes. Links, reminders and statements are ignored. To force an answer, start the message with **`pipe`** — e.g. *"pipe necesito el link del deploy"*.
+
+**How to tell its messages apart.** Every reply starts with **🤖**. (That marker is also what stops it from answering its own echo from the bridge.)
+
+**Hidden lines.** If you ask from a line hidden behind your 2nd PIN, the answer is written by a **local model** and no personal context is sent to any cloud. External search still happens for public questions ("what happened this week with X"), because what leaves is the *question*, not your data — unless the question itself is personal, in which case nothing goes out.
+
+**Turn it on:** *Configuración → Asistente en tu chat*. Off by default, with a per-day cap and a test box so you can try it without sending anything to WhatsApp.
+
+**Your news sources:** the default set (agencies, international press, Latin America, Spain, business, tech, Google Trends, Reddit) lives in `data/feeds.json` — edit it to add or remove outlets, then `node src/feeds-refresh.mjs`.
+
+---
+
+## 13. Email, in full
+
+> *Es:* abrí el correo completo, con imágenes y adjuntos, y respondé con tu firma.
+
+**Open the whole thing.** Tap an email card in a conversation to read the real message: **inline images**, tables and attachments included. Attachments open with your system's app.
+
+**Reply like an email, not a text.** *"✍️ Responder"* points the composer at the email channel; *"✨ Responder con IA"* drafts it for you. Either way it goes out **with your signature** and with `In-Reply-To`/`References` headers, so it lands **inside the thread** on the other side instead of starting a new one.
+
+**Signatures per account.** *Configuración → Correo → Firma*: one per mailbox (writing from `ventas@` isn't the same as from your personal address), with `*` as the fallback. If you already signed by hand, it won't duplicate it.
+
+**Tracking pixels don't fire.** The viewer is a sandboxed iframe with a CSP that blocks every remote resource. Inline images (the ones that came with the message) show; remote ones stay blocked behind a *"Mostrar imágenes"* button, so the sender never learns you opened it.
+
+---
+
 ## More
 
 - **Connecting a channel for the first time?** The in-app *"❓ Cómo conectar"* sheet (under *Configuración → Agregar conexión*) has step-by-step guides per source; the full walkthrough is in [SELF-HOSTING.md](SELF-HOSTING.md).

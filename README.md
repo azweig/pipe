@@ -10,15 +10,18 @@ Pipe is a self-hostable **unified inbox + AI second brain**. It merges WhatsApp,
 
 - **One inbox, every channel** — WhatsApp + email + Telegram… collapse into the same conversation per person. Stop tab-hopping between apps.
 - **AI that reads for you** — summaries of long threads and voice notes, a daily brief, "who needs a reply", and drafts written in your style. Multi-provider with fallback (OpenAI / Anthropic / Gemini / local Ollama).
-- **An AI that replies in your voice — and learns from you** — an optional, per-contact auto-pilot drafts (or sends) replies grounded in *your own* past messages, so it sounds like you, not a chatbot. It escalates anything you choose (money, meetings, legal…) back to you instead of answering. You keep training it in the **"Train your AI"** deck: it shows a real message and the reply it would send, you approve it or fix it — every correction teaches it your style. Hard, deterministic guardrails: never replies in group chats, never leaks sensitive data, the recipient is never model-chosen, rate-limited, kill switch. You can even fine-tune a local model on your own history so it writes like you out of the box.
-- **Know who you're talking to** — enrich any contact from their public LinkedIn / Instagram / Facebook / X into a short profile (role, company, interests). Anonymous: it runs through a scraping service, never your cookies or session — the person can't tell you looked.
 - **Transcribe & summarize any media** — long-press (app) or the ⋯ menu (web) on a video, voice note or image → it transcribes (auto-detecting the language) and gives you a **Spanish summary** even if the clip is in English, Japanese, etc. Fast **local** speech-to-text via [faster-whisper](deploy/whisper/README.md) — the audio never leaves your box.
 - **A second brain, built automatically** — a living knowledge graph of the people, companies and projects in your life, grown from your own activity. Your self-notes become ideas and reminders.
 - **A real backup of everything** — a daily, encrypted, restore-tested backup of your whole history: every message, the WhatsApp bridge sessions, your OAuth tokens, and the irreplaceable media — photos, voice notes and PDFs from every channel. On your box, and offsite if you want it.
 - **Your keys, your box** — bring your own AI engine or run everything locally with Ollama. Single-tenant, self-hostable, secrets encrypted at rest. No data leaves your infrastructure.
 - **Bring your own AI assistant (MCP)** — connect Claude Desktop/Code (or any MCP client) straight to your inbox: search, read threads and pending items, and — if you turn it on — reply/forward with a confirmation step. Read-only by default, zero egress of its own, every call audited. See [docs/MCP.md](docs/MCP.md).
 - **Covert mode ("The Saint")** — send a message that reads as an innocuous poem, story, recipe or prayer to anyone who sees it (e.g. on WhatsApp), but decrypts back to the real text for the other person if they use Pipe with the same passphrase. Real authenticated encryption (AES-256-GCM, per-message salt) under a coherent-looking cover text. Per-contact key and style; the recipient can also decrypt in the browser (your hub serves its own client-side decoder at `/decrypt`). Try it at [pipe.one/secret-messages](https://pipe.one/secret-messages). See [docs/COVERT.md](docs/COVERT.md).
-- **Import your WhatsApp history** — bring old chats in without root and without a PC: WhatsApp's *Export chat* → upload the `.txt`, and Pipe parses and merges it into the right thread with content de-duplication. (Per-chat; WhatsApp itself has no "export everything".)
+- **An assistant in your own chat** — message *yourself* on WhatsApp (or send a voice note) and Pipe answers **only if you asked something**; notes, links and reminders are left alone. It combines press from ~56 outlets worldwide, your configurable RSS feeds and Reddit with your own history, and answers in the same chat. Voice notes are transcribed **locally** (whisper on your box), so questions asked from a hidden line are answered by a **local model** — nothing leaves. Off by default; per-day cap. See [docs/USER-GUIDE.md](docs/USER-GUIDE.md#12-an-assistant-in-your-own-chat).
+- **Email that behaves like email** — open the full message with its **inline images** and attachments, and reply by hand or with AI **with your signature** and proper `In-Reply-To` headers, so your answer threads on the other side. Remote images stay blocked by CSP inside a sandboxed viewer: tracking pixels never fire, so senders don't learn you opened it.
+- **Search that reaches every conversation** — the inbox shows the most recent threads, but search asks the server and covers **all** of them (thread key + sender name over an FTS index), so a contact you haven't written to in weeks is still one query away.
+- **Hide a whole line behind a second PIN** — mark a number or mailbox as secret and it disappears from the app until you enter your 2nd PIN. Someone glancing at your screen can't tell it exists, and background jobs (coach, digests, knowledge graph) never read it.
+- **Media that doesn't eat your disk** — an optional background pass recompresses stored media (lossless for images, H.265 for video) while keeping the blob's address stable, so nothing that points at it breaks. A perceptual-hash report finds near-duplicates that exact hashing can't see (the same photo re-encoded by another channel).
+- **Import your history** — WhatsApp: *Export chat* → upload the `.txt` and Pipe merges it into the right thread with content de-duplication (per-chat; WhatsApp has no "export everything"). Telegram: `node src/telegram-backfill.mjs` pulls your existing conversations — the live reader only captures what arrives after you connect, so without this your years of history simply wouldn't be there.
 
 ## Own your data
 
@@ -33,11 +36,9 @@ Pipe flips that. It pulls your conversations **onto hardware you control** and k
 
 **Your data. Your server. Your rules.** That's the whole point.
 
-## Open source, or done-for-you
+## Hosted / done-for-you
 
-The honest default is the one that matches the whole point of Pipe: **it's MIT-licensed and self-hostable — download it, run it on your own box, own everything.** No account, no tenant on someone else's server, no bill. That *is* the product.
-
-If you'd rather not set it up yourself, **reach out** — we'll do the install for you on your own dedicated server (channels connected, WhatsApp bridge, backups). It's a **done-for-you setup, not a SaaS you rent**: your data still lives on your infrastructure, and you can take it and leave at any time. → **[pipe.one](https://pipe.one)**
+Don't want to run it yourself? There's a **managed version** — the whole stack set up for you on dedicated infrastructure (channels connected, WhatsApp bridge, backups, updates); you just use it. → **[pipe.one](https://pipe.one)**, or reach out to talk about a managed install.
 
 ## Requirements
 
@@ -137,7 +138,7 @@ PIN-gated when exposed to the internet (rate-limited, scrypt-hashed, session coo
 
 Pipe is free and open source, built and maintained by one person. If it saves you time — or you just want to keep it alive — **[buy me a coffee on Ko-fi](https://ko-fi.com/azweig)** ☕, or use the **Sponsor** button at the top of the repo. Every bit helps and is hugely appreciated. 🙏
 
-Rather not set it up yourself? Reach out for a **[done-for-you install](https://pipe.one)** on your own box — that supports the project too.
+Rather not self-host? The **[managed version](https://pipe.one)** funds development too.
 
 ## License
 

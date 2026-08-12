@@ -124,6 +124,24 @@
         }
       }
     },
+    "/api/apify/accounts": {
+      "post": {
+        "summary": "accounts",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "get": {
+        "summary": "accounts",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/ask": {
       "get": {
         "tags": [
@@ -136,6 +154,34 @@
           },
           "401": {
             "description": "No autorizado (falta PIN)"
+          }
+        }
+      }
+    },
+    "/api/assistant": {
+      "get": {
+        "summary": "⚠️ el !== POST es necesario: sin él, esta línea atrapa también el guardado",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "summary": "assistant",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/assistant/try": {
+      "post": {
+        "summary": "probarlo sin mandar nada por WhatsApp",
+        "responses": {
+          "200": {
+            "description": "OK"
           }
         }
       }
@@ -251,6 +297,136 @@
         }
       }
     },
+    "/api/autopilot/config": {
+      "post": {
+        "summary": "config",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "get": {
+        "summary": "config",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/autopilot/council": {
+      "post": {
+        "summary": "council: varios modelos locales draftean + chairman elige",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "get": {
+        "summary": "council",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/autopilot/feedback": {
+      "post": {
+        "summary": "feedback",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/autopilot/log": {
+      "get": {
+        "summary": "log",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/autopilot/persona": {
+      "post": {
+        "summary": "persona",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "get": {
+        "summary": "persona",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/autopilot/policy": {
+      "post": {
+        "summary": "policy",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "get": {
+        "summary": "policy",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/autopilot/preview": {
+      "post": {
+        "summary": "preview",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/autopilot/train-card": {
+      "get": {
+        "summary": "🎓 Entrená tu IA: trae un mensaje real + el borrador de la IA para aprobar/corregir",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/autopilot/voice": {
+      "post": {
+        "summary": "🗣️ re-detectar tu voz",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "get": {
+        "summary": "perfil de voz auto-detectado (idiomas/dialecto/tono)",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/briefing": {
       "get": {
         "tags": [
@@ -290,6 +466,16 @@
     "/api/channels": {
       "get": {
         "summary": "heartbeat por canal (para el aviso \"reconectá\") + lag de ingesta",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/channels/catalog": {
+      "get": {
+        "summary": "catálogo (labels/marca/flujo de conexión) desde el registro — los clientes derivan la UI de acá",
         "responses": {
           "200": {
             "description": "OK"
@@ -562,6 +748,26 @@
         }
       }
     },
+    "/api/contact/investigate": {
+      "post": {
+        "summary": "investigate",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/contact/links": {
+      "post": {
+        "summary": "links",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/contact/merge": {
       "post": {
         "tags": [
@@ -653,6 +859,26 @@
         }
       }
     },
+    "/api/contact/silence": {
+      "post": {
+        "summary": "ruido que no es spam → pestaña Silenciados",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/contact/social": {
+      "get": {
+        "summary": "social",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/contact/spam": {
       "post": {
         "tags": [
@@ -715,6 +941,34 @@
                 "type": "object"
               }
             }
+          }
+        }
+      }
+    },
+    "/api/covert/config": {
+      "post": {
+        "summary": "config",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "get": {
+        "summary": "config",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/covert/preview": {
+      "post": {
+        "summary": "preview",
+        "responses": {
+          "200": {
+            "description": "OK"
           }
         }
       }
@@ -919,6 +1173,26 @@
         }
       }
     },
+    "/api/forward": {
+      "post": {
+        "summary": "forward",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/gpu-health": {
+      "post": {
+        "summary": "gpu health",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/groups": {
       "get": {
         "summary": "groups",
@@ -1035,7 +1309,87 @@
         }
       }
     },
+    "/api/import/whatsapp": {
+      "post": {
+        "summary": "whatsapp",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/import/whatsapp-zip": {
+      "post": {
+        "summary": "export CON multimedia (.zip): trae texto + fotos/audios/videos",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/ingest/sms": {
+      "post": {
+        "summary": "sms",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/integration/remove": {
+      "post": {
+        "summary": "remove",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/integrations": {
+      "get": {
+        "summary": "integrations",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/integrations/signal": {
+      "post": {
+        "summary": "signal",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/integrations/signal/remove": {
+      "post": {
+        "summary": "remove",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/integrations/slack": {
+      "post": {
+        "summary": "slack",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/integrations/slack/remove": {
       "post": {
         "summary": "remove",
         "responses": {
@@ -1216,6 +1570,16 @@
     "/api/media/restore": {
       "post": {
         "summary": "DESHACER un borrado",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/media/summarize": {
+      "post": {
+        "summary": "summarize",
         "responses": {
           "200": {
             "description": "OK"
@@ -1505,6 +1869,16 @@
         }
       }
     },
+    "/api/ocr": {
+      "post": {
+        "summary": "ocr",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/person": {
       "get": {
         "tags": [
@@ -1704,6 +2078,86 @@
         }
       }
     },
+    "/api/secret/account": {
+      "post": {
+        "summary": "account",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/secret/accounts": {
+      "get": {
+        "summary": "accounts",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/secret/lock": {
+      "post": {
+        "summary": "lock",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/secret/setup": {
+      "post": {
+        "summary": "setup",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/secret/state": {
+      "get": {
+        "summary": "state",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/secret/status": {
+      "get": {
+        "summary": "status",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/secret/unlock": {
+      "post": {
+        "summary": "unlock",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/secret/wa": {
+      "post": {
+        "summary": "wa",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/selftest": {
       "get": {
         "summary": "selftest",
@@ -1760,6 +2214,36 @@
     "/api/send-media": {
       "post": {
         "summary": "send media",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/send-sticker": {
+      "post": {
+        "summary": "send sticker",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/signature": {
+      "post": {
+        "summary": "signature",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/signatures": {
+      "get": {
+        "summary": "signatures",
         "responses": {
           "200": {
             "description": "OK"
@@ -1937,6 +2421,16 @@
         }
       }
     },
+    "/api/thread/delta": {
+      "get": {
+        "summary": "delta",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/thread/media": {
       "get": {
         "tags": [
@@ -2030,6 +2524,16 @@
         }
       }
     },
+    "/api/thread/sync": {
+      "get": {
+        "summary": "backfill de texto completo hacia atrás",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/thread/targets": {
       "get": {
         "tags": [
@@ -2078,6 +2582,16 @@
         }
       }
     },
+    "/api/unread": {
+      "get": {
+        "summary": "🔒 no contar no-leídos secretos si está bloqueado",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/voices": {
       "get": {
         "tags": [
@@ -2090,6 +2604,14 @@
           },
           "401": {
             "description": "No autorizado (falta PIN)"
+          }
+        }
+      },
+      "post": {
+        "summary": "elegir voz TTS",
+        "responses": {
+          "200": {
+            "description": "OK"
           }
         }
       }
@@ -2129,6 +2651,16 @@
     "/api/wa/status": {
       "get": {
         "summary": "números WhatsApp caídos → banner de re-link",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/webhook/kofi": {
+      "post": {
+        "summary": "kofi",
         "responses": {
           "200": {
             "description": "OK"

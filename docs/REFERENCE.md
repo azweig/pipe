@@ -2,7 +2,7 @@
 
 > Generado por `node scripts/gen-docs.mjs`. **No editar a mano** — se regenera. Última corrida: (stamp al commitear).
 
-## 🌐 API — 142 endpoints
+## 🌐 API — 199 endpoints
 
 | Método | Endpoint |
 |---|---|
@@ -12,17 +12,37 @@
 | POST | `/api/action/done` |
 | POST | `/api/add-email` |
 | GET | `/api/agenda` |
+| POST | `/api/apify/accounts` |
+| GET | `/api/apify/accounts` |
 | GET | `/api/ask` |
+| GET | `/api/assistant` |
+| POST | `/api/assistant` |
+| POST | `/api/assistant/try` |
 | POST | `/api/auth` |
 | POST | `/api/auth/change-pin` |
 | POST | `/api/auth/logout` |
 | POST | `/api/auth/revoke-all` |
 | POST | `/api/auth/setup` |
 | GET | `/api/auth/status` |
+| POST | `/api/autopilot/config` |
+| GET | `/api/autopilot/config` |
+| POST | `/api/autopilot/council` |
+| GET | `/api/autopilot/council` |
+| POST | `/api/autopilot/feedback` |
+| GET | `/api/autopilot/log` |
+| POST | `/api/autopilot/persona` |
+| GET | `/api/autopilot/persona` |
+| POST | `/api/autopilot/policy` |
+| GET | `/api/autopilot/policy` |
+| POST | `/api/autopilot/preview` |
+| GET | `/api/autopilot/train-card` |
+| POST | `/api/autopilot/voice` |
+| GET | `/api/autopilot/voice` |
 | GET | `/api/briefing` |
 | GET | `/api/calendar` |
 | POST | `/api/calendar/regen` |
 | GET | `/api/channels` |
+| GET | `/api/channels/catalog` |
 | POST | `/api/clip/archive` |
 | POST | `/api/clip/pin` |
 | GET | `/api/coach` |
@@ -39,13 +59,20 @@
 | POST | `/api/contact/archive` |
 | POST | `/api/contact/category` |
 | GET | `/api/contact/info` |
+| POST | `/api/contact/investigate` |
+| POST | `/api/contact/links` |
 | POST | `/api/contact/merge` |
 | POST | `/api/contact/photo` |
 | POST | `/api/contact/pin` |
 | GET | `/api/contact/profile` |
+| POST | `/api/contact/silence` |
+| GET | `/api/contact/social` |
 | POST | `/api/contact/spam` |
 | GET | `/api/contact/suggestions` |
 | POST | `/api/contact/unmerge` |
+| POST | `/api/covert/config` |
+| GET | `/api/covert/config` |
+| POST | `/api/covert/preview` |
 | GET | `/api/daily-plan` |
 | GET | `/api/directory` |
 | GET | `/api/email/body` |
@@ -57,6 +84,8 @@
 | POST | `/api/espacio/rule/delete` |
 | GET | `/api/espacio/view` |
 | GET | `/api/espacios` |
+| POST | `/api/forward` |
+| POST | `/api/gpu-health` |
 | GET | `/api/groups` |
 | POST | `/api/groups/assign` |
 | POST | `/api/groups/auto` |
@@ -68,7 +97,15 @@
 | POST | `/api/home/regen` |
 | GET | `/api/hub-config` |
 | POST | `/api/hub-config/save` |
+| POST | `/api/import/whatsapp` |
+| POST | `/api/import/whatsapp-zip` |
+| POST | `/api/ingest/sms` |
 | POST | `/api/integration/remove` |
+| GET | `/api/integrations` |
+| POST | `/api/integrations/signal` |
+| POST | `/api/integrations/signal/remove` |
+| POST | `/api/integrations/slack` |
+| POST | `/api/integrations/slack/remove` |
 | GET | `/api/llm-config` |
 | POST | `/api/llm-config/save` |
 | POST | `/api/llm-config/test` |
@@ -83,6 +120,7 @@
 | GET | `/api/media-policy` |
 | POST | `/api/media/free` |
 | POST | `/api/media/restore` |
+| POST | `/api/media/summarize` |
 | GET | `/api/media/trash` |
 | GET | `/api/meeting` |
 | GET | `/api/meeting-prep` |
@@ -103,6 +141,8 @@
 | POST | `/api/objetivo/delete` |
 | GET | `/api/objetivos` |
 | GET | `/api/objetivos/suggest` |
+| POST | `/api/ocr` |
+| GET | `/api/person` |
 | GET | `/api/person` |
 | GET | `/api/person/full` |
 | POST | `/api/push/subscribe` |
@@ -116,11 +156,22 @@
 | POST | `/api/schedule/delete` |
 | POST | `/api/schedule/move` |
 | GET | `/api/search` |
+| POST | `/api/secret/account` |
+| GET | `/api/secret/accounts` |
+| POST | `/api/secret/lock` |
+| POST | `/api/secret/setup` |
+| GET | `/api/secret/state` |
+| GET | `/api/secret/status` |
+| POST | `/api/secret/unlock` |
+| POST | `/api/secret/wa` |
 | GET | `/api/selftest` |
 | POST | `/api/selftest` |
 | POST | `/api/send` |
 | POST | `/api/send-audio` |
 | POST | `/api/send-media` |
+| POST | `/api/send-sticker` |
+| POST | `/api/signature` |
+| GET | `/api/signatures` |
 | POST | `/api/social/ingest` |
 | POST | `/api/social/mystyle` |
 | POST | `/api/spam/unmark` |
@@ -134,20 +185,26 @@
 | POST | `/api/telegram/start` |
 | GET | `/api/telegram/status` |
 | GET | `/api/thread` |
+| GET | `/api/thread` |
 | GET | `/api/thread/catchup` |
+| GET | `/api/thread/delta` |
 | GET | `/api/thread/media` |
 | GET | `/api/thread/meetings` |
 | GET | `/api/thread/schedule` |
 | POST | `/api/thread/seen` |
 | GET | `/api/thread/suggest-reply` |
 | GET | `/api/thread/summarize` |
+| GET | `/api/thread/sync` |
 | GET | `/api/thread/targets` |
 | GET | `/api/threads` |
 | GET | `/api/tts` |
+| GET | `/api/unread` |
+| POST | `/api/voices` |
 | GET | `/api/voices` |
 | GET | `/api/wa-qr` |
 | GET | `/api/wa-status` |
 | GET | `/api/wa/status` |
+| POST | `/api/webhook/kofi` |
 
 ## 🗄️ Base de datos (SQLite)
 
@@ -171,6 +228,8 @@
 - notion `src/notion.mjs`
 - matrix `src/matrix.mjs`
 - unipile `src/unipile.mjs`
+- slack `src/slack.mjs`
+- signal `src/signal.mjs`
 - web `src/server.mjs`
 
 **Jobs periódicos:**
@@ -179,6 +238,10 @@
 - runVaultSync — cada 20 * 60000
 - runIngest — cada 15000
 - runVideoFetch — cada 4 * 60000
+- runAutopilot — cada 60000
+- runAssistant — cada 60000
+- runFeeds — cada 20 * 60000
+- runEmbedWatchdog — cada 5 * 60000
 - runBridgeSync — cada 6 * 3600000
 - runBridgePortals — cada 20 * 60000
 - runHomeBrief — cada 6 * 3600000
@@ -192,9 +255,11 @@
 - runEmailSum — cada 3 * 60000
 - runAudioSummary — cada 2 * 60000
 - runExtract — cada 10 * 60000
+- runWarmCorrect — cada 8 * 60000
 - runNotesAi — cada 3 * 3600000
 - runNotesCategorize — cada 5 * 60000
 - runClips — cada 4 * 60000
+- runRecordings — cada 60000
 - runMaintain — cada 30 * 60000
 - runResolve — cada 20 * 60000
 - runSpamClassify — cada 12 * 60000
@@ -206,7 +271,7 @@
 - runMsgPush — cada 2 * 60000
 - runSocialDaily — cada 2 * 3600000
 
-## 📦 Módulos (112) y sus exports
+## 📦 Módulos (141) y sus exports
 
 ### `src/audio-summarize.mjs`
 - **mimeFor** *(fn)* — mime real según la extensión del archivo en CAS (no todos los audios son .ogg: iOS/adjuntos vienen .m4a, etc). Sin esto, mandar un .m4a etiquetado como audio/ogg hace que OpenAI Wh
@@ -230,10 +295,21 @@
 - **saveGmailOAuth** *(fn)* — guarda una cuenta Gmail conectada por OAuth (refresh token CIFRADO). El reader mail-imap la usa por XOAUTH2 (nada de app-passwords).
 - **removeEmailAccount** *(fn)*
 
+### `src/lib/apify.mjs`
+- **apifyAccounts** *(fn)* — ── cuentas (tokens CIFRADOS en reposo; la UI nunca ve el token en claro, solo los últimos 4) ──
+- **addApifyAccount** *(fn)*
+- **removeApifyAccount** *(fn)*
+- **setApifyActors** *(fn)*
+- **hasApify** *(fn)*
+- **runActor** *(async)* — ROUND-ROBIN + failover: salta cuentas agotadas este mes; si una da error de cuota la marca y sigue con la siguiente.
+- **investigateProfiles** *(async)* — ── enriquecer: corre los actors de los links que el usuario pegó; devuelve la data cruda por plataforma (+ errores) ──
+
 ### `src/lib/auth.mjs`
 - **pinIsSet** *(fn)*
 - **setPin** *(fn)* — setear/cambiar el PIN (6-12 dígitos). scrypt es lento a propósito → frena fuerza bruta offline si roban el archivo. Mínimo 6 (no 4): en un endpoint expuesto a internet, 10⁴ es brut
 - **changePin** *(fn)* — cambiar el PIN desde adentro (ya autenticado): exige el PIN actual → nadie con una sesión robada lo cambia sin saberlo.
+- **verifyPin** *(fn)*
+- **__resetLimits** *(fn)* — para los tests: limpiar TODO el estado de rate-limit en memoria (per-IP + global) entre casos
 - **login** *(fn)*
 - **validSession** *(fn)*
 - **logout** *(fn)*
@@ -261,9 +337,17 @@
 - **upcomingWith** *(async)* — próximas reuniones CON un contacto (por su email), las organice yo o él. Para la tarjeta en el chat.
 
 ### `src/lib/cas.mjs`
+- **casPathOf** *(fn)* — ruta en disco de un blob (por hash) — para que los optimizadores trabajen sobre el archivo sin pasar por Buffers gigantes
+- **casPendingOptimize** *(fn)* — blobs todavía SIN pasar por el optimizador, del tipo pedido y por encima de un mínimo de tamaño (los chiquitos no pagan el CPU)
+- **casMarkOptimized** *(fn)* — registra el resultado. `opt`='none'/'skip' marca "ya lo intenté, no re-procesar" (así el runner converge y no gira en falso).
+- **casPendingPhash** *(fn)* — blobs sin huella perceptual todavía (para el detector de casi-duplicados)
+- **casSetPhash** *(fn)*
+- **casPhashGroups** *(fn)* — grupos de blobs que comparten huella perceptual EXACTA = misma imagen re-codificada por otro canal (el dedup por contenido no los ve)
+- **casOptimizeStats** *(fn)* — resumen de lo que el optimizador ya recuperó
 - **casPutBuffer** *(fn)* — guarda un Buffer y devuelve la ruta pública /cas/xx/<hash><ext>. Dedup por contenido; el ext es CANÓNICO (el del primer put) para que N callers con ext distinto referencien el MISM
 - **casRegister** *(fn)* — registra en el índice un archivo YA colocado en el CAS (tools que mueven archivos directo, ej. dedup-media). Devuelve el pub canónico.
 - **casUrlByHash** *(fn)* — ruta pública de un hash (para tools de import que mapean file_hash → URL del CAS).
+- **casReadBuffer** *(fn)* — lee un blob por su ruta pública (/cas/xx/<hash><ext>) → Buffer, o null si no está. Para inlinear imágenes de email como data: URI.
 - **casDelete** *(fn)* — borra un blob por su ruta pública → libera disco. El caller decide la seguridad (que nadie lo referencie). Devuelve bytes liberados.
 - **casTrash** *(fn)* — ── PAPELERA (soft-delete con 30 días de "deshacer") ───────────────────────────────────────────── SOFT-DELETE → papelera. NO libera disco (el blob queda para deshacer). Guarda cómo
 - **casRestore** *(fn)* — DESHACER: saca el blob de la papelera y devuelve los mensajes a re-vincular.
@@ -271,6 +355,21 @@
 - **casGC** *(fn)* — GC: manda a papelera los blobs que NINGÚN mensaje vivo referencia, y RESCATA los que volvieron a estar vivos. livePubs = set de rutas vivas.
 - **casPurge** *(fn)* — PURGE: borra de verdad (libera disco) lo que lleva > TRASH_TTL en papelera, PERO re-verifica vivo primero (no borra media re-referenciada).
 - **casStats** *(fn)*
+
+### `src/lib/channels.mjs`
+- **CHANNELS** *(const)*
+- **channelList** *(const)*
+- **getChannel** *(const)*
+- **isChannel** *(const)*
+- **bridgeNets** *(const)* — nets que el bot mautrix del server puede vincular por QR/código (connect.method === "matrix-bridge"). El endpoint /api/matrix-link valida contra esto → no se spawnea un login para 
+- **tokenNets** *(const)*
+- **isSimpleSender** *(const)* — ids de los canales con envío SIMPLE (slack/signal/telegram/…) — reply.sendReply valida contra esto antes de despachar por SIMPLE_SENDERS.
+- **channelCatalog** *(fn)* — catálogo público (sin fns ni rutas de módulo) para que los clientes deriven labels/iconos/flujos de conexión de UN solo lugar.
+
+### `src/lib/covertext.mjs`
+- **styles** *(fn)*
+- **encodeCovert** *(fn)* — ── codificar: texto plano + passphrase + estilo → texto tapadera ───────────────────────────────────────────────────────────
+- **decodeCovert** *(fn)* — ── decodificar: texto tapadera + passphrase → { text, style } | null ─────────────────────────────────────────────────────── Style-agnóstico: prueba cada gramática; la que produzca
 
 ### `src/lib/db-core.mjs`
 - **initSchema** *(fn)* — initSchema(handle): función PURA con el mismo DDL que vivía dentro de db(). Idempotente (CREATE IF NOT EXISTS + PRAGMA table_info para migraciones). Corre igual sobre archivo o ':m
@@ -280,6 +379,9 @@
 - **configureDb** *(fn)* — cambia el path y reabre (cierra el handle actual). Para tests: configureDb({ path: ':memory:' }).
 - **resetDb** *(fn)* — cierra y reabre una DB fresca. Default ':memory:' → cada test arranca aislado y vacío.
 - **seed** *(fn)*
+
+### `src/lib/email-inline.mjs`
+- **inlineCidImages** *(fn)*
 
 ### `src/lib/embed.mjs`
 - **embed** *(async)*
@@ -303,6 +405,13 @@
 - **gmailAuthUrl** *(fn)* — URL de consentimiento (el usuario va a Google y aprueba). state = anti-CSRF.
 - **exchangeGmailCode** *(async)* — canjea el ?code= por tokens + resuelve el email de la cuenta conectada
 - **gmailAccessToken** *(async)* — dado un refresh_token, devuelve un access_token FRESCO (para IMAP/SMTP XOAUTH2; expiran ~1h)
+
+### `src/lib/grounding.mjs`
+- **stripP** *(const)* — —— todos/promesas: normaliza sacando TODA la puntuación ——
+- **wordsOf** *(const)*
+- **grounded** *(fn)* — ¿la cita está REALMENTE en el texto? substring normalizado, o ≥70% de sus palabras presentes (tolera parafraseo mínimo del LLM).
+- **gstrip** *(const)* — —— graphify: normaliza CONSERVANDO @._- (dominios de email / canales) ——
+- **anchored** *(fn)* — ¿la entidad tiene ANCLA textual? nombre completo, o alguna palabra significativa (apellido, dominio) presente en el lote.
 
 ### `src/lib/groups.mjs`
 - **listGroups** *(fn)* — lista de grupos resuelta para la UI (auto con overrides + custom), en orden.
@@ -331,6 +440,7 @@
 - **setHubConfig** *(fn)*
 
 ### `src/lib/identity-repo.mjs`
+- **safeName** *(fn)* — nombre de agenda de un número SOLO si es ÚNICO (no homónimo): si el mismo nombre está en 2+ números, keyear por nombre fusionaría personas DISTINTAS en un hilo → responderías al eq
 - **rekeyContacts** *(fn)* — re-etiqueta hilos WhatsApp 1:1 (número) → nombre del contacto, para unificar con bridge/email. Devuelve #hilos migrados.
 - **rekeyEmails** *(fn)* — re-etiqueta TODOS los emails por la dirección del contraparte (email:<addr>), salvo los cubiertos por reglas manuales. Arregla los merges erróneos del grafo (emails de gente distin
 - **rekeyBridge** *(fn)* — re-etiqueta mensajes del BRIDGE (matrix) 1:1 por el número del sender (@whatsapp_<num>) → nombre de contacto. NO toca grupos.
@@ -352,6 +462,15 @@
 - **restoreMedia** *(fn)* — DESHACER un borrado de media: restaura el blob de la papelera y re-vincula los mensajes afectados.
 - **liveMediaPaths** *(fn)* — rutas /cas/ referenciadas por algún mensaje vivo → para que el GC sepa qué blobs son huérfanos.
 
+### `src/lib/integrations.mjs`
+- **getSlackToken** *(fn)* — —— acceso DESCIFRADO, solo para los readers ——
+- **getSignal** *(fn)*
+- **getIntegrations** *(fn)* — —— estado ENMASCARADO para la UI (nunca devuelve el token) ——
+- **setSlack** *(async)* — —— Slack: valida el token con auth.test ANTES de guardar (falla rápido si es inválido) ——
+- **removeSlack** *(fn)*
+- **setSignal** *(fn)* — —— Signal: guarda la URL de signal-cli-rest-api (en tu server) + tu número ——
+- **removeSignal** *(fn)*
+
 ### `src/lib/intents.mjs`
 - **detectSchedule** *(fn)* — Devuelve la fecha como COMPONENTES (year/month/day/hour/minute), no como instante UTC: el evento se crea después con timeZone explícito → evita el clásico bug de timezone (el owner
 - **parsePhrase** *(fn)* — parsea una frase de fecha/hora (español) → componentes. Reusado por el detector LLM.
@@ -362,7 +481,17 @@
 - **tailJsonl** *(fn)* — TAIL: parsea solo los últimos maxBytes → objetos. Para "actividad reciente". La 1ª línea puede venir cortada (empieza a mitad de línea) → JSON.parse falla y se descarta, sin proble
 - **streamJsonl** *(async)* — STREAM: recorre TODO el archivo línea por línea sin cargarlo entero. Para reindexado incremental.
 
+### `src/lib/kofi.mjs`
+- **notifyNewSubscription** *(async)*
+
+### `src/lib/linkmask.mjs`
+- **URL_RE** *(const)* — Protección de LINKS para la corrección de texto: los enlaces NUNCA se corrigen. El LLM podría meterles espacios, "arreglar" el dominio o romper los query params, así que:  - si el 
+- **maskLinks** *(const)*
+- **unmaskLinks** *(const)*
+- **isOnlyLinks** *(const)*
+
 ### `src/lib/llm.mjs`
+- **gestionadoModels** *(async)* — modelos disponibles en el motor gestionado (GPU box, /api/tags de ollama vía gateway) → para armar el council desde la app
 - **visionLLM** *(async)* — VISIÓN: lee/entiende imágenes (para emails que son pura imagen). Gemini 2.5 Flash → OpenAI gpt-4o-mini. Hook Mistral OCR: si algún día hay MISTRAL_API_KEY, se puede anteponer /v1/o
 - **llmConfigMasked** *(fn)* — ── CONFIG BYOK expuesta a la app (Configuración → Motor de IA) ──
 - **testKey** *(async)* — PROBAR una key puntual: ping mínimo → si responde, anda. Incluye ollama (usa el host).
@@ -387,11 +516,20 @@
 - **archiveThreadOnServer** *(async)* — archiva (on=true) o restaura (on=false) en el buzón real todos los emails recibidos del hilo. Idempotente y no-fatal.
 
 ### `src/lib/mailer.mjs`
-- **sendEmailReply** *(async)*
+- **sendEmail** *(async)* — Envío TRANSACCIONAL genérico (no-reply): notificaciones del sistema (ej. suscripción Ko-fi). fromName = display, replyTo opcional.
+- **sendEmailReply** *(async)* — RESPUESTA a un hilo de email: usa el SMTP de la cuenta que recibió el hilo (Gmail, Mailcow, lo que sea). Un correo NO es un mensaje de texto: va con FIRMA, con parte HTML (para que
 
 ### `src/lib/maintenance.mjs`
 - **ensureStats** *(fn)* — AUTO-SANADO: si thread_stats quedó vacío (race/interrupción de un rebuild) pero hay mensajes → reconstruir. Evita que la bandeja aparezca vacía. Corre al arrancar y en el mantenimi
 - **fixGroupLeaks** *(fn)* — Corrector de HILOS-FANTASMA: mensajes de grupo (grp seteado) que quedaron en un hilo que NO es del grupo (DM falso por número, o hilo de persona) → moverlos al hilo real del grupo 
+
+### `src/lib/media-optimize.mjs`
+- **IMG_LOSSLESS** *(const)*
+- **VIDEO_EXTS** *(const)*
+- **optimizerFor** *(fn)* — argumentos del optimizador para (entrada → salida). null = no hay optimizador para ese tipo.
+- **acceptResult** *(fn)* — ¿Aceptamos el resultado? Reglas duras — ante la duda, se queda el original.  - tiene que existir y pesar algo,  - tiene que ser MÁS CHICO con margen real (si gana <3%, no vale re-e
+- **pct** *(const)*
+- **mb** *(const)*
 
 ### `src/lib/media-policy.mjs`
 - **getMediaPolicy** *(fn)*
@@ -410,18 +548,34 @@
 ### `src/lib/meta-repo.mjs`
 - **clipFlag** *(fn)* — pin/archivo de un clip (por id del mensaje self). Crea la fila de clip si no existía (aún sin enriquecer).
 - **getMeta** *(fn)*
+- **delMeta** *(fn)*
+- **delMetaLike** *(fn)* — borra por PREFIJO (personcard:/mtgcard:/espcard:). El prefijo es literal (sin comodines del dominio) → no escapamos.
 - **setMeta** *(fn)*
 - **count** *(fn)*
 - **clipCandidates** *(fn)* — ── clips absorbidos en Wave 3 ── mensajes de 'self' que aún no tienen fila en clips (candidatos a enriquecer). (era clips.run)
 - **insertClip** *(fn)* — inserta un clip enriquecido (idempotente por id, OR IGNORE). archived=1 oculta spam/sin-sentido. (era clips.run)
 - **insertTodo** *(fn)* — tarea nueva (lo que me pidieron / quedó de mi lado). Idempotente por id (OR IGNORE). (era extract-actions)
 - **insertPromesa** *(fn)* — promesa nueva (lo que YO me comprometí a hacer). Idempotente por id. (era extract-actions)
+- **listTodos** *(fn)* — listados de PENDIENTES (para el server MCP read-only). Solo lo no-hecho, con la cita textual que respalda cada ítem.
+- **listPromesas** *(fn)*
 - **openActionItems** *(fn)* — ítems abiertos (done=0) de todos|promesas. kind por allowlist. Defensivo (nunca tira). (era home-brief.openActions)
 - **markDone** *(fn)*
 - **upsertMetric** *(fn)* — upsert de una métrica diaria (historia de KPIs). (era home-brief.recordMetric)
 - **metricHistory** *(fn)* — historia reciente de una métrica (más nuevas primero). (era home-brief.deltaOf)
 - **clipsForNotes** *(fn)* — clips de 'self' filtrados por tipo, paginados hacia atrás. (era brain.notesClips) El mapeo a la vista queda en brain.
 - **pinnedNotesClips** *(fn)* — clips fijados (self, no archivados) para mostrar arriba. (era brain.notesClips)
+
+### `src/lib/ocr.mjs`
+- **ocrEnabled** *(fn)*
+- **ocrCas** *(async)* — OCR de un archivo del CAS (/cas/xx/hash.ext) → texto plano. "" si está deshabilitado, no existe, o falla.
+
+### `src/lib/phash.mjs`
+- **dhashFromGray9x8** *(fn)* — dhash a partir del raw gris de 9x8 (72 bytes) que escupe ffmpeg. PURA: sin ffmpeg ni disco, testeable.
+- **isDegenerateHash** *(fn)* — Huella DEGENERADA = sin poder discriminativo. Una imagen plana (un fotograma negro, un fondo liso) da todos los píxeles iguales → 0000…/ffff… . Dos videos que arrancan en negro dar
+- **hamming** *(fn)* — distancia de Hamming entre dos huellas hex (0 = idénticas). ≤5 sobre 64 bits ya es "la misma imagen".
+- **PHASH_EXTS** *(const)* — ¿vale la pena huellar esto? Solo imagen/video: un PDF o un zip no tienen "parecido visual".
+- **isVideoExt** *(const)*
+- **ffmpegPhashArgs** *(fn)* — comando ffmpeg para sacar el raw 9x8 gris. En video se toma un fotograma ~1s adentro (el 0 suele ser negro).
 
 ### `src/lib/push.mjs`
 - **vapidPublic** *(const)*
@@ -447,6 +601,7 @@
 - **facetThreads** *(fn)* — devuelve las filas {thread,kind,facet} que matchean EXACTO alguna de las facetas candidatas (indexado).
 - **conversationsByThreads** *(fn)*
 - **convStats** *(fn)*
+- **pruneOrphanConversations** *(fn)* — PODA de conversaciones HUÉRFANAS: filas de conversations/conv_facets cuyo thread ya no tiene mensajes (quedaron tras un re-key que movió los mensajes a otro hilo). thread_stats se 
 - **graphVocabulary** *(fn)* — ── GRAFO PONDERADO v2 (tags con puntajes por grafo + activación por difusión) ──
 - **replaceGraphEdges** *(fn)*
 - **graphEdgesFor** *(fn)*
@@ -476,6 +631,32 @@
 - **allForRag** *(fn)*
 - **rebuildMessagesFts** *(fn)* — reconstruye el índice FTS de asuntos/nombres (external-content: el trigger solo cubre INSERT, no UPDATE). (era meetings.updateMeeting) Wave 3.
 
+### `src/lib/secret.mjs`
+- **secretPinSet** *(fn)* — ── 2º PIN ──
+- **setSecretPin** *(fn)* — setear/cambiar el 2º PIN. Exige 6-12 dígitos (igual que el principal) y que sea DISTINTO del PIN de entrada (si no, no aísla nada).
+- **verifySecretPin** *(fn)*
+- **clearSecretPin** *(fn)* — borrar el 2º PIN (lo usa el flujo de reset y al desactivar la función). También cierra TODAS las sesiones secretas.
+- **unlockSecret** *(fn)*
+- **validSecretSession** *(fn)*
+- **lockSecret** *(fn)*
+- **lockAllSecret** *(fn)*
+- **listSecretAccounts** *(fn)*
+- **isSecretAccount** *(fn)* — ¿este (channel, account) de un mensaje cae en una cuenta secreta? (exacto O comodín de red channel:*)
+- **setSecretAccount** *(fn)*
+- **secretAccountSet** *(fn)*
+- **secretKey** *(const)*
+- **listSecretNumbers** *(fn)*
+- **isSecretNumber** *(fn)*
+- **setSecretNumber** *(fn)*
+- **secretGate** *(fn)*
+- **secretThreadKeys** *(fn)* — hilos que se ocultan ENTEROS (100% secretos). Los parciales NO están acá (se muestran filtrados por-mensaje).
+- **isSecretMsg** *(fn)* — ¿ESTE mensaje es secreto? por CANAL: email de cuenta secreta, o WhatsApp de sala secreta, o import sin dueño en un hilo con canal secreto de WA.
+- **isSecretRow** *(fn)* — helper de conveniencia para superficies DERIVADAS (home/coach/search/people/espacios): ¿este row es de fuente secreta? Cubre hilo 100%-secreto (thread en hide) Y mensaje parcial (i
+- **isSecretSelfNote** *(fn)* — ESTRICTO para "Mis Notas" (thread='self', hilo mezcla de todos tus números): oculta una nota SOLO si ESE mensaje vino de un canal secreto (jid de número secreto o email de cuenta s
+- **secretSelfClause** *(fn)* — fragmento SQL "ESTE row (alias.jid / alias.channel+account) es de canal secreto", para excluir self-notes secretas en agregados (categorías, conteos) sin traer columnas extra a JS.
+- **secretMsgExcludeSql** *(fn)* — fragmento SQL para EXCLUIR mensajes secretos en agregados cross-hilo (espacios): jid de número secreto, email de cuenta secreta, o hilo 100%-secreto. Sin la rama import/waSecretThr
+- **secretUnread** *(fn)* — no-leídos de hilos 100% secretos (para restar del contador). Los parciales no se restan (over-count menor, no filtra contenido).
+
 ### `src/lib/secrets.mjs`
 - **isEncrypted** *(fn)*
 - **encSecret** *(fn)*
@@ -488,6 +669,31 @@
 - **pendingReplies** *(fn)* — PENDIENTES DE RESPUESTA: hilos cuyo ÚLTIMO mensaje es entrante (esperan tu respuesta). DB, no el JSONL gigante.
 - **recentNotes** *(fn)* — ── #1 NOTAS: cosas que te mandaste a Mis Notas (para que el coach extraiga TODOs/ideas) ──
 - **importanceMap** *(fn)* — ── #14 IMPORTANCIA: score por tags del vault (inversor/cliente/familia > amigo) → rankear ──
+
+### `src/lib/signature.mjs`
+- **listSignatures** *(fn)*
+- **getSignature** *(fn)*
+- **setSignature** *(fn)*
+- **defaultSignature** *(fn)* — Firma por defecto: sobria y sin inventar datos. Solo lo que el hub SABE (nombre y, si hay, empresa).
+- **textToHtml** *(fn)* — texto plano → HTML seguro (escapado, saltos de línea respetados, links clicables)
+- **composeEmailBody** *(fn)*
+- **looksSigned** *(fn)* — ¿el texto ya termina con una firma escrita a mano? Evita la firma duplicada cuando pegás una respuesta completa.
+
+### `src/lib/sources.mjs`
+- **isCurrentAffairs** *(const)*
+- **DEFAULT_LOCALES** *(const)* — ── PAÍSES ──────────────────────────────────────────────────────────────────────────────────────── Serper sesga por país (gl) e idioma (hl). Una sola consulta a Perú se pierde noti
+- **dedupeByTitle** *(fn)*
+- **newsMulti** *(async)*
+- **redditSearch** *(async)* — ── REDDIT (API pública, sin credenciales) ──────────────────────────────────────────────────────── Aporta lo que la prensa no: hilos de gente contando lo que pasa. `t` acota la ven
+- **DEFAULT_FEEDS** *(const)* — Arranque razonable si no configuraste nada: agencias e internacionales en español e inglés.
+- **listFeeds** *(fn)*
+- **saveFeeds** *(fn)*
+- **parseFeed** *(fn)*
+- **feedMatches** *(fn)*
+- **feedCache** *(fn)*
+- **refreshFeeds** *(async)*
+- **rssSearch** *(async)*
+- **gatherCurrent** *(async)*
 
 ### `src/lib/spam.mjs`
 - **manyLinks** *(const)* — señal ESTRUCTURAL clave (agnóstica de idioma/marca): un envío promocional pone VARIOS links, casi siempre al MISMO dominio (ej. Plaud: 3× plaud.ai). Un amigo que comparte "mirá est
@@ -518,6 +724,10 @@
 - **telegramSubmitCode** *(fn)*
 - **telegramSubmitPassword** *(fn)*
 
+### `src/lib/telegram-store.mjs`
+- **tgRecord** *(async)*
+- **tgDialogName** *(const)*
+
 ### `src/lib/thread.mjs`
 - **phoneOf** *(fn)* — número real de cualquier identificador WhatsApp (jid @s.whatsapp.net, @lid, sender @whatsapp_<num> o @whatsapp_lid-<lid>)
 - **contactName** *(fn)*
@@ -532,7 +742,11 @@
 ### `src/lib/threads-repo.mjs`
 - **recentInThread** *(fn)*
 - **getBody** *(fn)*
-- **threadsSummary** *(fn)* — ── consultas ── resumen por hilo (para la bandeja) — agrega en SQL, no carga todo en memoria
+- **getAttachments** *(fn)*
+- **setAttachments** *(fn)*
+- **emailsMissingInline** *(fn)* — emails cuyo cuerpo referencia imágenes inline (cid:) pero que NO tienen esas imágenes guardadas → candidatos al backfill
+- **searchThreadKeys** *(fn)* — ── consultas ── resumen por hilo (para la bandeja) — agrega en SQL, no carga todo en memoria CLAVES DE HILO que matchean un texto — sobre TODOS los hilos, no solo los recientes. Po
+- **threadsSummary** *(fn)*
 - **channelsOf** *(fn)*
 - **threadMessages** *(fn)*
 - **threadMessagesTail** *(fn)*
@@ -540,9 +754,15 @@
 - **threadCount** *(fn)*
 - **threadSince** *(fn)* — mensajes ENTRANTES (no míos) posteriores a una marca de "visto" — para el resumen de "lo que me perdí"
 - **threadUnreadCount** *(fn)*
+- **threadDelta** *(fn)* — SYNC edit-aware: filas del hilo con rev > sinceRev (NUEVAS o editadas), en orden de revisión. El cliente hace upsert por id.
+- **threadMaxRev** *(fn)* — rev máxima actual del hilo (para que el cliente sepa hasta dónde llegó, aunque el delta venga vacío/paginado)
 - **inboundUnansweredThreads** *(fn)* — ── absorbidas en Wave 2 (antes SQL crudo en crons/libs) ── hilos ENTRANTES recientes SIN respuesta, un mensaje representativo (el último) por hilo: excluye grupos, 'self', y hilos 
 - **selfNotesSince** *(fn)* — notas propias (thread='self') desde una marca, más nuevas primero — texto + resumen de nota de voz. (era notes-ai.recentNotes)
+- **selfNotesSinceAll** *(fn)* — Notas propias INCLUYENDO las de líneas secretas. Solo para el ASISTENTE y solo con su opt-in explícito. Por qué se permite acá y no en el resto: "secreto" significa OCULTO EN LA AP
+- **isSecretSelfRow** *(fn)* — ¿esta nota vino de una línea secreta? → para decidir si se responde con modelo LOCAL (no mandar eso a la nube)
+- **selfNotesHiddenCount** *(fn)* — Cuántas notas propias quedaron OCULTAS por el 2º PIN en ese lapso. Es solo un CONTEO (nunca el contenido): sirve para que el asistente pueda decir "no vi nada porque está bajo el P
 - **uncategorizedSelfNotes** *(fn)* — ── NOTAS categorizadas: self-notes (thread='self') + note_meta (categoría/estado/pin) ── self-notes todavía SIN categorizar (para el cron notes-categorize)
+- **activeNotesMissingEnrichment** *(fn)* — BACKFILL: notas YA activas pero sin el enriquecimiento nuevo (catkey/acciones/veredicto) — para poblar lo existente sin re-junkear.
 - **setNoteMeta** *(fn)*
 - **listNotes** *(fn)* — notas para la UI: por categoría + estado, DEDUPEADAS por contenido, pineadas primero. Se muestra la MÁS RECIENTE de cada grupo. ROW_NUMBER (un solo criterio, ts DESC) elige represe
 - **noteCategories** *(fn)*
@@ -618,10 +838,16 @@
 - **saveIdentity** *(fn)*
 
 ### `src/lib/voice.mjs`
+- **transcribeMedia** *(async)* — #5: transcribe audio O VIDEO con auto-detección de idioma (inglés/japonés/etc) → { text, lang }. ffmpeg extrae el audio del video.
 - **VOICES** *(const)*
 - **tts** *(async)* — texto → audio mp3 (Buffer)
 - **audioExt** *(fn)* — extensión de archivo canónica según el mime del audio → el codec que Whisper (local u OpenAI) espera por el nombre del archivo.
 - **stt** *(async)* — audio → texto. SELF-HOSTED primero si el hub lo pide (stt=local) o si no hay key OpenAI pero whisper.cpp está: el audio NUNCA sale.
+
+### `src/lib/wa-import.mjs`
+- **parseWhatsAppExport** *(fn)* — ── PARSER puro: texto del export → [{ts, sender, dir, text, mediaType}] ──
+- **importWhatsApp** *(fn)* — ── IMPORT: parsea + mergea al hilo con dedup por contenido (ts±90s + texto). Devuelve stats. ──
+- **importWhatsAppZip** *(fn)*
 
 ### `src/lib/whisper.mjs`
 - **whisperAvailable** *(fn)*
@@ -638,6 +864,8 @@
 - **setPin** *(fn)*
 - **archived** *(fn)* — archivar hilos (ocultar de la bandeja) + marcar remitentes de email como spam (ese y los futuros)
 - **archive** *(fn)*
+- **silenced** *(fn)* — SILENCIAR: ruido que NO es spam (grupos que no me interesan ahora). NO se ocultan como los archivados: viven en la pestaña "Silenciados".
+- **silence** *(fn)*
 - **spamSenders** *(fn)*
 - **addSpamSender** *(fn)*
 - **seenMap** *(fn)* — ── "ÚLTIMA VEZ VISTO" por hilo (read state) — para ofrecer resumen de lo que me perdí desde la última vez que entré ──
@@ -665,6 +893,7 @@
 - **sendMatrix** *(async)* — ENVÍO: manda un mensaje a una sala del bridge (WhatsApp/IG/…) → el bridge lo entrega al contacto. Usado por /api/send.
 - **sendMatrixAudio** *(async)* — ENVÍO DE NOTA DE VOZ: m.audio con los marcadores MSC1767/MSC3245 → los bridges (WhatsApp/Telegram/Discord/Signal) la entregan como mensaje de voz (PTT), no como archivo. El audio y
 - **sendMatrixMedia** *(async)* — ENVÍO DE IMAGEN / VIDEO / ARCHIVO: sube al content-repo y manda m.image/m.video/m.file → los bridges lo entregan como adjunto.
+- **sendMatrixSticker** *(async)* — ENVÍO DE STICKER: evento m.sticker (tipo de evento propio, no m.room.message) con la imagen webp → los bridges lo entregan como sticker nativo (WhatsApp exige webp; el server lo co
 - **startWhatsAppChat** *(async)* — INICIAR un chat de WhatsApp NUEVO por número (contacto histórico sin sala en el bridge). Le pide al bot del bridge que cree el portal (start-chat) y devuelve el mxid de la sala. Re
 - **roomLogin** *(async)* — estado del login (número) DUEÑO de una sala portal: { receiver, alive }. Sirve para decir "revinculá X" cuando el envío falla porque ese número está deslogueado (el bridge acepta e
 - **loggedOutNumbers** *(async)* — números propios (hub-config) que están DESLOGUEADOS en el bridge (reciben pero no envían). Para el banner de re-link in-app.
