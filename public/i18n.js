@@ -16,6 +16,33 @@
 
   // ── mapa ES → EN (texto exacto tal como aparece en la UI) ──
   var TR = {
+    // ── cromo que quedaba en español (detectado recorriendo la app con locale=en y cruzando contra este mapa) ──
+    // Es lo PRIMERO que ve alguien que llega en inglés: la bandeja, sus filtros y los espacios por defecto.
+    "Bandeja": "Inbox", "‹ Bandeja": "‹ Inbox", "Filtros": "Filters", "🔗 Unir": "🔗 Merge", "✕ Unir": "✕ Merge", "🗂 Grupos": "🗂 Groups",
+    "Unir contactos duplicados (la misma persona en varios hilos)": "Merge duplicate contacts (the same person across threads)",
+    "Todo": "All", "🏠 Familia": "🏠 Family", "👨‍👩‍👧 Familia": "👨‍👩‍👧 Family", "Familia": "Family", "Amigos": "Friends", "Trabajo": "Work", "💼 Trabajo": "💼 Work", "🧑‍🤝‍🧑 Amigos": "🧑‍🤝‍🧑 Friends", "👥 Grupos": "👥 Groups",
+    "Buenos días": "Good morning", "Buenas tardes": "Good afternoon", "Buenas noches": "Good evening",
+    "Buenos días,": "Good morning,", "Buenas tardes,": "Good afternoon,", "Buenas noches,": "Good evening,",
+    "Listo": "Done", "Tu día": "Your day", "Esta semana": "This week", "Día": "Day", "Semana": "Week", "Laboral": "Work week",
+    "mejor hueco": "best slot", "ocupado": "busy", "solapamiento": "overlap", "solapamientos": "overlaps",
+    "Día tranquilo. Nada urgente pide tu atención ahora.": "Quiet day. Nothing urgent needs you right now.",
+    "Mensaje…": "Message…", "🕊️ Mensaje encubierto…": "🕊️ Covert message…", "Email…": "Email…",
+    "Escribí tu mensaje": "Type your message", "Seleccionar mensajes": "Select messages", "Ingresá tu PIN": "Enter your PIN", "Ocultar": "Hide",
+    "Corregir con IA al enviar (tocá para enviar tal cual)": "Fix with AI on send (tap to send as is)",
+    "IA: sugerir respuesta / resumir chat / corrección": "AI: suggest a reply / summarize chat / fix wording",
+    "Piloto automático — responder solo por este contacto": "Autopilot — reply only for this contact",
+    "ej: ¿quién me debe? · resumime a Juan · ¿qué quedó con X?": "e.g. who owes me? · summarize Juan · what came of X?",
+    "Recomputar contadores y últimos mensajes": "Recompute counters and last messages",
+    // fragmentos del subtítulo del Radar, partido por <b> (cada trozo es un nodo de texto propio)
+    ". ¿Querés": ". Want to", "algo puntual? Eso es": "something specific? That's",
+    // tarjeta y visor de email dentro de la conversación
+    "📖 Abrir email completo →": "📖 Open full email →", "✨ Responder con IA": "✨ Reply with AI", "✍️ Responder": "✍️ Reply", "Ver email completo →": "See full email →",
+    // modal del PIN — es literalmente lo primero que aparece al abrir la app por primera vez
+    "🔒 PIN de acceso remoto": "🔒 Remote-access PIN", "Crear PIN": "Create PIN", "Ahora no": "Not now",
+    "PIN de acceso": "Access PIN", "Crear un PIN": "Create a PIN", "Cambiar tu PIN": "Change your PIN",
+    "🔒 Crear PIN de acceso": "🔒 Create access PIN", "🔒 Cambiar PIN de acceso": "🔒 Change access PIN",
+    "Necesitás el actual para cambiarlo.": "You need the current one to change it.",
+    "Acá en tu equipo no te lo pide.": "It won't ask for it here on your own machine.",
     // navegación / tabs / chrome
     "Inicio": "Home", "Mensajes": "Messages", "Calendario": "Calendar", "Radar": "Radar", "Notas": "Notes",
     "Ajustes": "Settings", "Configuración": "Settings", "Cuenta y configuración": "Account & settings", "Ajustes del contacto": "Contact settings",
@@ -27,7 +54,7 @@
     "✅ Por hacer": "✅ To do", "🎯 Tus objetivos": "🎯 Your goals", "📅 Agenda de hoy": "📅 Today's agenda", "Ver": "See", "Sin eventos hoy 🎉": "No events today 🎉",
     "📊 Tus KPIs": "📊 Your KPIs", "📰 Para vos": "📰 For you", "📊 Tu semana": "📊 Your week", "📰 Novedades de redes": "📰 Social updates", "📰 Novedades de tus redes": "📰 Your social updates",
     "🔔 Activá las notificaciones": "🔔 Turn on notifications", "No te estás enterando de los mensajes nuevos. Suenan y vibran.": "You're missing new messages. They ring and vibrate.",
-    "Activar en este dispositivo": "Enable on this device",
+    "Activar en este dispositivo": "Enable on this device", "Activar": "Turn on", "Activá": "Turn on",
     "Puede que se haya desconectado — reconectá para no perder mensajes.": "It may have disconnected — reconnect so you don't miss messages.",
     "✨ Lo que te perdiste": "✨ What you missed", "✨ Ver resumen de lo que me perdí": "✨ See a summary of what I missed",
     "Resumiendo lo que te perdiste…": "Summarizing what you missed…", "No pude generar el resumen ahora. Intentá de nuevo.": "Couldn't generate the summary now. Try again.",
@@ -300,6 +327,9 @@
 
   // ── reglas para texto DINÁMICO (con números/fechas interpolados) ──
   var RULES = [
+    // cabecera del calendario: "Hoy, 12", "12–18 AGO 2026 · SEM 33", "4 reuniones · 3 h libres"
+    [/^Hoy, (\d+)$/i, "Today, $1"], [/^Email de (.+)$/i, "Email from $1"], [/^Para entrar desde internet \((.+)\) necesitás un PIN\.?/i, "To reach it over the internet ($1) you need a PIN."], [/^Es el PIN para entrar desde internet\.?/i, "This is the PIN for signing in over the internet."], [/^Correo de (.+)$/i, "Email from $1"], [/·\s*SEM\s*(\d+)/i, "· W$1"],
+    [/(\d+)\s*reuniones?/gi, "$1 meetings"], [/(\d+)\s*h libres/i, "$1 h free"],
     [/^hace (\d+)\s*d$/i, "$1d ago"], [/^hace (\d+)\s*días?$/i, "$1 days ago"], [/^hace (\d+)\s*h$/i, "$1h ago"], [/^hace un momento$/i, "just now"],
     [/^en (\d+)\s*días?$/i, "in $1 days"], [/^en (\d+)\s*h$/i, "in $1h"],
     [/^\((\d+)\s*más\)$/i, "($1 more)"], [/^(\d+)\s*más$/i, "$1 more"],

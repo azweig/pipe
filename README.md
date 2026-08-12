@@ -4,7 +4,16 @@
 
 Pipe is a self-hostable **unified inbox + AI second brain**. It merges WhatsApp, email, Telegram, Teams, Instagram and more into a single thread per person, then adds an AI layer that reads everything, summarizes long threads and voice notes, tells you who's waiting on a reply, and drafts responses in your voice. Your data stays on your own infrastructure.
 
-> Status: early but real — runs in production for its author, daily. The UI and AI prompts are in Spanish. → **[pipe.one](https://pipe.one)**
+> Status: early but real — runs in production for its author, daily. The UI is English/Spanish (it follows your browser, or pick one in Settings); AI prompts are in Spanish. → **[pipe.one](https://pipe.one)**
+
+|  |  |
+|:--:|:--:|
+| ![One inbox, every channel](docs/img/inbox.png) | ![The full email, inline images and all](docs/img/email.png) |
+| **One inbox, every channel.** WhatsApp, email, Telegram and Teams collapse into one thread per person. | **Email that behaves like email.** The full message, its inline images, and a reply — by hand or with AI — carrying your signature. |
+| ![Your day at a glance](docs/img/home.png) | ![On your phone](docs/img/mobile.png) |
+| **Your day at a glance.** A daily brief, what's waiting on you, and Jarvis — ask anything about your own data. | **The same thing on your phone.** Installable PWA, plus native Android/desktop builds. |
+
+<sub>Screenshots from a fresh install seeded with fictional data — `node scripts/seed-demo.mjs` gives you the same inbox to poke at.</sub>
 
 ## Why Pipe
 
@@ -91,7 +100,18 @@ npm run web        # web UI + API on http://localhost:3000
 npm start
 ```
 
-First run over the tunnel/localhost lets you set the access **PIN** (required once you expose it behind a reverse proxy). Then open the app → **Configuración** to connect channels and choose your AI engine.
+First run over the tunnel/localhost lets you set the access **PIN** (required once you expose it behind a reverse proxy). Then open the app → **Settings** to connect channels and choose your AI engine.
+
+### Just want to look around first?
+
+Before connecting any real account, fill a fresh install with fictional conversations — WhatsApp, email with a real HTML body, Telegram, a group and a voice note:
+
+```bash
+node scripts/seed-demo.mjs   # writes to data/messages.jsonl; the ingest picks it up
+npm run web                  # → http://localhost:3000
+```
+
+That's exactly what the screenshots above show. Delete `data/` when you're done and start clean.
 
 ### Optional: let an AI agent do it
 

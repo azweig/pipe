@@ -100,10 +100,14 @@ const PAL = ["#c98d7f", "#c9a06a", "#7d7da6", "#8bb0a2", "#a98bb0", "#7fa9c4", "
 const color = (n) => PAL[[...(n || "?")].reduce((a, c) => a + c.charCodeAt(0), 0) % PAL.length]
 const initials = (n) => (n || "?").replace(/[·].*/, "").trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase()
 const CH = { whatsapp: "WhatsApp", email: "Email", teams: "Teams", telegram: "Telegram", notion: "Notion", calendar: "Calendar", discord: "Discord", instagram: "Instagram", facebook: "Facebook", linkedin: "LinkedIn", tiktok: "TikTok" }
+// Locale de fechas. i18n.js corre DESPUÉS de este archivo y es quien fija PIPE_LANG, así que se lee en cada llamada
+// (una const de nivel superior se evaluaría antes de tiempo y quedaría clavada en "es").
+const LOC = () => (window.PIPE_LANG === "en" ? "en" : "es")
 function ago(ts) { if (!ts) return ""; const d = new Date(ts), n = new Date(); const day = 864e5
   if (d.toDateString() === n.toDateString()) return d.toTimeString().slice(0, 5)
-  if (n - d < 2 * day) return "Ayer"; if (n - d < 7 * day) return ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"][d.getDay()]
-  return d.toLocaleDateString("es", { day: "numeric", month: "short" }) }
+  // el día de la semana también en el idioma de la UI (era una lista fija: en inglés salía "Lun" en la bandeja)
+  if (n - d < 2 * day) return "Ayer"; if (n - d < 7 * day) return d.toLocaleDateString(LOC(), { weekday: "short" }).replace(".", "").replace(/^./, (c) => c.toUpperCase())
+  return d.toLocaleDateString(LOC(), { day: "numeric", month: "short" }) }
 // avatar con foto LAZY: muestra iniciales al toque y la foto entra cuando carga (loading=lazy → no baja las de fuera de pantalla)
 function avatar(name, photo, cls = "") {
   if (photo) return `<div class="av ${cls}" style="background:${color(name)}">${esc(initials(name))}<img src="${esc(photo)}" loading="lazy" decoding="async" alt="" onload="this.style.opacity=1" onerror="this.remove()"></div>`
@@ -180,7 +184,7 @@ window.go = (h) => { if (location.hash === h) route(); else location.hash = h } 
 async function viewHome() { render(skel(6), "home"); apiSWR("/api/home", (r) => paintHome(r || {})) }
 function paintHome(d) {
   const hr = new Date().getHours(), saludo = hr < 12 ? "Buenos días" : hr < 19 ? "Buenas tardes" : "Buenas noches"
-  const fecha = new Date().toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" }).toUpperCase()
+  const fecha = new Date().toLocaleDateString(LOC(), { weekday: "long", day: "numeric", month: "long" }).toUpperCase()
   window.__home = d
   const b = d.brief || {}, kpis = d.kpis || [], news = d.news || [], ag = d.agenda || [], coach = d.coach
   const _wd = _lsGet("waitDone") || {}
@@ -718,7 +722,7 @@ window.loadStorageCfg = async () => {
     <div class="cfg-card"><div class="cfg-r"><div class="ric">${IC_DISK}</div><div class="rm"><b>Guardar fotos, videos y documentos</b><span>En el servidor, toda la cuenta. El audio (notas de voz) siempre se guarda.</span></div>
       <button class="switch${store ? " on" : ""}" role="switch" aria-checked="${store}" aria-label="Guardar fotos, videos y documentos" onclick="toggleGlobalMedia(${!store})"></button></div></div>
     <div class="stor">
-      <div class="stor-top"><div><div class="stor-size">${n}<span class="stor-unit">${unit}</span></div><div class="stor-cap">${uniq.toLocaleString("es")} archivo${uniq === 1 ? "" : "s"} guardado${uniq === 1 ? "" : "s"}${refs > uniq ? ` · ${refs.toLocaleString("es")} usos` : ""}</div></div>
+      <div class="stor-top"><div><div class="stor-size">${n}<span class="stor-unit">${unit}</span></div><div class="stor-cap">${uniq.toLocaleString(LOC())} archivo${uniq === 1 ? "" : "s"} guardado${uniq === 1 ? "" : "s"}${refs > uniq ? ` · ${refs.toLocaleString(LOC())} usos` : ""}</div></div>
         <span class="cfg-badge ${store ? "ok" : "off"}">${store ? "Guardando" : "En pausa"}</span></div>
       ${saved ? `<div class="stor-bar"><i style="width:${saved}%"></i></div><div class="stor-cap" style="margin-top:8px">${saved}% ahorrado por deduplicación — los archivos repetidos se guardan una sola vez.</div>` : ""}
     </div>
@@ -1746,8 +1750,8 @@ function dayLabel(ts) {
   const d = new Date(ts), n = new Date(), day = 864e5
   const diff = Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / day)
   if (diff === 0) return "Hoy"; if (diff === 1) return "Ayer"
-  if (diff > 1 && diff < 7) return d.toLocaleDateString("es", { weekday: "long" }).replace(/^./, (c) => c.toUpperCase())
-  return d.toLocaleDateString("es", { day: "numeric", month: "long", ...(d.getFullYear() !== n.getFullYear() ? { year: "numeric" } : {}) })
+  if (diff > 1 && diff < 7) return d.toLocaleDateString(LOC(), { weekday: "long" }).replace(/^./, (c) => c.toUpperCase())
+  return d.toLocaleDateString(LOC(), { day: "numeric", month: "long", ...(d.getFullYear() !== n.getFullYear() ? { year: "numeric" } : {}) })
 }
 const dateSep = (ts) => `<div class="daysep" data-label="${dayLabel(ts)}" style="text-align:center;margin:16px 0 10px"><span style="background:#e6eaf0;color:var(--muted);padding:4px 13px;border-radius:9px;font-size:12px;font-weight:600;text-transform:capitalize">${dayLabel(ts)}</span></div>`
 const timeEl = (it) => `<span style="font-size:10px;color:${it.dir === "out" ? "#6b9a80" : "var(--muted2)"};margin-left:8px;white-space:nowrap;float:right;position:relative;top:5px">${hhmm(it.ts)}${it.dir === "out" ? " ✓✓" : ""}</span>`
@@ -2980,15 +2984,18 @@ function calEmpty(d) {
 }
 function paintCalendario(d) {
   const k = d.kpis || {}, isWeek = CALVIEW !== "dia", evs = d.events || []
-  const MES = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"]
-  const WD = ["DOM", "LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB"]
+  // Mes/día abreviados EN EL IDIOMA DE LA UI (antes eran listas fijas en español y el calendario quedaba en español
+  // aunque el resto estuviera en inglés). Intl los da traducidos; el .toUpperCase() mantiene el estilo del header.
+  const fmtU = (opt, dt) => new Intl.DateTimeFormat(LOC(), opt).format(dt).toUpperCase()
+  const MES = { get: (i) => fmtU({ month: "short", timeZone: "UTC" }, new Date(Date.UTC(2001, i, 15))).replace(".", "") }
+  const WD = { get: (i) => fmtU({ weekday: "short", timeZone: "UTC" }, new Date(Date.UTC(2001, 0, 7 + i))).replace(".", "") }
   const parseD = (s) => new Date(s + "T12:00:00-05:00")
   const base = parseD(d.base || d.today)
   const semNum = (dt) => { const o = new Date(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate())); o.setUTCDate(o.getUTCDate() + 4 - (o.getUTCDay() || 7)); return Math.ceil(((o - new Date(Date.UTC(o.getUTCFullYear(), 0, 1))) / 86400000 + 1) / 7) }
   // header
   let eyebrow, title
-  if (isWeek) { const d0 = parseD(d.days[0]), d1 = parseD(d.days[d.days.length - 1]); eyebrow = `${d0.getDate()}–${d1.getDate()} ${MES[d1.getMonth()]} ${d1.getFullYear()} · SEM ${semNum(base)}`; title = "Esta semana" }
-  else { eyebrow = `${WD[base.getDay()]} · ${MES[base.getMonth()]} ${base.getFullYear()}`; title = `${d.base === d.today ? "Hoy, " : ""}${base.getDate()}` }
+  if (isWeek) { const d0 = parseD(d.days[0]), d1 = parseD(d.days[d.days.length - 1]); eyebrow = `${d0.getDate()}–${d1.getDate()} ${MES.get(d1.getMonth())} ${d1.getFullYear()} · SEM ${semNum(base)}`; title = "Esta semana" }
+  else { eyebrow = `${WD.get(base.getDay())} · ${MES.get(base.getMonth())} ${base.getFullYear()}`; title = `${d.base === d.today ? "Hoy, " : ""}${base.getDate()}` }
   const tabs = [["dia", "Día"], ["laboral", "Laboral"], ["semana", "Semana"]].map(([v, l]) => `<button class="cal-tab${CALVIEW === v ? " on" : ""}" onclick="setCal('${v}')">${l}</button>`).join("")
   // KPI card
   const catBar = (k.catBars || []).length ? `<div class="cal-bar">${(k.catBars).map((c) => `<i style="flex:${c.h};background:${c.color}"></i>`).join("")}<i style="flex:${Math.max(0.3, (k.freeH || 0))};background:rgba(255,255,255,.12)"></i></div>
@@ -3158,7 +3165,7 @@ async function viewProactivo() {
     ${n.insight ? `<div class="tiny muted" style="line-height:1.45">${esc(n.insight)}</div>` : ""}${(n.steps || []).slice(0, 2).map((s) => `<div class="tiny" style="padding:2px 0;color:var(--accent)">→ ${esc(s)}</div>`).join("")}
     <div class="row" style="gap:6px;margin-top:8px"><button class="pill" style="font-size:11px;padding:4px 10px" onclick="coachAct('${ek(n.key)}','done',this)">✓ Hecho</button><button class="pill" style="font-size:11px;padding:4px 10px" onclick="coachAct('${ek(n.key)}','snooze',this)">⏰ Después</button><button class="pill" style="font-size:11px;padding:4px 10px" onclick="coachAct('${ek(n.key)}','dismiss',this)">✕ No</button></div></div>`
   const noteCard = (i) => `<div class="card itemtap" style="margin-bottom:8px;padding:11px" onclick="go('#notas')"><div class="small">📝 ${esc((i.text || "").slice(0, 110))}</div><div class="tiny muted" style="margin-top:3px">${ago(i.ts)} · en Mis Notas</div></div>`
-  const mtgCard = nextMtg ? `<div class="card" style="margin-bottom:9px;padding:12px;border-left:3px solid var(--accent)"><div class="b small">📅 ${esc(nextMtg.title || "Reunión")}</div><div class="tiny muted" style="margin-top:2px">${new Date(nextMtg.t).toLocaleString("es", { weekday: "short", hour: "2-digit", minute: "2-digit" })}${(nextMtg.attendees || []).length ? ` · con ${esc((nextMtg.attendees || []).slice(0, 4).join(", "))}` : ""}</div></div>` : ""
+  const mtgCard = nextMtg ? `<div class="card" style="margin-bottom:9px;padding:12px;border-left:3px solid var(--accent)"><div class="b small">📅 ${esc(nextMtg.title || "Reunión")}</div><div class="tiny muted" style="margin-top:2px">${new Date(nextMtg.t).toLocaleString(LOC(), { weekday: "short", hour: "2-digit", minute: "2-digit" })}${(nextMtg.attendees || []).length ? ` · con ${esc((nextMtg.attendees || []).slice(0, 4).join(", "))}` : ""}</div></div>` : ""
   const sec = (icon, title, count, cards) => cards ? `<div class="row" style="gap:8px;margin:18px 2px 8px"><span>${icon}</span><span class="b">${title}</span><span class="sub">${count}</span></div>${cards}` : ""
   const total = sugg.length + questions.length + promises.length + waiting.length + proposals.length + nudges.length
   // RADAR proactivo: SOLO lo que el Home NO muestra (lo de hoy vive en Inicio). Acá = lo que se enfría / se te escapa + herramientas generativas.

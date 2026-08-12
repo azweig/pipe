@@ -142,6 +142,11 @@ function openDb(path) {
   if (isFile(path)) {
     try { h.pragma("journal_mode = WAL") } catch {}          // WAL requiere archivo
     try { h.pragma("mmap_size = 1073741824") } catch {}       // 1GB mapeado (no aplica a :memory:)
+    // TAMAÑO DEL WAL: sin esto el archivo crece y NO se devuelve nunca. En prod llegó a 213 MB de espacio
+    // reutilizable pero ocupado — con ~22 procesos conectados, un checkpoint casi nunca encuentra la ventana para
+    // truncar. journal_size_limit le dice a SQLite que recorte el archivo tras cada checkpoint. 64 MB es holgado
+    // para el ritmo de escritura de la ingesta y acota el desperdicio.
+    try { h.pragma("journal_size_limit = " + (+process.env.DB_WAL_LIMIT_BYTES || 67108864)) } catch {}
   }
   try { h.pragma("cache_size = " + -(1024 * (+process.env.DB_CACHE_MB || 16))) } catch {} // cache PRIVADO por conexión. 16MB default: 64MB×~22 procesos (readers+crons) = 1.4GB reventaba el mem_limit del container (OOM→crash-loop). El server puede subirlo con DB_CACHE_MB.
   try { h.pragma("temp_store = MEMORY") } catch {}
