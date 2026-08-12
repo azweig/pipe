@@ -82,7 +82,11 @@ export function threadTargets(key) {
 export async function sendReply(key, text, { channel, target } = {}) {
   text = String(text || "").trim()
   if (!text) return { error: "mensaje vacío" }
-  if (key === "self") return { ok: true, channel: "note", ...dbInsertSent("self", "note", text) } // "Mis Notas": guarda local, no envía a nadie
+  // "Mis Notas": escribir en el hilo propio GUARDA una nota, no manda nada. Salvo que el caller nombre una sala
+  // EXPLÍCITA: ahí sí hay que enviar de verdad. Es el caso del asistente, que contesta dentro de tu chat de WhatsApp
+  // — sin esta excepción sus respuestas se guardaban como notas y nunca llegaban al teléfono.
+  const selfToRoom = key === "self" && channel === "whatsapp" && /^![^:]+:/.test(String(target || ""))
+  if (key === "self" && !selfToRoom) return { ok: true, channel: "note", ...dbInsertSent("self", "note", text) }
   // destino EXPLÍCITO elegido por el usuario
   if (channel === "email" && target) {
     const last = lastEmailByAddress(target) || lastEmailInThread(key)

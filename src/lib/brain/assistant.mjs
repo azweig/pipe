@@ -8,13 +8,13 @@
 // El caso real: le mandás notas a tu propio WhatsApp todo el día. Eso NO se toca. Pero si escribís
 // "¿cuánto me debe Soltrak?" o "buscá el horario del vuelo", te responde.
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs"
-import { llm } from "../llm.mjs"
+import { llm, smartChain } from "../llm.mjs"
 import { hasWebSearch, webSearch } from "../research.mjs"
 import { harden, UNTRUSTED_NOTE } from "../safety.mjs"
 import { ownerFirst } from "../hub.mjs"
 import { ask } from "./ask.mjs"
 import { sendReply } from "./reply.mjs"
-import { selfNotesSince } from "../db.mjs" // trae AMBAS direcciones del hilo propio y ya excluye las notas de canal secreto
+import { selfNotesSince, selfNotesSinceAll, selfNotesHiddenCount, isSecretSelfRow } from "../db.mjs" // trae AMBAS direcciones del hilo propio y ya excluye las notas de canal secreto
 
 const CFG = () => "./data/assistant.json"
 const STATE = () => "./data/assistant-state.json"
@@ -28,11 +28,11 @@ export const MARK = "🤖 "
 
 export function getAssistant() {
   const c = load(CFG())
-  return { enabled: !!c.enabled, maxPerDay: c.maxPerDay || 30, web: c.web !== false }
+  return { enabled: !!c.enabled, maxPerDay: c.maxPerDay || 30, web: c.web !== false, secretOk: !!c.secretOk }
 }
-export function setAssistant({ enabled, maxPerDay, web } = {}) {
+export function setAssistant({ enabled, maxPerDay, web, secretOk } = {}) {
   const c = getAssistant()
-  const next = { enabled: enabled === undefined ? c.enabled : !!enabled, maxPerDay: maxPerDay === undefined ? c.maxPerDay : Math.max(1, Math.min(200, +maxPerDay || 30)), web: web === undefined ? c.web : !!web }
+  const next = { enabled: enabled === undefined ? c.enabled : !!enabled, maxPerDay: maxPerDay === undefined ? c.maxPerDay : Math.max(1, Math.min(200, +maxPerDay || 30)), web: web === undefined ? c.web : !!web, secretOk: secretOk === undefined ? c.secretOk : !!secretOk }
   save(CFG(), next)
   return next
 }
@@ -71,6 +71,11 @@ export function classify(text) {
   return { answer: false, reason: "no parece una pregunta" }
 }
 
+// SALUDO o charla suelta: no hay nada que buscar. Antes "hola, ¿estás por ahí?" disparaba RAG + internet y
+// contestaba "no hay información explícita sobre la disponibilidad de Álvaro", que es una respuesta absurda.
+const SMALLTALK = /^\s*(hola|holaa+|buenas|buen día|buenos días|buenas tardes|buenas noches|hey|ey|qué tal|que tal|cómo estás|como estas|cómo andás|como andas|estás|estas|estás ahí|estas por ahi|estás por ahí|test|prueba|probando|funciona|andás|andas)\b[^?]{0,25}\??\s*$/iu
+export const isSmallTalk = (t) => SMALLTALK.test(String(t || "").trim())
+
 // ¿hace falta internet, o alcanza con lo que ya sabemos de vos? (heurística, barata)
 const PERSONAL = /(^|\P{L})(acord[eé]|promet[ií]|me debe|le debo|factura|deuda|quedamos|habl[eé] con|me dijo|reunión con|mi (cliente|proveedor|hermano|mamá|papá)|nuestro|mi proyecto)(?!\p{L})/iu
 const WEBBY = /(^|\P{L})(hoy|ahora|últim[oa]|noticia|precio|cotiza|dólar|clima|horario|vuelo|quién es|qué es|cómo se|significa|traduc)(?!\p{L})/iu
@@ -83,11 +88,22 @@ export function needsWeb(text) {
 const markSent = (txt) => { const s = load(STATE(), {}); s.lastReplyTs = Date.now(); s.today = (s.today || []).filter((x) => Date.now() - x < 86400000).concat(Date.now()); s.lastText = String(txt).slice(0, 80); save(STATE(), s) }
 export function assistantState() { const s = load(STATE(), {}); return { ...s, usedToday: (s.today || []).filter((x) => Date.now() - x < 86400000).length } }
 
+// ¿la respuesta del RAG es en realidad un "no sé"? (varias formas, con y sin acento)
+const EMPTYISH = /(no (hay|tengo|se encontr|dispongo|puedo)|sin (información|informacion|datos)|no (aparece|figura|consta)|los (datos|fragmentos) no (alcanzan|permiten))/i
+export const looksEmptyAnswer = (t) => { const x = String(t || "").trim(); return !x || (x.length < 260 && EMPTYISH.test(x)) }
+
 /** Responde UNA pregunta con todo lo que tenemos: tu historial (RAG) + internet si hace falta. */
-export async function answerQuestion(question, { web = true } = {}) {
+// `localOnly`: la pregunta vino de una línea SECRETA → se responde con modelos LOCALES y sin buscar en internet.
+// El dueño ya ve ese chat en su teléfono, pero su contenido no tiene por qué salir a un proveedor de nube.
+export async function answerQuestion(question, { web = true, localOnly = false } = {}) {
+  if (isSmallTalk(question)) return { text: "Acá estoy. Preguntame lo que necesites — busco en tus conversaciones y en internet.", smallTalk: true, usedWeb: false, ownMatches: 0 }
   const own = await ask(question).catch(() => ({ answer: "", matches: 0 }))
+  // Si el paso sobre TUS datos no encontró nada, suele devolver una NEGATIVA ("no hay información sobre…").
+  // Pasarla como contexto contagia al modelo final, que repite la negativa incluso en preguntas de conocimiento
+  // general. Ej. real: "¿cuál es la capital de Israel?" → "no tengo información explícita". Se descarta.
+  const ownText = looksEmptyAnswer(own.answer) ? "" : own.answer
   let webCtx = ""
-  const useWeb = web && hasWebSearch() && needsWeb(question)
+  const useWeb = web && !localOnly && hasWebSearch() && needsWeb(question)
   if (useWeb) {
     try {
       const rs = await webSearch(question, 5) // ⚠️ devuelve {answer, results[]}, NO un array
@@ -96,21 +112,27 @@ export async function answerQuestion(question, { web = true } = {}) {
       webCtx = direct + hits.map((r) => `- ${r.title}: ${(r.snippet || "").slice(0, 200)} (${r.link})`).join("\n")
     } catch { /* sin internet igual respondemos con lo tuyo */ }
   }
+  // Dos clases de pregunta, dos reglas. Antes había UNA sola ("usá solo el contexto") y por eso a "¿cuál es la capital
+  // de Israel?" contestaba "no tengo información explícita": conocimiento general que cualquier modelo sabe, bloqueado
+  // por un prompt pensado para los datos personales. Sobre SUS cosas hay que ser estricto; sobre el mundo, no.
   const sys = harden(`Sos el asistente personal de ${ownerFirst()}. Le hablás A ÉL, no a terceros: no te hagas pasar por él ni firmes como él.
 Respondé en español, directo y breve (WhatsApp): 1 a 5 frases, sin relleno ni saludos.
-Usá los DATOS SUYOS y los RESULTADOS WEB de abajo. Si algo no lo sabés o los datos no alcanzan, decilo en una línea en vez de inventar.
+
+Cómo responder según la pregunta:
+· Si es sobre SUS cosas (sus conversaciones, deudas, reuniones, contactos): usá SOLO los datos de abajo. Si no alcanzan, decí qué falta. NUNCA inventes un dato suyo.
+· Si es de conocimiento general o del mundo: respondé con lo que sabés, aunque los datos de abajo no digan nada. Si el dato pudo cambiar (precios, cargos, noticias) y no hay resultado web, aclaralo en pocas palabras.
 Si usás un resultado web, cerrá con la fuente entre paréntesis.`)
   const prompt = `PREGUNTA: ${question}
 
 DATOS SUYOS (de su propio historial):
-${own.answer || "(nada relevante)"}
+${ownText || "(nada relevante en sus mensajes)"}
 
 RESULTADOS WEB:
 ${webCtx || "(no se buscó en internet)"}
 
 RESPUESTA:`
-  const out = await llm(prompt, { system: sys + "\n" + UNTRUSTED_NOTE, feature: "ask", temperature: 0.3, task: "assistant", bypassCap: true }).then((s) => (s || "").trim()).catch(() => "")
-  return { text: out, usedWeb: useWeb && !!webCtx, ownMatches: own.matches || 0 }
+  const out = await llm(prompt, { system: sys + "\n" + UNTRUSTED_NOTE, feature: "ask", temperature: 0.3, task: "assistant", bypassCap: true, ...(localOnly ? { chain: smartChain({ sensitive: true }) } : {}) }).then((s) => (s || "").trim()).catch(() => "")
+  return { text: out, usedWeb: useWeb && !!webCtx, ownMatches: own.matches || 0, localOnly }
 }
 
 /** Tick del daemon: mira lo NUEVO de tu chat con vos mismo y contesta solo si es una pregunta. */
@@ -126,10 +148,24 @@ export async function runAssistant() {
 
   // ⚠️ tus notas a vos mismo son SALIENTES (dir='out'): threadSince las filtraría. selfNotesSince trae las dos
   // direcciones y además excluye lo que venga de una línea secreta (el daemon no tiene el 2º PIN).
-  let rows = []
-  try { rows = selfNotesSince(st.since, { limit: 40 }) || [] } catch { return { skipped: "no pude leer el hilo" } }
+  // la ingesta escribe en la misma DB cada 15s: un SELECT puede chocar con el lock. Reintentar en vez de perder el turno
+  // (antes el catch mudo devolvía "no pude leer el hilo" y no se sabía por qué).
+  // con secretOk, el asistente TAMBIÉN lee las líneas secretas: "secreto" = oculto en la app, no inexistente.
+  // Contesta dentro de ese mismo chat de WhatsApp, donde el dueño ya ve todo → no lo expone en ningún lado nuevo.
+  const read = cfg.secretOk ? selfNotesSinceAll : selfNotesSince
+  let rows = null, readErr = ""
+  for (let i = 0; i < 4 && rows === null; i++) {
+    try { rows = read(st.since, { limit: 40 }) || [] }
+    catch (e) { readErr = e.message; if (!/locked|busy/i.test(e.message)) break; await new Promise((r) => setTimeout(r, 200 * (i + 1))) }
+  }
+  if (rows === null) return { skipped: `no pude leer el hilo: ${readErr}` }
   const fresh = rows.filter((m) => (m.ts || 0) > (st.since || 0)).sort((a, b) => (a.ts || 0) - (b.ts || 0))
-  if (!fresh.length) return { skipped: "nada nuevo" }
+  if (!fresh.length) {
+    // silencio explicado: si no vi nada PERO había mensajes bajo el 2º PIN, decilo. Antes esto era un no-op mudo
+    // y parecía que el asistente estaba roto, cuando en realidad estaba respetando el PIN.
+    let hidden = 0; try { hidden = selfNotesHiddenCount(st.since) } catch {}
+    return { skipped: hidden ? `nada visible — ${hidden} mensaje(s) ocultos por el 2º PIN (el daemon no lo tiene)` : "nada nuevo" }
+  }
 
   let answered = 0
   let since = st.since
@@ -137,11 +173,21 @@ export async function runAssistant() {
     since = Math.max(since, m.ts || 0)
     const c = classify(m.text)
     if (!c.answer) continue
-    const r = await answerQuestion(c.question, { web: cfg.web }).catch(() => ({ text: "" }))
+    // si vino de una línea secreta, se responde con modelo LOCAL y sin internet: el contenido no sale del server
+    const secreta = cfg.secretOk && isSecretSelfRow(m)
+    const r = await answerQuestion(c.question, { web: cfg.web, localOnly: secreta }).catch(() => ({ text: "" }))
     if (!r.text) continue
     const out = MARK + r.text
-    const sent = await sendReply("self", out).catch(() => null) // ⚠️ SIEMPRE a tu propio chat, nunca a un tercero
-    if (sent && !sent.error) { markSent(out); answered++; console.log(`[asistente] ✓ "${String(m.text).slice(0, 45)}" → "${r.text.slice(0, 60)}"`) }
+    // 🎯 contestar EN LA SALA donde preguntaste. Sin el target, sendReply elige "la última sala del hilo": con tres
+    // teléfonos la respuesta puede salir por el chat equivocado (y si esa sala es de otra línea, no llega nunca).
+    const room = /^![^:]+:/.test(String(m.jid || "")) ? m.jid : null
+    const opts = room ? { channel: "whatsapp", target: room } : {}
+    let sent = null
+    for (let i = 0; i < 3 && !sent; i++) {
+      sent = await sendReply("self", out, opts).catch((e) => { if (!/BUSY|locked/i.test(e.message)) return null; return null })
+      if (!sent) await new Promise((r2) => setTimeout(r2, 300 * (i + 1))) // la ingesta escribe seguido: reintentar el lock
+    }
+    if (sent && !sent.error) { markSent(out); answered++; console.log(`[asistente] ✓${secreta ? " 🔒local" : ""} "${String(m.text).slice(0, 40)}" → "${r.text.slice(0, 55)}"`) }
     break // una por corrida: el daemon vuelve en 60s. Evita ráfagas si pegaste varias preguntas juntas.
   }
   save(STATE(), { ...load(STATE(), {}), since })

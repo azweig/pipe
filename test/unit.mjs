@@ -395,3 +395,18 @@ test("audioExt: mime → extensión canónica que Whisper acepta por nombre de a
     }
   })
 }
+
+{
+  const { looksEmptyAnswer } = await import("../src/lib/brain/assistant.mjs")
+  // El paso de RAG devuelve una NEGATIVA cuando no encuentra nada. Si esa negativa entra como contexto, el modelo
+  // final la repite y termina diciendo "no tengo información" a "¿cuál es la capital de Israel?". Caso real.
+  test("looksEmptyAnswer: reconoce las negativas del RAG para no contagiar la respuesta", () => {
+    assert.equal(looksEmptyAnswer("No hay información explícita sobre la capital de Israel."), true)
+    assert.equal(looksEmptyAnswer("No tengo información sobre eso"), true)
+    assert.equal(looksEmptyAnswer("Los fragmentos no alcanzan para responder"), true)
+    assert.equal(looksEmptyAnswer(""), true)
+    assert.equal(looksEmptyAnswer(null), true)
+    assert.equal(looksEmptyAnswer("Le debe 24.172 dólares y quedaron en pagar en agosto."), false)
+    assert.equal(looksEmptyAnswer("La capital es Jerusalén."), false)
+  })
+}

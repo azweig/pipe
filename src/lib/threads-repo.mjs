@@ -124,8 +124,34 @@ export function inboundUnansweredThreads(sinceTs, { limit = 500 } = {}) {
 // notas propias (thread='self') desde una marca, más nuevas primero — texto + resumen de nota de voz. (era notes-ai.recentNotes)
 export function selfNotesSince(since, { limit = 120 } = {}) {
   const s = _selfSecretAnd("messages") // 🔒 excluye notas de canal secreto (sin 2º PIN el cron/chat no debe verlas)
-  return db().prepare(`SELECT text, summary, mediaType, ts FROM messages
+  // jid = la SALA de origen. Con varios teléfonos, el asistente tiene que contestar DONDE preguntaste,
+  // no en "la última sala del hilo" (que puede ser la de otro celular).
+  return db().prepare(`SELECT text, summary, mediaType, ts, jid FROM messages
     WHERE thread='self' AND ts > ?${s.sql} ORDER BY ts DESC LIMIT ?`).all(since, ...s.params, limit)
+}
+// Notas propias INCLUYENDO las de líneas secretas. Solo para el ASISTENTE y solo con su opt-in explícito.
+// Por qué se permite acá y no en el resto: "secreto" significa OCULTO EN LA APP (que quien te mire la pantalla no
+// lo vea), no "inexistente". El asistente contesta DENTRO de ese mismo chat de WhatsApp, donde el dueño ya ve todo:
+// no expone nada a una superficie nueva. Distinto de coach/home/vault, que SÍ mostrarían ese contenido en otro lado.
+export function selfNotesSinceAll(since, { limit = 120 } = {}) {
+  return db().prepare(`SELECT text, summary, mediaType, ts, jid FROM messages
+    WHERE thread='self' AND ts > ? ORDER BY ts DESC LIMIT ?`).all(since, limit)
+}
+// ¿esta nota vino de una línea secreta? → para decidir si se responde con modelo LOCAL (no mandar eso a la nube)
+export function isSecretSelfRow(row) {
+  const s = _selfSecretAnd("messages")
+  if (!s.sql || !row) return false
+  const jid = String(row.jid || "")
+  return (s.params || []).includes(jid)
+}
+// Cuántas notas propias quedaron OCULTAS por el 2º PIN en ese lapso. Es solo un CONTEO (nunca el contenido):
+// sirve para que el asistente pueda decir "no vi nada porque está bajo el PIN" en vez de callarse y parecer roto.
+export function selfNotesHiddenCount(since) {
+  const s = _selfSecretAnd("messages")
+  if (!s.sql) return 0
+  const all = db().prepare("SELECT COUNT(*) c FROM messages WHERE thread='self' AND ts > ?").get(since).c
+  const vis = db().prepare(`SELECT COUNT(*) c FROM messages WHERE thread='self' AND ts > ?${s.sql}`).get(since, ...s.params).c
+  return Math.max(0, all - vis)
 }
 // ── NOTAS categorizadas: self-notes (thread='self') + note_meta (categoría/estado/pin) ──
 // self-notes todavía SIN categorizar (para el cron notes-categorize)
