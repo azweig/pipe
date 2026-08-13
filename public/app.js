@@ -395,10 +395,10 @@ function paintSettings(a, auth, llm, wa) {
   render(`<div class="screen">
     <div class="cfg-head"><div class="cfg-kick">Configuración</div><h1>Ajustes</h1></div>
     <div class="cfg-id"><div class="av">${esc(initial)}</div><div><b>${esc(hubName())}</b><span>${esc((window.__hub && window.__hub.company) || (window.__hub && window.__hub.domain) || "pipe.one")}</span></div>
-      <div style="margin-left:auto;display:flex;gap:4px;align-items:center;font-size:13px">🌐
-        <button type="button" onclick="setLang('es')" style="background:none;border:0;cursor:pointer;font-weight:${window.PIPE_LANG === "en" ? 400 : 800};color:${window.PIPE_LANG === "en" ? "var(--muted)" : "var(--accent)"};padding:2px 4px">ES</button>
-        <span style="color:var(--line)">·</span>
-        <button type="button" onclick="setLang('en')" style="background:none;border:0;cursor:pointer;font-weight:${window.PIPE_LANG === "en" ? 800 : 400};color:${window.PIPE_LANG === "en" ? "var(--accent)" : "var(--muted)"};padding:2px 4px">EN</button>
+      <div style="margin-left:auto;display:flex;gap:6px;align-items:center;font-size:13px">🌐
+        <select aria-label="Idioma" onchange="setLang(this.value)" style="border:1px solid var(--line);background:var(--bg2);color:var(--text);border-radius:8px;padding:5px 8px;font-size:13px;font-family:inherit;cursor:pointer">
+          ${(window.PIPE_LANGS || ["es"]).map((l) => `<option value="${l}"${(window.PIPE_LANG || "es") === l ? " selected" : ""}>${esc((window.PIPE_LANG_NAMES || {})[l] || l.toUpperCase())}</option>`).join("")}
+        </select>
       </div></div>
     <div class="cfg-list">${items}</div>
   </div>`, "cuenta")
