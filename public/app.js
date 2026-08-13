@@ -1995,6 +1995,8 @@ window.aiSummarize = async (range) => {
   const d = convState; if (!d) return
   openSheet(`<div class="row" style="gap:8px">${ORB}<b>Resumiendo el chat…</b></div><div class="sub" style="margin-top:8px">Leyendo mensajes y adjuntos. Puede tardar unos segundos.</div>`)
   const r = await api(`/api/thread/summarize?key=${enck(d.key)}&range=${range}`) || {}
+  // {secret:true} = el hilo toca una línea oculta por el 2º PIN, no que falten mensajes. Decir la verdad.
+  if (r.secret) return openSheet(`<h2>🔒 Oculto</h2><div class="sub">Esta conversación incluye una línea protegida por tu 2º PIN. Desbloqueala con el botón <b>PIN</b> para poder resumirla.</div>`)
   if (!r.summary) return openSheet(`<h2>Resumen</h2><div class="sub">No hay mensajes en ese período o no pude generarlo.</div>`)
   const html = esc(r.summary).replace(/^[-•]\s?/gm, "· ").replace(/\n/g, "<br>")
   openSheet(`<h2 style="margin:0 0 4px">📝 Resumen del chat</h2><div class="sub" style="margin:0 0 12px">${r.count} mensajes${r.media ? ` · 👁 ${r.media} adjuntos` : ""} · guardado en el chat 🔒</div><div style="font-size:15px;line-height:1.6">${html}</div>`)
@@ -2779,6 +2781,11 @@ const _ini = (s) => (String(s || "?").trim().split(/\s+/).map((w) => w[0]).slice
 async function viewPersonScreen(nameOrKey) {
   render(skel(5), ST.tab)
   const p = await api("/api/person?name=" + enck(nameOrKey)) || {}
+  // Perfil bloqueado por el 2º PIN: la ficha se calcula sobre TODO el hilo (incluida la línea oculta), así que el hub no la
+  // manda. Sin este aviso se veía un perfil vacío y parecía que Pipe no había cargado nada.
+  if (p.secret) return render(`<div class="pad"><button class="back" onclick="history.back()">‹ Volver</button>
+    <h2 style="margin:10px 0 4px">🔒 Perfil oculto</h2>
+    <div class="sub">Este contacto incluye una línea protegida por tu 2º PIN. Desbloqueala con el botón <b>PIN</b> de la bandeja para ver su ficha, sus pendientes y poder resumirlo.</div></div>`, ST.tab)
   const nm = p.name || decodeURIComponent(nameOrKey), ini = esc(_ini(nm))
   window._personKey = nameOrKey // para refrescar este perfil tras configurar el modo encubierto
   const cov = (p.key && !p.isGroup) ? await api("/api/covert/config?key=" + enck(p.key)).catch(() => null) : null // estado del modo encubierto de este contacto
