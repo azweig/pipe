@@ -31,7 +31,7 @@ export const CHANNELS = {
   slack:     { id: "slack",     label: "Slack",     brand: "#4a154b", kind: "messaging", reader: "slack",    connect: { method: "integration", provider: "slack",  fields: ["token"] },        gate: ["SLACK_TOKEN"],                     send: "simple" },
   signal:    { id: "signal",    label: "Signal",    brand: "#3a76f0", kind: "messaging", reader: "signal",   connect: { method: "integration", provider: "signal", fields: ["url", "number"] }, gate: ["SIGNAL_CLI_URL", "SIGNAL_NUMBER"], send: "simple" },
   email:     { id: "email",     label: "Email",     brand: "#ea4335", kind: "email",     reader: "mail-imap", connect: { method: "email-account" } },
-  teams:     { id: "teams",     label: "Teams",     brand: "#5b5fc7", kind: "messaging", reader: "teams",    connect: { method: "server" } },
+  teams:     { id: "teams",     label: "Teams",     brand: "#5b5fc7", kind: "messaging", reader: "teams",    connect: { method: "server" }, send: "simple" },
   notion:    { id: "notion",    label: "Notion",    brand: "#111827", kind: "notes",     reader: "notion",   connect: { method: "server" } },
   calendar:  { id: "calendar",  label: "Calendar",  brand: "#6366f1", kind: "calendar",  reader: "google",   connect: { method: "server" } },
 }
@@ -47,6 +47,9 @@ export const tokenNets = () => channelList().filter((c) => c.connect?.method ===
 
 // ids de los canales con envío SIMPLE (slack/signal/telegram/…) — reply.sendReply valida contra esto antes de despachar por SIMPLE_SENDERS.
 export const isSimpleSender = (id) => getChannel(id)?.send === "simple"
+// los mismos, como lista: threadTargets los usa para ofrecer destino en hilos que no son WhatsApp ni email.
+export const sendableDirectChannels = () => channelList().filter((c) => c.send === "simple").map((c) => c.id)
+export const channelLabel = (id) => getChannel(id)?.label || String(id || "")
 
 // catálogo público (sin fns ni rutas de módulo) para que los clientes deriven labels/iconos/flujos de conexión de UN solo lugar.
 export function channelCatalog() {

@@ -461,6 +461,16 @@ export function roomInboundSenders(key, jid) {
 export function emailAddressesOf(key) {
   return db().prepare("SELECT jid, MAX(ts) last FROM messages WHERE thread=? AND channel='email' AND jid!='' GROUP BY jid ORDER BY last DESC").all(key)
 }
+// DESTINOS de los canales de mensajería DIRECTA (telegram/slack/signal/teams/…): un destino por (canal, jid) visto en el hilo.
+// Sin esto threadTargets() solo sabía de WhatsApp y email, así que un hilo de Telegram no ofrecía ningún destino: el compositor
+// mandaba sin canal y sendReply terminaba buscando una sala de WhatsApp inexistente. Resultado: 0 mensajes enviados en su historia.
+export function directPeersOf(key, channels) {
+  if (!channels || !channels.length) return []
+  const qs = channels.map(() => "?").join(",")
+  return db().prepare(
+    `SELECT channel, jid, MAX(ts) last FROM messages WHERE thread=? AND channel IN (${qs}) AND jid!='' GROUP BY channel, jid ORDER BY last DESC`
+  ).all(key, ...channels)
+}
 // jid del último mensaje ENTRANTE de un hilo (destino default). (era brain.threadTargets)
 export function lastInboundJid(key) {
   return db().prepare("SELECT jid FROM messages WHERE thread=? AND dir='in' ORDER BY ts DESC LIMIT 1").get(key)

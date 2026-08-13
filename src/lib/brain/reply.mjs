@@ -1,14 +1,15 @@
 // brain/reply — SEND-PATH (WhatsApp bridge/Unipile/email) + compositor (draft en tu voz, corrección, sugerencia).
 // wrong-recipient es EL fallo temido → threadTargets (destinos + default) está characterizado en test/brain-reply.mjs.
 // threadTargets / sendReply* son export function HOISTED: schedule/meetings/otros los importan por la fachada (brain.mjs).
-import { insertSent as dbInsertSent, threadMessagesTail as dbThreadMsgs, whatsappRoomsOf, roomInboundSenders, emailAddressesOf, lastInboundJid, lastEmailByAddress, lastEmailInThread, lastUnipileJid, lastWhatsappRoom, lastHistoricJid, messageById } from "../db.mjs"
+import { insertSent as dbInsertSent, threadMessagesTail as dbThreadMsgs, whatsappRoomsOf, roomInboundSenders, emailAddressesOf, lastInboundJid, lastEmailByAddress, lastEmailInThread, lastUnipileJid, lastWhatsappRoom, lastHistoricJid, messageById, directPeersOf } from "../db.mjs"
 import { readFileSync } from "fs"
 import { join } from "path"
 import { getSlackToken, getSignal } from "../integrations.mjs" // config Slack/Signal conectada desde la Consola (cifrada) — para que los senders la vean, no solo el .env
-import { isSimpleSender } from "../channels.mjs" // registro de canales: qué canales tienen envío SIMPLE (target+texto) → dispatch genérico
+import { isSimpleSender, sendableDirectChannels, channelLabel } from "../channels.mjs" // registro de canales: qué canales tienen envío SIMPLE (target+texto) → dispatch genérico
 import { phoneOf, MY_NUMBERS } from "../thread.mjs"
 import { sendMatrix, sendMatrixAudio, sendMatrixMedia, sendMatrixSticker, startWhatsAppChat, roomLogin } from "../../matrix.mjs"
 import { unipileConfigured, unipileSend } from "../unipile-api.mjs"
+import { teamsSend } from "../teams-send.mjs" // Graph: responder en un chat de Teams (permiso de envío aparte del lector)
 import { sendEmailReply } from "../mailer.mjs"
 import { casPutBuffer } from "../cas.mjs"
 import { llm } from "../llm.mjs"
@@ -43,7 +44,7 @@ function telegramSend(chatId, text) {
 }
 // mapa de senders SIMPLES por canal (keyed por el id del registro de canales). Agregar un canal de mensajería directo = su entrada
 // en channels.mjs (send:"simple") + su fn acá. sendReply despacha genérico contra esto en vez de un if por canal.
-const SIMPLE_SENDERS = { slack: slackSend, signal: signalSend, telegram: telegramSend }
+const SIMPLE_SENDERS = { slack: slackSend, signal: signalSend, telegram: telegramSend, teams: teamsSend }
 import { cleanMsg } from "./kernel/convo.mjs"
 
 // error claro cuando el envío por el bridge falla: si el número dueño de la sala está deslogueado, decí cuál revincular.
@@ -69,7 +70,12 @@ export function threadTargets(key) {
   const man = jf("identity-manual.json") || {}
   for (const [alias, canon] of Object.entries(man)) if (canon === key && /@/.test(alias) && !emails.has(alias.toLowerCase())) emails.set(alias.toLowerCase(), { channel: "email", target: alias, label: alias, last: 0 })
   if (String(key).startsWith("email:")) { const addr = key.slice(6); if (!emails.has(addr.toLowerCase())) emails.set(addr.toLowerCase(), { channel: "email", target: addr, label: addr, last: 0 }) }
-  const targets = [...byNum.values(), ...emails.values()].sort((a, b) => (b.last || 0) - (a.last || 0))
+  // Mensajería DIRECTA (Telegram, Slack, Signal, Teams…): un destino por (canal, jid) del hilo. Faltaba por completo, y era la
+  // razón de que esos hilos no pudieran responderse: sin destino, el compositor mandaba sin canal.
+  const direct = directPeersOf(key, sendableDirectChannels()).map((p) => ({
+    channel: p.channel, target: p.jid, label: `${channelLabel(p.channel)}${p.jid && !/^\d+$/.test(p.jid) ? " · " + p.jid : ""}`, last: p.last,
+  }))
+  const targets = [...byNum.values(), ...emails.values(), ...direct].sort((a, b) => (b.last || 0) - (a.last || 0))
   // default = target del último mensaje ENTRANTE
   const lastIn = lastInboundJid(key)
   let def = 0
@@ -107,6 +113,13 @@ export async function sendReply(key, text, { channel, target } = {}) {
     const last = lastEmailInThread(key)
     const r = await sendEmailReply(key, text, { account: last?.account, subject: (last?.text || "").split(" — ")[0], inReplyTo: last?.id, fromName: owner() })
     return r.error ? r : { ok: true, channel: "email" }
+  }
+  // AUTO en canales de mensajería DIRECTA: el key ya nombra el canal ("telegram:123", "slack:C…"). Sin esto, un cliente que no
+  // mande {channel,target} caía en la búsqueda de sala de WhatsApp y moría con "no encuentro por qué canal responder".
+  const pfx = String(key).match(/^([a-z]+):(.+)$/)
+  if (pfx && isSimpleSender(pfx[1]) && SIMPLE_SENDERS[pfx[1]]) {
+    const r = await SIMPLE_SENDERS[pfx[1]](pfx[2], text)
+    return r.ok ? { ok: true, channel: pfx[1], ...dbInsertSent(key, pfx[1], text) } : r
   }
   // ¿el contacto se maneja por Unipile? (sus mensajes recientes vienen con account='unipile') → enviar por Unipile, NO por el
   // bridge (que para ese número está deslogueado a propósito). Cierra el híbrido: recibe y envía por Unipile.

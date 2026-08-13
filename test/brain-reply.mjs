@@ -63,3 +63,37 @@ test("threadTargets: contacto sin salas ni emails → sin destinos", () => {
   resetDb(":memory:")
   assert.deepEqual(threadTargets("fantasma"), { targets: [], default: 0 })
 })
+
+// ── REGRESIÓN: canales de mensajería DIRECTA (Telegram/Teams/Slack/Signal) ──
+// Vivieron sin destino desde siempre: threadTargets solo miraba WhatsApp y email, así que el compositor mandaba sin canal y
+// sendReply terminaba buscando una sala de WhatsApp inexistente. En producción eso fueron 0 mensajes enviados por Telegram
+// en 2300 recibidos, y 0 por Teams. Estas pruebas fallan con el código anterior.
+test("threadTargets: un hilo de Telegram ofrece su chat como destino", () => {
+  resetDb(":memory:")
+  seed([{ thread: "telegram:7372284891", channel: "telegram", jid: "7372284891", dir: "in", text: "hola", ts: NOW }])
+  const { targets } = threadTargets("telegram:7372284891")
+  const tg = targets.filter((t) => t.channel === "telegram")
+  assert.equal(tg.length, 1, "sin destino no se puede responder por Telegram")
+  assert.equal(tg[0].target, "7372284891")
+})
+
+test("threadTargets: un hilo de Teams ofrece su chat como destino", () => {
+  resetDb(":memory:")
+  const chat = "19:meeting_abc@thread.v2"
+  seed([{ thread: "teams:" + chat, channel: "teams", jid: chat, dir: "in", text: "hola", ts: NOW }])
+  const { targets } = threadTargets("teams:" + chat)
+  const tm = targets.filter((t) => t.channel === "teams")
+  assert.equal(tm.length, 1)
+  assert.equal(tm[0].target, chat)
+})
+
+test("threadTargets: el default sigue siendo el último ENTRANTE aunque haya canales directos", () => {
+  resetDb(":memory:")
+  seed([
+    { thread: "leo", channel: "telegram", jid: "555001", dir: "in", text: "por telegram", ts: NOW },
+    { thread: "leo", channel: "email", jid: "leo@x.example", dir: "in", text: "por mail", ts: NOW + 500 },
+  ])
+  const { targets } = threadTargets("leo")
+  const def = targets.find((t) => t.isDefault)
+  assert.equal(def.channel, "email", "el default debe ser donde escribió último, no el canal nuevo")
+})
