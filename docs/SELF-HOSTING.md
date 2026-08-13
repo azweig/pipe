@@ -36,17 +36,21 @@ cp hub-config.example.json data/hub-config.json     # your identity
 
 Edit **`data/hub-config.json`** — this is who you are (used to route "yourself" and greet you):
 
+`myNumbers` = your WhatsApp number(s), digits only. `myEmails` = your own addresses. Both are how Pipe recognises *you* in a group or a thread.
+
 ```json
 {
   "ownerName": "Your Name",
   "ownerFirst": "You",
   "company": "",
-  "myNumbers": ["5491100000000"],        // your WhatsApp number(s), digits only
-  "myEmails": ["you@gmail.com"],         // your own email(s)
+  "myNumbers": ["15551234567"],
+  "myEmails": ["you@example.com"],
   "timezone": "America/Lima",
   "domain": "localhost"
 }
 ```
+
+> JSON has no comments — paste the block above as-is. If the file doesn't parse, Pipe falls back to its defaults **silently**: you'd show up as "Owner" and your own numbers wouldn't be recognised as yours.
 
 Edit **`.env`** — fill only what you use (see `.env.example` for the full list). At minimum, one AI key **or** an Ollama host if you want the AI layer:
 

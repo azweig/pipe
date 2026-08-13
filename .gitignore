@@ -1,6 +1,7 @@
 node_modules/
 auth/
 data/
+!data/.gitkeep
 *.log
 .env
 .env.*

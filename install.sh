@@ -40,7 +40,11 @@ ask(){ # ask "Pregunta" [default] → deja la respuesta en REPLY_VAL ("" si vac�
 to_arr(){ local IFS=','; local out=""; for x in $1; do x="$(echo "$x" | xargs)"; [ -z "$x" ] && continue; out="$out\"$x\","; done; echo "[${out%,}]"; }
 
 # ── 3. SECRETS_KEY (cifra tus tokens en reposo) ─────────────────
-if grep -qE '^SECRETS_KEY=.+' .env; then c_g "✓ SECRETS_KEY ya configurada";
+# El guard mira que haya un VALOR de verdad, no cualquier cosa después del "=". Con `grep -qE '^SECRETS_KEY=.+'` una línea
+# como `SECRETS_KEY=   # clave AES-256…` daba positivo: el instalador decía "✓ ya configurada" y NO generaba clave, así que
+# toda instalación por defecto terminaba cifrando los tokens con el texto del comentario — derivable desde el repo público.
+if [ -n "$(grep -E '^SECRETS_KEY=' .env | head -1 | cut -d= -f2- | sed 's/[[:space:]]*#.*//' | xargs)" ]; then
+  c_g "✓ SECRETS_KEY ya configurada";
 else KEY="$(openssl rand -base64 32 2>/dev/null || head -c32 /dev/urandom | base64)"; set_env SECRETS_KEY "$KEY"; c_g "✓ SECRETS_KEY generada (openssl rand -base64 32 — guardala: está en .env)"; fi
 hr
 

@@ -992,6 +992,17 @@ fetch('/api/wa-status?acc=${acc}').then(r=>r.json()).then(d=>{if(d.connected){do
 process.on("unhandledRejection", (e) => console.error("💥 unhandledRejection:", e?.stack || e))
 process.on("uncaughtException", (e) => console.error("💥 uncaughtException:", e?.stack || e))
 
+// Si el puerto no se puede abrir, DECIRLO Y SALIR. Antes el error caía en el uncaughtException de arriba: el proceso seguía
+// vivo, sin escuchar en ningún lado y sin más pista que una línea de stack — imposible de diagnosticar para quien recién instala.
+server.on("error", (e) => {
+  const host = process.env.HOST || "127.0.0.1"
+  if (e.code === "EADDRINUSE") console.error(`\n❌ El puerto ${PORT} ya está ocupado. Cerrá el otro proceso o cambiá PORT en .env.\n`)
+  else if (e.code === "EACCES") console.error(`\n❌ Sin permiso para abrir el puerto ${PORT}. Usá uno mayor a 1024 o dale permisos.\n`)
+  else if (e.code === "ENOTFOUND" || e.code === "EADDRNOTAVAIL") console.error(`\n❌ HOST inválido: ${JSON.stringify(host)}\n   Revisá esa línea en .env (¿quedó un comentario pegado al valor?). Debería ser 127.0.0.1 o 0.0.0.0.\n`)
+  else console.error(`\n❌ No pude abrir ${host}:${PORT} → ${e.code || e.message}\n`)
+  process.exit(1)
+})
+
 server.listen(PORT, process.env.HOST || "127.0.0.1", () => {
   console.log(`\n🧠 pipe web → http://localhost:${PORT}\n`)
   try { maintenance.ensureStats(); brain.listThreads({ limit: 600 }); setTimeout(() => { try { brain.coachData() } catch {} }, 2000) } catch (e) { console.error("warm:", e.message) } // auto-sanar stats + calentar bandeja + coach (para que Coach/IA abran instantáneo)

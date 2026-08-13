@@ -82,4 +82,8 @@ for (const t of T) {
   }
 }
 console.log(`✅ ${n} mensajes ficticios en ${FILE} · ${T.length} conversaciones`)
-console.log("   La ingesta los toma en su próximo ciclo (15s) o corré: node src/ingest.mjs")
+
+// INGESTAR ACÁ MISMO. La ingesta solo corre dentro del daemon, así que quien seguía el README (`seed-demo` + `npm run web`)
+// abría el navegador y veía la bandeja VACÍA — justo en el camino de "mirá antes de conectar nada", el de menor compromiso.
+await import("../src/ingest-db.mjs")
+console.log("   Ya está en la base. Arrancá con:  npm run web   →  http://localhost:3000")

@@ -80,7 +80,7 @@ Then `node src/daemon.mjs` (web UI on http://localhost:3000). Connect WhatsApp, 
 ### Docker
 
 ```bash
-git clone <this-repo> pipe && cd pipe
+git clone https://github.com/azweig/pipe.git && cd pipe
 cp .env.example .env                              # fill in the AI keys you use
 cp hub-config.example.json data/hub-config.json   # your identity (name, numbers, emails)
 
@@ -90,7 +90,7 @@ docker compose up -d --build                      # web UI on http://localhost:3
 ### From source
 
 ```bash
-git clone <this-repo> pipe && cd pipe
+git clone https://github.com/azweig/pipe.git && cd pipe
 npm install                                       # builds better-sqlite3 natively
 cp .env.example .env
 cp hub-config.example.json data/hub-config.json
