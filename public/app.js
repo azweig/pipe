@@ -2021,7 +2021,17 @@ window.doSend = async (text) => {
   convState.total = (convState.total || 0) + 1
   renderConv(); document.getElementById("msgInput")?.focus(); window.scrollTo(0, document.body.scrollHeight)
   const r = await post("/api/send", { key: convState.key, text, channel: t.channel, target: t.target, covert })
-  if (r && r.error) { convState.items = convState.items.filter((x) => x.id !== optId); convState.total = Math.max(0, (convState.total || 1) - 1); renderConv(); alert("No se pudo enviar: " + r.error) }
+  // api() devuelve null ante CUALQUIER fallo de red (y ante un 401 transitorio). Mirar solo `r.error` dejaba la burbuja
+  // optimista puesta, con doble check, sobre un mensaje que nunca salió del navegador. En una app de mensajería eso es
+  // lo peor que puede pasar: creés que avisaste y no avisaste. `null` = falló, igual que un error explícito.
+  if (!r || r.error) {
+    convState.items = convState.items.filter((x) => x.id !== optId)
+    convState.total = Math.max(0, (convState.total || 1) - 1)
+    renderConv()
+    // devolver el texto al compositor es un lujo; AVISAR no lo es. Si algo falla al repintar, el aviso sale igual.
+    try { const inp = document.getElementById("msgInput"); if (inp && !inp.value) { inp.value = text; growComposer(inp) } } catch { /* el aviso es lo que importa */ }
+    alert("No se pudo enviar: " + ((r && r.error) || "sin conexión con el hub. Revisá tu red e intentá de nuevo."))
+  }
   else if (covert && r && r.cover) { const it = (convState.items || []).find((x) => x.id === optId); if (it) it.text = r.cover } // guardá el poema real para "ver original"
 }
 window.pickSend = (enc) => { const inp = document.getElementById("msgInput"); if (inp) inp.value = ""; doSend(decodeURIComponent(enc)) }

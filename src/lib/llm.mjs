@@ -20,6 +20,9 @@ function keyFor(prov) { const k = keysList().find((x) => x.provider === prov); c
 // ── MULTI-KEY: varias keys con nombre, incluso 2 del mismo proveedor. Formato nuevo keysList=[{id,provider,name,token(enc)}].
 // Migra lazy el viejo keys:{prov:token}. keyFor(prov) sigue andando (1ª del proveedor) → todo el código actual intacto.
 const PROV_SHORT = { gemini: "Gemini", openai: "OpenAI", anthropic: "Claude", ollama: "Ollama", gestionado: "Gestionado" }
+// Proveedores que corren EN TU MÁQUINA. Todo lo que no esté acá sale de tu red, incluido "gestionado" (es nuestro servidor).
+// Lo usa el fail-closed: una tarea local-only jamás puede rutearse a algo que no esté en esta lista.
+const LOCAL_PROVIDERS = new Set(["ollama"])
 // "gestionado" = inferencia gestionada de pipe.one (GPU box vía gateway). Ollama-compatible + bearer del tenant. TLS del gateway: NODE_EXTRA_CA_CERTS.
 function gatewayUrl() { return llmConfig().gatewayUrl || process.env.PIPE_GATEWAY_URL || "" }
 function keysList() {
@@ -367,7 +370,12 @@ export async function llm(prompt, opts = {}) {
   const localOnly = req.length > 0 && req.every((p) => p === "ollama")
   // RUTEO POR ÁREA: si el hub asignó una key puntual a esta área/feature → usar ESE proveedor+key+modelo (override del chain).
   // ADITIVO: sin config, routed=null → comportamiento idéntico al actual (los sensibles siguen fail-closed vía smartChain).
-  const routed = resolveArea(opts.area || FEATURE_AREA[opts.feature || ""])
+  const routedRaw = resolveArea(opts.area || FEATURE_AREA[opts.feature || ""])
+  // …PERO el ruteo NUNCA puede romper el fail-closed. El área llamada "privado" agrupa graphify/learn/enrich/extract, y la UI
+  // deja asignarle cualquier key: si ahí ponías una de nube, `routed` ganaba sobre `localOnly` y el corpus ENTERO de mensajes
+  // salía a la nube, con SENSITIVE_ALLOW_CLOUD sin setear y el comentario de arriba prometiendo lo contrario. El candado manda.
+  const routed = routedRaw && localOnly && !LOCAL_PROVIDERS.has(routedRaw.provider) ? null : routedRaw
+  if (routedRaw && !routed) console.warn(`[llm] ruteo por área ignorado: ${opts.feature || opts.area} es local-only y "${routedRaw.provider}" es de nube`)
   const providers = routed ? [routed.provider] : (localOnly ? ["ollama"] : [...new Set([...req, ...chainDefault()])])
   // el hard cap protege contra crons/bulk descontrolados; las llamadas INTERACTIVAS (corrector, chat, borrador) son chicas
   // y disparadas por el usuario → NUNCA se capan (si no, caen a ollama-CPU y quedan lentísimas). bypassCap las exime.
