@@ -147,7 +147,7 @@ let ST = { tab: "home", filter: "todo" }
 const NATIVE = (() => { try { return !!(window.Capacitor && (typeof window.Capacitor.isNativePlatform === "function" ? window.Capacitor.isNativePlatform() : true)) || /[?&]native=1/.test(location.search) } catch { return false } })()
 function nav() {
   // <a href> real (routing es hash-based → Enter/teclado funciona nativo) + aria-current en el activo. onclick=go se queda para "click en tab activo = refrescar".
-  const item = (tab, icon, label, hash) => `<a class="${ST.tab === tab ? "on" : ""}" href="${hash}"${ST.tab === tab ? ' aria-current="page"' : ""} onclick="go('${hash}')">${icon}<span>${label}</span></a>`
+  const item = (tab, icon, label, hash) => `<a class="${ST.tab === tab ? "on" : ""}" href="${hash}"${ST.tab === tab ? ' aria-current="page"' : ""} onclick="go(${escj(hash)})">${icon}<span>${label}</span></a>`
   return `<nav class="nav" aria-label="Principal">
     ${item("mensajes", SVG.chat, "Mensajes", "#mensajes")}
     ${item("calendario", SVG.cal, "Calendario", "#calendario")}
@@ -217,7 +217,7 @@ function paintHome(d) {
       ${calls.map((c) => `<div class="hb-band-row" onclick="go('#conv/${enck(c.key)}')">${avatar(c.name, null)}<div style="flex:1;min-width:0"><div class="hb-band-name">${esc(c.name)}</div><div class="hb-band-prev">${c.missed ? "Llamada perdida" : "Te llamó"}${c.n > 1 ? ` · ${c.n}×` : ""} · ${ago(c.ts)}</div></div><span class="hb-callret">Devolver</span></div>`).join("")}</div>` : ""
 
   // POR HACER (to-dos extraídos de tus conversaciones)
-  const actRow = (kind, a) => `<div class="hb-act" id="act-${kind}-${a.id}"><button class="hb-act-chk" onclick="actDone('${kind}','${a.id}')" aria-label="Hecho"></button><div style="flex:1;min-width:0"><div class="hb-act-txt">${esc(a.text)}</div><div class="hb-act-sub">${esc(a.name || "")}${a.due ? ` · ${esc(a.due)}` : ""}</div></div>${a.thread ? `<span class="hb-link" onclick="go('#conv/${enck(a.thread)}')">ver</span>` : ""}</div>`
+  const actRow = (kind, a) => `<div class="hb-act" id="act-${kind}-${a.id}"><button class="hb-act-chk" onclick="actDone(${escj(kind)},'${a.id}')" aria-label="Hecho"></button><div style="flex:1;min-width:0"><div class="hb-act-txt">${esc(a.text)}</div><div class="hb-act-sub">${esc(a.name || "")}${a.due ? ` · ${esc(a.due)}` : ""}</div></div>${a.thread ? `<span class="hb-link" onclick="go('#conv/${enck(a.thread)}')">ver</span>` : ""}</div>`
   const todosCard = todos.length ? `<div class="hb-card"><div class="hb-card-head"><div class="hb-card-title">✅ Por hacer <span class="hb-badge">${todos.length}</span></div></div>${todos.map((t) => actRow("todo", t)).join("")}</div>` : ""
   const promCard = promesas.length ? `<div class="hb-card"><div class="hb-card-head"><div class="hb-card-title">🤝 Prometiste <span class="hb-badge">${promesas.length}</span></div></div>${promesas.map((p) => actRow("prom", p)).join("")}</div>` : ""
 
@@ -236,7 +236,7 @@ function paintHome(d) {
   const kpisBlock = kpis.length ? `<div class="hb-section-title" style="cursor:pointer" onclick="go('#objetivos')">📊 Tus KPIs<span class="hb-link" style="margin-left:auto;font-weight:700">Configurar ›</span></div><div class="hb-kpis" onclick="go('#objetivos')" style="cursor:pointer">${kpis.map(kpiCard).join("")}</div>` : ""
 
   const newsCard = news.length ? `<div class="hb-card"><div class="spread hb-card-head"><div class="hb-card-title">📰 Para vos</div><span class="hb-link" onclick="go('#proactivo')">Más</span></div>
-      ${news.map((n) => `<div class="hb-news" onclick="window.open(${escj(n.url)},'_blank')"><div class="hb-news-txt"><div class="hb-news-tag">${esc(n.tag)}</div><div class="hb-news-title">${esc(n.title)}</div><div class="hb-news-src">${esc(n.source || "")}${n.ago ? ` · ${esc(n.ago)}` : ""}</div></div><div class="hb-news-img" style="${n.img ? `background-image:url(${esc(n.img)})` : ""}"></div></div>`).join("")}</div>` : ""
+      ${news.map((n) => `<div class="hb-news" onclick="window.open(${escj(n.url)},'_blank')"><div class="hb-news-txt"><div class="hb-news-tag">${esc(n.tag)}</div><div class="hb-news-title">${esc(n.title)}</div><div class="hb-news-src">${esc(n.source || "")}${n.ago ? ` · ${esc(n.ago)}` : ""}</div></div><div class="hb-news-img" style="${n.img ? `background-image:url(${escCss(n.img)})` : ""}"></div></div>`).join("")}</div>` : ""
 
   const coachCard = coach ? `<div class="hb-coach"><div class="hb-eyebrow light"><span>◎</span>Coach · sugerencia</div><div class="hb-coach-txt">${esc(coach.text)}</div><button class="hb-coach-btn" onclick="${coach.convKey ? `go('#conv/${enck(coach.convKey)}')` : "go('#proactivo')"}">Ver sugerencia</button></div>` : ""
 
@@ -389,7 +389,7 @@ function paintSettings(a, auth, llm, wa) {
   window.__llm = llm || {}
   const items = CFG_SECS.map((s) => {
     const st = cfgStatus(s.id)
-    return `<button class="cfg-item" onclick="cfgOpen('${s.id}')"><span class="ic">${s.icon}</span><span class="tx"><b>${esc(s.name)}</b><span class="st" id="cfg-st-${s.id}"><i class="cfg-dot ${st.cls}"></i>${esc(st.text)}</span></span><span class="chev">${IC_CHEV}</span></button>`
+    return `<button class="cfg-item" onclick="cfgOpen(${escj(s.id)})"><span class="ic">${s.icon}</span><span class="tx"><b>${esc(s.name)}</b><span class="st" id="cfg-st-${s.id}"><i class="cfg-dot ${st.cls}"></i>${esc(st.text)}</span></span><span class="chev">${IC_CHEV}</span></button>`
   }).join("")
   const initial = (hubName()[0] || "P").toUpperCase()
   render(`<div class="screen">
@@ -918,7 +918,7 @@ window.brLink = async (net, byPhone) => {
 window.addConnectionSheet = (cat) => { _connCat = cat || "todos"; _renderConnPicker() }
 window.connTab = (id) => { _connCat = id; _renderConnPicker() }
 async function _renderConnPicker() {
-  const tabs = CONN_TABS.map(([id, l]) => `<button class="tchip${_connCat === id ? " on" : ""}" onclick="connTab('${id}')" style="flex:none">${l}</button>`).join("")
+  const tabs = CONN_TABS.map(([id, l]) => `<button class="tchip${_connCat === id ? " on" : ""}" onclick="connTab(${escj(id)})" style="flex:none">${l}</button>`).join("")
   // auto-append: canales del registro que CONN_PROV no tiene todavía → tarjeta genérica que despacha por connect.method
   const extra = (await channelCatalog()).filter((c) => !CONN_PROV.some((p) => p.id === c.id)).map((c) => ({ id: c.id, name: c.label, cat: CAT_CAT[c.kind] || "trabajo", chan: c.id, sub: "Del registro de canales", status: c.connect?.method === "server" ? "server" : "ready", _cat: true }))
   const tiles = CONN_PROV.concat(extra).filter((p) => _connCat === "todos" || p.cat === _connCat).map((p) => {
@@ -960,7 +960,7 @@ const GUIDES = {
 window.serverGuide = (id) => {
   const g = GUIDES[id]; if (!g) return
   const back = (CONN_PROV.find((p) => p.id === id) || {}).cat || "todos"
-  openSheet(`<button class="cfg-back" onclick="addConnectionSheet('${back}')">${IC_BACK}Conexiones</button>
+  openSheet(`<button class="cfg-back" onclick="addConnectionSheet(${escj(back)})">${IC_BACK}Conexiones</button>
   <h2 style="margin:6px 0 4px">${esc(g.title)}</h2>
   <div class="cfg-note" style="margin:0 0 14px">${IC_INFO}<div>Esta fuente se conecta <b>desde el servidor</b> de tu hub. En la versión gestionada la activa tu proveedor; en self-host, seguí estos pasos.</div></div>
   <ol style="padding-left:20px;font-size:14px;line-height:1.7;margin:0">${g.steps.map((s) => `<li style="margin:6px 0">${s}</li>`).join("")}</ol>
@@ -1272,8 +1272,8 @@ function _aiRender() {
     return `<div class="cfg-card" style="margin-bottom:8px;padding:10px 12px">
       <div style="font-weight:600;font-size:14px;margin-bottom:6px">${esc(a.label)}</div>
       <div class="row" style="gap:6px;padding:0;background:none;box-shadow:none">
-        <select class="inp" onchange="aiRoute('${a.key}','keyId',this.value)" style="flex:1;min-width:0;padding:8px;border-radius:9px;border:1px solid var(--line)">${keyOpt(r.keyId)}</select>
-        <input class="inp" ${prov ? `list="ml-${prov}"` : ""} onchange="aiRoute('${a.key}','model',this.value)" value="${esc(r.model || "")}" placeholder="modelo (opc.)" style="flex:1;min-width:0;padding:8px;border-radius:9px;border:1px solid var(--line)">
+        <select class="inp" onchange="aiRoute(${escj(a.key)},'keyId',this.value)" style="flex:1;min-width:0;padding:8px;border-radius:9px;border:1px solid var(--line)">${keyOpt(r.keyId)}</select>
+        <input class="inp" ${prov ? `list="ml-${prov}"` : ""} onchange="aiRoute(${escj(a.key)},'model',this.value)" value="${esc(r.model || "")}" placeholder="modelo (opc.)" style="flex:1;min-width:0;padding:8px;border-radius:9px;border:1px solid var(--line)">
       </div>${prov ? modelDatalist(prov) : ""}</div>`
   }
   openSheet(`<h2 style="margin:0 0 10px">🤖 Motor de IA</h2>
@@ -1416,7 +1416,7 @@ const CLIP_TABS = [["all", "Todo"], ["link", "🔗 Links"], ["text", "💡 Notas
 function clipCard(c) {
   const icon = CLIP_ICON[c.kind] || "📌"
   const open = c.url ? `window.open(${escj(c.url)},'_blank')` : (c.media ? `window.open(${escj(c.media)},'_blank')` : "")
-  const thumb = c.kind === "photo" && c.media ? `<div class="clip-thumb" style="background-image:url(${c.media})"></div>` : ""
+  const thumb = c.kind === "photo" && c.media ? `<div class="clip-thumb" style="background-image:url(${escCss(c.media)})"></div>` : ""
   const dom = c.url ? `<span class="clip-dom">${esc(((c.url.match(/https?:\/\/([^/]+)/) || [])[1] || "link").replace(/^www\./, ""))}</span>` : ""
   const s = "event.stopPropagation();"
   const acts = `<div class="clip-acts">
@@ -1534,11 +1534,13 @@ function paintMensajes(rows) {
   const TABS = [["todo", "Todo"], ...(ST.groups || []).map((g) => [g.id, (g.icon ? g.icon + " " : "") + g.name]), ...(silN ? [["_sil", `🔕 Silenciados (${silN})`]] : [])]
   ST.customGroups = new Set((ST.groups || []).filter((g) => g.kind === "custom").map((g) => g.id))
   const curCat = cats[0] || "todo"
-  const tabs = TABS.map(([id, l]) => `<button class="ctab${curCat === id ? " on" : ""}" onclick="setCat('${id}')">${l}</button>`).join("")
+  // el label lleva el nombre y el emoji del grupo — que los arma la IA a partir de tus conversaciones y además podés editar:
+  // contenido indirecto de terceros, va escapado. El id viaja dentro de una string JS del onclick → escj, no esc (ver línea 90).
+  const tabs = TABS.map(([id, l]) => `<button class="ctab${curCat === id ? " on" : ""}" onclick="setCat(${escj(id)})">${esc(l)}</button>`).join("")
   // fila de filtros: pill "Filtros N" + chips removibles (canal + estado)
   const STATUS_L = { sinleer: "Sin leer", sinresponder: "Sin responder", leidos: "Leídos", sugeridos: "Sugeridos" }
   const active = [...chans.map((c) => ["chan", c, chanLabel[c] || c]), ...statuses.map((s) => ["status", s, STATUS_L[s] || s])]
-  const chips = active.map(([k, id, l]) => `<button class="gchip" onclick="rmFilter('${k}','${id}')">${esc(l)} <span>×</span></button>`).join("")
+  const chips = active.map(([k, id, l]) => `<button class="gchip" onclick="rmFilter(${escj(k)},'${id}')">${esc(l)} <span>×</span></button>`).join("")
   const filterBar = `<div class="frow"><button class="filt-pill${active.length ? " on" : ""}" onclick="openFilters()">${SVG.sliders}<span>Filtros</span>${active.length ? `<b>${active.length}</b>` : ""}</button>${chips}</div>`
   const q = ST.q || ""
   // barra fija (modo "unir"): mostrar qué contacto se conserva + acción 🔗 Unir (N). Reusa el look del fwdBar de mensajes.
@@ -1623,10 +1625,10 @@ window.groupsSheet = async () => {
   if (g) { ST.groups = groups; ST.contactGroups = g.contactGroups || {} }
   const row = (gr) => `<div class="cfg-r" style="align-items:center;gap:8px">
     <div class="ric" style="font-size:18px">${gr.icon || "🏷️"}</div>
-    <input class="inp" value="${esc(gr.name)}" onchange="grpRename('${gr.id}','${gr.kind}',this.value)" style="flex:1;min-width:0;padding:8px;border-radius:9px;border:1px solid var(--line)">
+    <input class="inp" value="${esc(gr.name)}" onchange="grpRename(${escj(gr.id)},'${gr.kind}',this.value)" style="flex:1;min-width:0;padding:8px;border-radius:9px;border:1px solid var(--line)">
     ${gr.kind === "custom"
-      ? `<button class="chip" onclick="grpMembers('${gr.id}')">Contactos${gr.count ? " · " + gr.count : ""}</button><button class="rx" onclick="grpDel('${gr.id}')" title="Borrar grupo">✕</button>`
-      : `<button class="rx" onclick="grpHide('${gr.id}')" title="Ocultar" style="font-size:14px">🙈</button>`}</div>`
+      ? `<button class="chip" onclick="grpMembers(${escj(gr.id)})">Contactos${gr.count ? " · " + gr.count : ""}</button><button class="rx" onclick="grpDel(${escj(gr.id)})" title="Borrar grupo">✕</button>`
+      : `<button class="rx" onclick="grpHide(${escj(gr.id)})" title="Ocultar" style="font-size:14px">🙈</button>`}</div>`
   openSheet(`<h2 style="margin:0 0 4px">🗂 Tus grupos</h2>
     <div class="sub" style="margin:0 0 12px">Organizá la bandeja por relevancia — cada grupo es una pestaña. Los <b>automáticos</b> los arma la IA por relación (renombralos u ocultalos); creá los <b>tuyos</b> y asignales contactos.</div>
     ${groups.map(row).join("")}
@@ -1638,7 +1640,7 @@ window.grpDel = async (id) => { if (!confirm("¿Borrar este grupo? No borra los 
 window.grpNew = async () => { const name = (document.getElementById("grp-new").value || "").trim(); if (!name) return; await post("/api/groups/save", { name }).catch(() => {}); ST.groups = null; groupsSheet() }
 window.grpMembers = async (id) => {
   const cg = ST.contactGroups || {}
-  const rows = (inboxRows || []).filter((t) => !t.espacio).slice(0, 100).map((t) => `<div class="cfg-r" style="align-items:center;cursor:pointer" onclick="grpToggle('${id}','${enck(t.key)}',this)"><div class="ric">${avatar(t.name, t.photo, "sm")}</div><div class="rm" style="flex:1;min-width:0"><b>${esc(t.name)}</b></div><span class="grp-chk" style="font-size:18px">${(cg[t.key] || []).includes(id) ? "☑️" : "⬜"}</span></div>`).join("")
+  const rows = (inboxRows || []).filter((t) => !t.espacio).slice(0, 100).map((t) => `<div class="cfg-r" style="align-items:center;cursor:pointer" onclick="grpToggle(${escj(id)},'${enck(t.key)}',this)"><div class="ric">${avatar(t.name, t.photo, "sm")}</div><div class="rm" style="flex:1;min-width:0"><b>${esc(t.name)}</b></div><span class="grp-chk" style="font-size:18px">${(cg[t.key] || []).includes(id) ? "☑️" : "⬜"}</span></div>`).join("")
   openSheet(`<button class="cfg-back" onclick="groupsSheet()">${IC_BACK}Grupos</button><h2 style="margin:6px 0 4px">Contactos del grupo</h2><div class="sub" style="margin:0 0 10px">Tocá para agregar o quitar del grupo.</div>${rows || '<div class="sub">Sin contactos en la bandeja.</div>'}`)
 }
 window.grpToggle = async (id, keyEnc, el) => {
@@ -1708,8 +1710,8 @@ window.setCat = (id) => { ST.q = ""; ST.cats = id === "todo" ? [] : [id]; viewMe
 window.rmFilter = (k, id) => { if (k === "chan") ST.chans = (ST.chans || []).filter((x) => x !== id); else ST.statuses = (ST.statuses || []).filter((x) => x !== id); viewMensajes() }
 window.openFilters = () => {
   const chans = ST.chans || [], statuses = ST.statuses || []
-  const cchip = (id, l) => `<button class="tchip${chans.includes(id) ? " on" : ""}" onclick="stChan('${id}')">${chanIcon(id)}${l}</button>`
-  const schip = (id, l) => `<button class="tchip${statuses.includes(id) ? " on" : ""}" onclick="stStatus('${id}')">${l}</button>`
+  const cchip = (id, l) => `<button class="tchip${chans.includes(id) ? " on" : ""}" onclick="stChan(${escj(id)})">${chanIcon(id)}${l}</button>`
+  const schip = (id, l) => `<button class="tchip${statuses.includes(id) ? " on" : ""}" onclick="stStatus(${escj(id)})">${l}</button>`
   openSheet(`<h2 style="margin:0 0 2px">Filtros</h2><div class="sub" style="margin:0 0 12px">Combiná canal y estado</div>
     <div class="section-title" style="margin:2px 0 7px">Canal</div><div class="chipwrap">${(ST.availChans || []).map((c) => cchip(c, chanLabel[c] || c)).join("") || '<span class="sub">—</span>'}</div>
     <div class="section-title" style="margin:14px 0 7px">Estado</div><div class="chipwrap">${schip("sinleer", "Sin leer")}${schip("sinresponder", "Sin responder")}${schip("leidos", "Leídos")}${schip("sugeridos", "✨ Sugeridos")}</div>
@@ -1946,7 +1948,7 @@ window.rescheduleMeeting = (id, title) => {
     <input class="inp" id="rs-when" type="datetime-local" style="margin:4px 0 12px">
     <label class="tiny b">Duración</label>
     <select class="inp" id="rs-dur" style="margin:4px 0 14px"><option value="30">30 min</option><option value="60">1 hora</option><option value="15">15 min</option><option value="45">45 min</option></select>
-    <button class="btn" onclick="doReschedule('${id}')" style="width:100%">Mover la reunión</button>
+    <button class="btn" onclick="doReschedule(${escj(id)})" style="width:100%">Mover la reunión</button>
     <div id="rs-err" style="color:var(--urgent);font-size:13px;margin-top:8px;text-align:center"></div>`)
 }
 window.doReschedule = async (id) => {
@@ -1989,7 +1991,7 @@ window.aiSuggest = async () => {
 }
 window.aiSummarizeMenu = () => {
   openSheet(`<h2 style="margin:0 0 4px">📝 Resumir chat</h2><div class="sub" style="margin:0 0 14px">¿Desde cuándo?</div>
-    ${[["day", "Último día"], ["week", "Última semana"], ["month", "Último mes"], ["all", "Desde el principio de los tiempos"]].map(([r, l]) => `<button class="btn ghost" style="width:100%;text-align:left;margin-bottom:8px" onclick="aiSummarize('${r}')">${l}</button>`).join("")}`)
+    ${[["day", "Último día"], ["week", "Última semana"], ["month", "Último mes"], ["all", "Desde el principio de los tiempos"]].map(([r, l]) => `<button class="btn ghost" style="width:100%;text-align:left;margin-bottom:8px" onclick="aiSummarize(${escj(r)})">${l}</button>`).join("")}`)
 }
 window.aiSummarize = async (range) => {
   const d = convState; if (!d) return
@@ -2041,7 +2043,7 @@ window.covertConfigSheet = async (keyEnc, name) => {
   const cfg = await fetch(`/api/covert/config?key=${encodeURIComponent(key)}`).then((r) => r.json()).catch(() => ({ styles: [], style: "poema", enabled: false }))
   window._covertStyle = cfg.style || "poema"
   const who = name || (convState && convState.name) || "la otra persona"
-  const chips = (cfg.styles || []).map((s) => `<button class="chip" data-cs="${s.id}" onclick="covertPickStyle('${s.id}')" style="border:1.5px solid ${s.id === window._covertStyle ? "var(--accent)" : "var(--line)"};background:${s.id === window._covertStyle ? "var(--accent)" : "var(--bg2)"};color:${s.id === window._covertStyle ? "#fff" : ""}">${s.label}</button>`).join("")
+  const chips = (cfg.styles || []).map((s) => `<button class="chip" data-cs="${s.id}" onclick="covertPickStyle(${escj(s.id)})" style="border:1.5px solid ${s.id === window._covertStyle ? "var(--accent)" : "var(--line)"};background:${s.id === window._covertStyle ? "var(--accent)" : "var(--bg2)"};color:${s.id === window._covertStyle ? "#fff" : ""}">${s.label}</button>`).join("")
   openSheet(`<h2 style="margin:0 0 4px">🕊️ Modo encubierto</h2>
     <p class="sub" style="margin:0 0 12px">Tus mensajes a <b>${esc(who)}</b> pueden ir <b>cifrados</b>, disfrazados de texto normal. Quien los vea por WhatsApp lee un poema; ${esc(who)}, con Pipe y la misma clave, los ve descifrados. Acordá la clave por un canal seguro (en persona, llamada…).</p>
     <p class="sub" style="margin:-4px 0 12px;font-size:12.5px">¿La otra persona no tiene Pipe? Puede descifrar con la clave en <a href="${location.origin}/decrypt" target="_blank" rel="noopener" style="color:var(--accent)">${location.host}/decrypt</a> 🕊️ (tu propio hub)</p>
@@ -2496,7 +2498,7 @@ async function showSendOptions(text, ch) {
   const slots = c.slots || []
   const slotBlock = slots.length ? `<div style="margin:0 0 14px">
       <div class="so-tag" style="margin:0 0 8px">📅 Tenés libre ${esc(c.slotDay || "ese día")} · tocá para agregar la hora</div>
-      <div class="frow" style="margin:0">${slots.map((s) => `<button class="gchip" onclick="insertSlot('${s.label}')">${s.label}</button>`).join("")}</div>
+      <div class="frow" style="margin:0">${slots.map((s) => `<button class="gchip" onclick="insertSlot(${escj(s.label)})">${s.label}</button>`).join("")}</div>
     </div>` : ""
   openSheet(`<h2 style="margin:0 0 2px">Elegí qué enviar</h2><div class="sub" style="margin:0 0 12px">Por ${CH[ch] || ch} · tocá una opción</div>
     ${slotBlock}
@@ -2582,7 +2584,7 @@ async function checkScheduleIntent(key) {
   document.getElementById("schedChip")?.remove()
   document.body.insertAdjacentHTML("beforeend", `<div id="schedChip" onclick="openScheduleModal()" style="position:fixed;bottom:150px;left:50%;transform:translateX(-50%);width:calc(100% - 20px);max-width:460px;z-index:27;background:var(--accent);color:#fff;padding:11px 14px;border-radius:14px;box-shadow:0 6px 20px rgba(99,102,241,.45);display:flex;align-items:center;gap:10px;cursor:pointer;font-size:14px;animation:fade .3s;overflow:hidden;box-sizing:border-box">
     <span style="font-size:19px">📅</span>
-    <div style="flex:1;min-width:0"><div style="font-weight:700">Agendar reunión — ${when}</div><div style="opacity:.9;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">de "${(r.matched || "").slice(0, 40)}"</div></div>
+    <div style="flex:1;min-width:0"><div style="font-weight:700">Agendar reunión — ${esc(when)}</div><div style="opacity:.9;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">de "${esc((r.matched || "").slice(0, 40))}"</div></div>
     <span style="background:rgba(255,255,255,.25);padding:6px 12px;border-radius:10px;font-weight:700;white-space:nowrap">Agendar ›</span>
     <span onclick="event.stopPropagation();dismissSched()" style="padding:4px 6px;opacity:.85">✕</span></div>`)
 }
@@ -2749,11 +2751,11 @@ window.viewMedia = async (key) => {
   const by = (t) => d.items.filter((i) => i.type === t)
   const imgs = d.items.filter((i) => i.type === "image" || i.type === "gif"), vids = by("video")
   const docs = d.items.filter((i) => i.type === "document" || i.type === "file"), av = by("audio")
-  const row = (ic, i) => `<div class="media-row" onclick="window.open('${i.media}','_blank')"><span class="media-ic">${ic}</span><div class="media-tx"><div class="media-name">${esc(i.filename || i.media.split("/").pop())}</div><div class="media-sub">${esc(i.who)} · ${ago(i.ts)}</div></div></div>`
+  const row = (ic, i) => `<div class="media-row" onclick="window.open(${escj(i.media)},'_blank')"><span class="media-ic">${ic}</span><div class="media-tx"><div class="media-name">${esc(i.filename || i.media.split("/").pop())}</div><div class="media-sub">${esc(i.who)} · ${ago(i.ts)}</div></div></div>`
   openSheet(`<h2 class="sheet-h"><span class="ei">${IC_CLIP}</span>Adjuntos<span class="sheet-n">${d.items.length}</span></h2>
-    <div class="media-cfg"><div class="media-cfg-row"><div class="ric">${IC_DISK}</div><div class="rm"><b>Guardar fotos y archivos</b><span>De este chat. El audio siempre se guarda.</span></div><button class="switch${chatStore ? " on" : ""}" role="switch" aria-checked="${chatStore}" aria-label="Guardar media de este chat" onclick="toggleChatMedia('${key}', ${!chatStore})"></button></div>
-      <button class="btn ghost btn-danger" onclick="freeChatMedia('${key}')"><span class="ei">${IC_TRASH}</span>Liberar espacio de este chat</button></div>
-    ${imgs.length ? `<div class="media-sec"><span class="ei">${IC_IMG}</span>Imágenes<span class="media-n">${imgs.length}</span></div><div class="media-grid">${imgs.slice(0, 30).map((i) => `<img loading="lazy" src="${i.media}" alt="Imagen adjunta" onclick="window.open('${i.media}','_blank')">`).join("")}</div>` : ""}
+    <div class="media-cfg"><div class="media-cfg-row"><div class="ric">${IC_DISK}</div><div class="rm"><b>Guardar fotos y archivos</b><span>De este chat. El audio siempre se guarda.</span></div><button class="switch${chatStore ? " on" : ""}" role="switch" aria-checked="${chatStore}" aria-label="Guardar media de este chat" onclick="toggleChatMedia(${escj(key)}, ${!chatStore})"></button></div>
+      <button class="btn ghost btn-danger" onclick="freeChatMedia(${escj(key)})"><span class="ei">${IC_TRASH}</span>Liberar espacio de este chat</button></div>
+    ${imgs.length ? `<div class="media-sec"><span class="ei">${IC_IMG}</span>Imágenes<span class="media-n">${imgs.length}</span></div><div class="media-grid">${imgs.slice(0, 30).map((i) => `<img loading="lazy" src="${i.media}" alt="Imagen adjunta" onclick="window.open(${escj(i.media)},'_blank')">`).join("")}</div>` : ""}
     ${vids.length ? `<div class="media-sec"><span class="ei">${IC_VIDEO}</span>Videos<span class="media-n">${vids.length}</span></div>${vids.slice(0, 12).map((i) => row(IC_VIDEO, i)).join("")}` : ""}
     ${docs.length ? `<div class="media-sec"><span class="ei">${IC_DOC}</span>Documentos<span class="media-n">${docs.length}</span></div>${docs.slice(0, 25).map((i) => row(IC_DOC, i)).join("")}` : ""}
     ${av.length ? `<div class="media-sec"><span class="ei">${IC_AUDIO}</span>Audios<span class="media-n">${av.length}</span></div>${av.slice(0, 15).map((i) => spdAudio(`<audio controls preload="none" src="${i.media}" class="media-aud" style="flex:1;min-width:0"></audio>`)).join("")}` : ""}
@@ -3003,7 +3005,7 @@ function paintCalendario(d) {
   let eyebrow, title
   if (isWeek) { const d0 = parseD(d.days[0]), d1 = parseD(d.days[d.days.length - 1]); eyebrow = `${d0.getDate()}–${d1.getDate()} ${MES.get(d1.getMonth())} ${d1.getFullYear()} · SEM ${semNum(base)}`; title = "Esta semana" }
   else { eyebrow = `${WD.get(base.getDay())} · ${MES.get(base.getMonth())} ${base.getFullYear()}`; title = `${d.base === d.today ? "Hoy, " : ""}${base.getDate()}` }
-  const tabs = [["dia", "Día"], ["laboral", "Laboral"], ["semana", "Semana"]].map(([v, l]) => `<button class="cal-tab${CALVIEW === v ? " on" : ""}" onclick="setCal('${v}')">${l}</button>`).join("")
+  const tabs = [["dia", "Día"], ["laboral", "Laboral"], ["semana", "Semana"]].map(([v, l]) => `<button class="cal-tab${CALVIEW === v ? " on" : ""}" onclick="setCal(${escj(v)})">${l}</button>`).join("")
   // KPI card
   const catBar = (k.catBars || []).length ? `<div class="cal-bar">${(k.catBars).map((c) => `<i style="flex:${c.h};background:${c.color}"></i>`).join("")}<i style="flex:${Math.max(0.3, (k.freeH || 0))};background:rgba(255,255,255,.12)"></i></div>
     <div class="cal-legend">${(k.catBars).map((c) => `<span><b style="background:${c.color}"></b>${c.label} ${c.h}h</span>`).join("")}</div>` : ""
@@ -3031,7 +3033,7 @@ function paintCalendario(d) {
         return `<div class="wk-ev" style="top:${top}px;height:${hgt}px;left:calc(${left}% + 1px);width:calc(${w}% - 2px);background:${e.color}22;border-left:3px solid ${e.color}" onclick="go('#meeting/${enck(e.id)}')"><div class="wk-ev-t" style="color:${e.color}">${e.t1}</div><div class="wk-ev-ti">${esc(e.title)}</div></div>` }).join("")
       return `<div class="wk-col">${lines}${blocks}</div>`
     }
-    const heads = d.days.map((day) => { const dt = parseD(day), on = day === d.today; return `<div class="wk-h${on ? " on" : ""}" onclick="goDay('${day}')"><span>${WD[dt.getDay()]}</span><b>${dt.getDate()}</b></div>` }).join("")
+    const heads = d.days.map((day) => { const dt = parseD(day), on = day === d.today; return `<div class="wk-h${on ? " on" : ""}" onclick="goDay(${escj(day)})"><span>${WD[dt.getDay()]}</span><b>${dt.getDate()}</b></div>` }).join("")
     const axis = hours.map((h, i) => `<div class="wk-hr" style="top:${i * rowH}px">${h}</div>`).join("")
     weekBody = `<div class="wk-head"><div class="wk-h-sp"></div>${heads}</div>
       <div class="wk-scroll"><div class="wk-grid" style="height:${(H1 - H0) * rowH}px"><div class="wk-axis">${axis}</div><div class="wk-cols">${d.days.map(dayCol).join("")}</div></div></div>`
@@ -3066,7 +3068,7 @@ function paintCalendario(d) {
   }
   render(`<div class="screen cal">
     <div class="cal-head"><div><div class="cal-eyebrow">${eyebrow}</div><h1 class="cal-title">${title}</h1></div>
-      <div class="row" style="gap:8px"><button class="cal-icon" onclick="calSearch()" title="Buscar" aria-label="Buscar">🔍</button><button class="cal-icon" onclick="setCal('${CALVIEW}')"><span class="cal-filt">${(d.kpis||{}).count||evs.length}</span>⤢</button></div></div>
+      <div class="row" style="gap:8px"><button class="cal-icon" onclick="calSearch()" title="Buscar" aria-label="Buscar">🔍</button><button class="cal-icon" onclick="setCal(${escj(CALVIEW)})"><span class="cal-filt">${(d.kpis||{}).count||evs.length}</span>⤢</button></div></div>
     <div class="cal-tabs">${tabs}</div>
     ${kpiCard}
     ${isWeek ? weekBody : `<div class="cal-timeline">${rows.join("") || calEmpty(d)}</div>`}
@@ -3305,7 +3307,7 @@ async function viewObjetivos() {
   const row = (o) => { const pct = Math.min(100, Math.round(100 * (o.current || 0) / (o.target || 1)))
     return `<div class="card" style="margin-bottom:10px"><div class="spread"><div><span class="pill" style="background:${colr(o)}22;color:${colr(o)};padding:2px 9px;font-size:11px">${esc(label(o))}</span> <span class="b">${esc(o.title)}</span>${o.source === "ai" ? ' <span class="tiny muted">· sugerido</span>' : ""}</div>
       <div class="b">${o.current || 0}/${o.target || 0}</div></div><div class="progress"><i style="width:${pct}%;background:${colr(o)}"></i></div>
-      <div class="row" style="gap:12px;margin-top:8px"><span class="tiny" style="color:var(--accent);cursor:pointer" onclick="editObj('${o.id}')">Editar</span><span class="tiny muted" style="cursor:pointer" onclick="delObj('${o.id}')">Borrar</span></div></div>` }
+      <div class="row" style="gap:12px;margin-top:8px"><span class="tiny" style="color:var(--accent);cursor:pointer" onclick="editObj(${escj(o.id)})">Editar</span><span class="tiny muted" style="cursor:pointer" onclick="delObj(${escj(o.id)})">Borrar</span></div></div>` }
   const HZ = [["corto", "🎯 Corto plazo"], ["mediano", "📈 Mediano plazo"], ["largo", "🚀 Largo plazo"], ["familiar", "❤️ Familia"], ["otros", "📌 Otros"]]
   const grouped = HZ.map(([k, lbl]) => { const g = (objs || []).filter((o) => (o.horizon || "otros") === k); return g.length ? `<div class="hb-section-title" style="margin:18px 0 8px">${lbl}</div>${g.map(row).join("")}` : "" }).join("")
   render(`<div class="screen">${focoTabs("objetivos")}<div class="spread"><h1>Objetivos</h1><button class="pill on" onclick="editObj()">+ Nuevo</button></div>
@@ -3328,7 +3330,7 @@ window.editObj = async (id) => { const objs = id ? (await api("/api/objetivos"))
     <input class="inp" id="o-unit" placeholder="Unidad (clientes, %, noches/semana…)" value="${esc(o.unit || "")}" style="margin:10px 0">
     <select class="inp" id="o-horizon" style="margin-bottom:10px">${HORIZONS.map(([k, l]) => `<option value="${k}" ${(o.horizon || "corto") === k ? "selected" : ""}>${l}</option>`).join("")}</select>
     <select class="inp" id="o-scope" style="margin-bottom:14px"><option value="personal" ${o.scope === "personal" ? "selected" : ""}>Personal</option>${comps.map((c) => `<option value="${c.id}" ${o.scope === c.id || o.scope === c.name ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>
-    <button class="btn" onclick="saveObj('${id || ""}')">Guardar</button>`) }
+    <button class="btn" onclick="saveObj(${escj(id || "")})">Guardar</button>`) }
 window.saveObj = async (id) => { const g = (x) => document.getElementById(x).value
   await post("/api/objetivo", { id: id || undefined, title: g("o-title"), current: +g("o-cur") || 0, target: +g("o-tgt") || 0, unit: g("o-unit"), scope: g("o-scope"), horizon: g("o-horizon"), source: "user" })
   closeSheet(); viewObjetivos() }
@@ -3348,7 +3350,7 @@ async function viewEspacios() {
   </div>`)
 }
 window.newEspacio = (parent) => { openSheet(`<h2>Nuevo espacio</h2><input class="inp" id="e-name" placeholder="Nombre (ej: Trabajo, Familia, Clientes)" style="margin:12px 0">
-  <input class="inp" id="e-icon" placeholder="Emoji (opcional, ej: 🎓)" style="margin-bottom:14px"><button class="btn" onclick="saveEsp('${parent || ""}')">Crear</button>`) }
+  <input class="inp" id="e-icon" placeholder="Emoji (opcional, ej: 🎓)" style="margin-bottom:14px"><button class="btn" onclick="saveEsp(${escj(parent || "")})">Crear</button>`) }
 window.saveEsp = async (parent) => { await post("/api/espacio", { name: document.getElementById("e-name").value, icon: document.getElementById("e-icon").value, parent: parent || null }); closeSheet(); location.hash.startsWith("#espacio/") ? viewEspacio(location.hash.split("/")[1]) : viewEspacios() }
 const ruleIcon = { email: "✉️", domain: "🌐", phone: "📱", name: "👤" }
 const ruleText = (r) => `${ruleIcon[r.type] || "•"} ${r.type === "domain" ? "*@" + r.value : esc(r.value)}`
@@ -3364,15 +3366,15 @@ async function viewEspacio(id) {
   const msg = (m) => `<div class="esp-msg" ${m.thread ? `onclick="go('#conv/${enck(m.thread)}')"` : ""}>${avatar(m.name || "?", null)}
     <div style="flex:1;min-width:0"><div class="th-top"><span class="th-name">${esc(m.name || "—")}</span><span class="th-icons">${chanIcon(m.channel)}</span><span class="tiny muted" style="margin-left:auto">${ago(m.ts)}</span></div>
       <div class="th-prev">${m.dir === "out" ? "→ " : ""}${esc(m.text)}</div></div></div>`
-  const rule = (r, i) => `<div class="pill" style="gap:8px">${ruleText(r)}<span onclick="delRule('${d.id}',${i})" style="cursor:pointer;color:var(--muted2);font-weight:700">✕</span></div>`
-  const excp = (r, i) => `<div class="pill" style="gap:8px;background:color-mix(in srgb,var(--accent-2,#e0663a) 12%,transparent);border:1px solid color-mix(in srgb,var(--accent-2,#e0663a) 30%,transparent)">🚫 ${ruleText(r)}<span onclick="delException('${d.id}',${i})" style="cursor:pointer;color:var(--muted2);font-weight:700">✕</span></div>`
+  const rule = (r, i) => `<div class="pill" style="gap:8px">${ruleText(r)}<span onclick="delRule(${escj(d.id)},${i})" style="cursor:pointer;color:var(--muted2);font-weight:700">✕</span></div>`
+  const excp = (r, i) => `<div class="pill" style="gap:8px;background:color-mix(in srgb,var(--accent-2,#e0663a) 12%,transparent);border:1px solid color-mix(in srgb,var(--accent-2,#e0663a) 30%,transparent)">🚫 ${ruleText(r)}<span onclick="delException(${escj(d.id)},${i})" style="cursor:pointer;color:var(--muted2);font-weight:700">✕</span></div>`
   render(`<div class="screen"><button class="back" onclick="go('#mensajes')">‹ Bandeja</button>
     <div class="row" style="margin:8px 0 12px"><div class="av" style="background:var(--bg2);color:var(--ink)">${espIcon(d.icon)}</div><div style="flex:1"><div class="b" style="font-size:19px">${esc(d.name)}</div><div class="sub">Espacio · ${d.count || 0} mensajes</div></div>
-      <button class="pill" onclick="newEspacio('${d.id}')">+ Sub</button></div>
-    <div class="spread" style="margin:14px 2px 8px"><span class="b">Reglas</span><button class="pill on" style="padding:6px 12px" onclick="newRule('${d.id}')">+ Regla</button></div>
+      <button class="pill" onclick="newEspacio(${escj(d.id)})">+ Sub</button></div>
+    <div class="spread" style="margin:14px 2px 8px"><span class="b">Reglas</span><button class="pill on" style="padding:6px 12px" onclick="newRule(${escj(d.id)})">+ Regla</button></div>
     <div class="sub" style="margin:0 2px 10px">Quién entra a este espacio: por correo, dominio (<b>*@colegio.edu.pe</b>), teléfono o nombre.</div>
     <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:6px">${(d.rules || []).map(rule).join("") || '<div class="sub">Todavía sin reglas. Tocá <b>+ Regla</b>.</div>'}</div>
-    <div class="spread" style="margin:16px 2px 8px"><span class="b">Excepciones</span><button class="pill" style="padding:6px 12px" onclick="newException('${d.id}')">+ Excepción</button></div>
+    <div class="spread" style="margin:16px 2px 8px"><span class="b">Excepciones</span><button class="pill" style="padding:6px 12px" onclick="newException(${escj(d.id)})">+ Excepción</button></div>
     <div class="sub" style="margin:0 2px 10px">Quién queda <b>afuera</b> aunque cumpla una regla (ej: sacar a una persona de un dominio).</div>
     <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:6px">${(d.exceptions || []).map(excp).join("") || '<div class="sub">Sin excepciones.</div>'}</div>
     ${(d.children || []).length ? `<div class="b" style="margin:16px 2px 8px">Subespacios</div>${d.children.map(child).join("")}` : ""}
@@ -3383,13 +3385,13 @@ async function viewEspacio(id) {
 let ruleType = "email"
 window.newRule = (id) => {
   ruleType = "email"
-  const tb = (t, label) => `<button class="pill" id="rt-${t}" style="flex:1;justify-content:center;padding:9px" onclick="pickRuleType('${t}')">${ruleIcon[t]} ${label}</button>`
+  const tb = (t, label) => `<button class="pill" id="rt-${t}" style="flex:1;justify-content:center;padding:9px" onclick="pickRuleType(${escj(t)})">${ruleIcon[t]} ${label}</button>`
   openSheet(`<h2>Nueva regla</h2><div class="sub" style="margin:6px 0 12px">Los mensajes que matcheen entran al espacio.</div>
     <div class="row" style="gap:6px;margin-bottom:6px">${tb("email", "Correo")}${tb("domain", "Dominio")}</div>
     <div class="row" style="gap:6px;margin-bottom:12px">${tb("phone", "Teléfono")}${tb("name", "Nombre")}</div>
     <input class="inp" id="r-val" style="margin-bottom:6px" autofocus>
     <div class="sub" id="r-hint" style="margin-bottom:14px"></div>
-    <button class="btn" onclick="saveRule('${id}')">Agregar regla</button>`)
+    <button class="btn" onclick="saveRule(${escj(id)})">Agregar regla</button>`)
   pickRuleType("email")
 }
 window.pickRuleType = (t) => {
@@ -3410,13 +3412,13 @@ window.saveRule = async (id) => {
 window.delRule = async (id, idx) => { await post("/api/espacio/rule/delete", { id, idx }); viewEspacio(id) }
 window.newException = (id) => {
   ruleType = "email"
-  const tb = (t, label) => `<button class="pill" id="rt-${t}" style="flex:1;justify-content:center;padding:9px" onclick="pickRuleType('${t}')">${ruleIcon[t]} ${label}</button>`
+  const tb = (t, label) => `<button class="pill" id="rt-${t}" style="flex:1;justify-content:center;padding:9px" onclick="pickRuleType(${escj(t)})">${ruleIcon[t]} ${label}</button>`
   openSheet(`<h2>Nueva excepción</h2><div class="sub" style="margin:6px 0 12px">Lo que matchee queda <b>AFUERA</b> del espacio, aunque cumpla una regla.</div>
     <div class="row" style="gap:6px;margin-bottom:6px">${tb("email", "Correo")}${tb("domain", "Dominio")}</div>
     <div class="row" style="gap:6px;margin-bottom:12px">${tb("phone", "Teléfono")}${tb("name", "Nombre")}</div>
     <input class="inp" id="r-val" style="margin-bottom:6px" autofocus>
     <div class="sub" id="r-hint" style="margin-bottom:14px"></div>
-    <button class="btn" onclick="saveException('${id}')">Agregar excepción</button>`)
+    <button class="btn" onclick="saveException(${escj(id)})">Agregar excepción</button>`)
   pickRuleType("email")
 }
 window.saveException = async (id) => {
@@ -3434,17 +3436,17 @@ window.openContactSettings = async (keyEnc) => {
   openSheet(`<div class="row" style="gap:8px">${ORB}<b>Cargando…</b></div>`)
   const info = await api("/api/contact/info?key=" + enck(key)) || { category: "auto" }
   const cat = info.category || "auto"
-  const catBtn = (id, label, emoji) => `<button class="pill ${cat === id ? "on" : ""}" style="flex:1;justify-content:center;padding:10px" onclick="setCategory('${keyEnc}','${id}')">${emoji} ${label}</button>`
+  const catBtn = (id, label, emoji) => `<button class="pill ${cat === id ? "on" : ""}" style="flex:1;justify-content:center;padding:10px" onclick="setCategory(${escj(keyEnc)},'${id}')">${emoji} ${label}</button>`
   const secretBtn = "" // las cuentas secretas se marcan en Configuración (por cuenta), no por conversación
   openSheet(`<h2>${esc(convState?.name || key)}</h2>
     <div class="sub" style="margin:6px 0 14px">¿Qué es esta persona para vos?</div>
     <div class="row" style="gap:6px;margin-bottom:8px">${catBtn("familia", "Familia", "🏠")}${catBtn("amigos", "Amigos", "🧑‍🤝‍🧑")}${catBtn("trabajo", "Trabajo", "💼")}</div>
-    <div class="row" style="gap:6px;margin-bottom:16px"><button class="pill ${cat === "auto" ? "on" : ""}" style="flex:1;justify-content:center;padding:8px" onclick="setCategory('${keyEnc}','auto')">🤖 Que decida Jarvis</button></div>
+    <div class="row" style="gap:6px;margin-bottom:16px"><button class="pill ${cat === "auto" ? "on" : ""}" style="flex:1;justify-content:center;padding:8px" onclick="setCategory(${escj(keyEnc)},'auto')">🤖 Que decida Jarvis</button></div>
     <div style="border-top:1px solid var(--line);padding-top:14px">
-      <button class="btn ${info.pinned ? "" : "ghost"}" style="margin-bottom:10px" onclick="togglePin('${keyEnc}',${info.pinned ? "false" : "true"})">${info.pinned ? "📌 Fijado arriba · quitar" : "📌 Fijar arriba"}</button>
-      <button class="btn ghost" style="margin-bottom:10px" onclick="toggleSilence('${keyEnc}',${info.silenced ? "false" : "true"})">${info.silenced ? "🔔 Quitar de Silenciados" : "🔕 Silenciar (mover a “Silenciados”)"}</button>
+      <button class="btn ${info.pinned ? "" : "ghost"}" style="margin-bottom:10px" onclick="togglePin(${escj(keyEnc)},${info.pinned ? "false" : "true"})">${info.pinned ? "📌 Fijado arriba · quitar" : "📌 Fijar arriba"}</button>
+      <button class="btn ghost" style="margin-bottom:10px" onclick="toggleSilence(${escj(keyEnc)},${info.silenced ? "false" : "true"})">${info.silenced ? "🔔 Quitar de Silenciados" : "🔕 Silenciar (mover a “Silenciados”)"}</button>
       ${secretBtn}
-      <button class="btn ghost" onclick="findMerge('${keyEnc}')">🔗 Buscar si es la misma persona que otra</button></div>`)
+      <button class="btn ghost" onclick="findMerge(${escj(keyEnc)})">🔗 Buscar si es la misma persona que otra</button></div>`)
 }
 window.togglePin = async (keyEnc, pinned) => { await post("/api/contact/pin", { key: decodeURIComponent(keyEnc), pinned: pinned === true || pinned === "true" }); closeSheet(); if (typeof viewMensajes === "function" && location.hash.replace("#", "").split("/")[0] === "mensajes") viewMensajes() }
 // SILENCIAR: mover el hilo a la pestaña "Silenciados" (o sacarlo). Ruido que no es spam. Vuelve a la bandeja para reflejarlo.
