@@ -126,8 +126,12 @@ export function threadPage(thread, { before = 0, limit = 80 } = {}) {
 }
 export function threadCount(thread) { return db().prepare("SELECT COUNT(*) c FROM messages WHERE thread=?").get(thread).c }
 // mensajes ENTRANTES (no míos) posteriores a una marca de "visto" — para el resumen de "lo que me perdí"
-export function threadSince(thread, ts, { limit = 300 } = {}) {
-  return db().prepare("SELECT * FROM messages WHERE thread=? AND ts > ? AND dir!='out' ORDER BY ts ASC LIMIT ?").all(thread, Number(ts) || 0, limit)
+// 🔒 por defecto filtra, igual que su gemela threadMessagesSinceAll. El único llamador de hoy (catchup) pide lo contrario
+// a propósito: la ruta HTTP ya bloquea el hilo cuando NO hay 2º PIN, y con el PIN puesto el resumen se hace con modelo
+// local. Cualquier llamador nuevo que no diga nada recibe la versión filtrada.
+export function threadSince(thread, ts, { limit = 300, incluirSecretos = false } = {}) {
+  const rows = db().prepare("SELECT * FROM messages WHERE thread=? AND ts > ? AND dir!='out' ORDER BY ts ASC LIMIT ?").all(thread, Number(ts) || 0, limit)
+  return incluirSecretos ? rows : rows.filter((m) => !isSecretRow(m))
 }
 export function threadUnreadCount(thread, ts) {
   return db().prepare("SELECT COUNT(*) c FROM messages WHERE thread=? AND ts > ? AND dir!='out'").get(thread, Number(ts) || 0).c
@@ -168,8 +172,13 @@ export function selfNotesSinceAll(since, { limit = 120 } = {}) {
 }
 // ¿esta nota vino de una línea secreta? → para decidir si se responde con modelo LOCAL (no mandar eso a la nube)
 export function isSecretSelfRow(row) {
+  if (!row) return false
+  // Cuando el gate no se puede calcular, la cláusula es "1=1" (todo es secreto) y viene SIN parámetros: el `includes`
+  // sobre una lista vacía daba false, o sea que esta función fallaba ABIERTA justo en el escenario donde todo lo demás
+  // falla cerrado — y el asistente trataba la nota como no-secreta (cadena nube + búsqueda web).
+  if (secretGate().blockAll) return true
   const s = _selfSecretAnd("messages")
-  if (!s.sql || !row) return false
+  if (!s.sql) return false
   const jid = String(row.jid || "")
   return (s.params || []).includes(jid)
 }

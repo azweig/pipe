@@ -12,7 +12,7 @@ import { unipileConfigured, unipileSend } from "../unipile-api.mjs"
 import { teamsSend } from "../teams-send.mjs" // Graph: responder en un chat de Teams (permiso de envío aparte del lector)
 import { sendEmailReply } from "../mailer.mjs"
 import { casPutBuffer } from "../cas.mjs"
-import { llm } from "../llm.mjs"
+import { llm, smartChain } from "../llm.mjs"
 import { maskLinks, unmaskLinks, isOnlyLinks } from "../linkmask.mjs" // #1: los links nunca se corrigen
 import { harden, UNTRUSTED_NOTE } from "../safety.mjs"
 import { ownerFirst, owner } from "../hub.mjs"
@@ -246,7 +246,9 @@ export async function forwardMessages(ids, key, { secretOn = false } = {}) {
 }
 
 // ── DRAFT REPLY (en tu estilo, por categoría de relación) ──
-export async function draftReply(nameOrKey, instruction = "") {
+// `localOnly`: el borrador es para un hilo SECRETO. Que vos lo hayas desbloqueado no habilita mandarle la conversación a
+// un tercero — el mismo criterio que composeCorrect. Sin esto, con el 2º PIN puesto el hilo salía por la cadena por defecto.
+export async function draftReply(nameOrKey, instruction = "", { localOnly = false } = {}) {
   const { personView } = await import("./people.mjs") // ciclo reply↔people → runtime-only (nunca en eval)
   const v = personView(nameOrKey)
   const canon = v.canon || v.name
@@ -343,7 +345,7 @@ export async function suggestReply(key) {
   const lines = rows.map((r) => `${r.dir === "out" ? "Vos" : stripWA(contactName(r.sender) || contactName(r.name) || r.name || "?")}: ${cleanMsg(r.text) || `[${r.mediaType || "adjunto"}]`}`).filter((l) => l.trim())
   if (!lines.length) return { draft: "" }
   const sys = harden(`Sos ${ownerFirst()} respondiendo un WhatsApp/email. Escribí SOLO el texto del mensaje a enviar (sin comillas, sin firmar, sin "Hola" genérico si no corresponde), en español, natural y directo, en tu voz. Respondé a lo ÚLTIMO que te dijeron. Breve salvo que amerite. Nada de explicaciones ni opciones.`)
-  const draft = await llm(`Conversación con ${who}:\n${lines.join("\n").slice(0, 4000)}\n\nMi respuesta:`, { system: sys, chain: process.env.LLM_CHAIN_CATCHUP || "gemini,ollama", temperature: 0.5, bypassCap: true })
+  const draft = await llm(`Conversación con ${who}:\n${lines.join("\n").slice(0, 4000)}\n\nMi respuesta:`, { system: sys, chain: localOnly ? smartChain({ sensitive: true, feature: "draft" }) : (process.env.LLM_CHAIN_CATCHUP || "gemini,ollama"), temperature: 0.5, bypassCap: true })
     .then((s) => (s || "").trim().replace(/^["'`]|["'`]$/g, "")).catch(() => "")
   return { draft }
 }

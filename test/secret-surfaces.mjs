@@ -277,3 +277,51 @@ test("piloto: el material del que aprende no incluye canales secretos", async ()
   assert.equal((src.match(/isSecretRow/g) || []).length >= 3, true, "y las tres fuentes filtran")
   assert.equal(typeof ap.runAutopilot, "function")
 })
+
+// Desbloquear con el 2º PIN significa "mostrámelo A MÍ", no "mandáselo a un tercero". Estos caminos mandaban el contenido
+// a un servicio externo (Files API de Google, visión en la nube) justo cuando el usuario lo desbloqueaba para mirarlo.
+test("catchup: un hilo secreto no sube sus adjuntos ni resume con la nube", async () => {
+  const src = (await import("node:fs")).readFileSync(new URL("../src/lib/brain/inbox.mjs", import.meta.url), "utf8")
+  assert.ok(/const hiloSecreto = secretThreadKeys\(\)\.has\(key\) \|\| rows\.some/.test(src), "detecta si el hilo tiene material secreto")
+  assert.ok(/if \(!hiloSecreto && r\.media/.test(src), "y NO sube el adjunto (la subida pasa antes de la llamada)")
+  assert.ok(/chain: hiloSecreto \? smartChain\(\{ sensitive: true/.test(src), "el transcripto va por cadena local")
+})
+
+test("threadSince filtra por defecto, como su gemela", () => {
+  const conSecretos = tr.threadSince("mili", 0, { limit: 50, incluirSecretos: true }).map((m) => m.text)
+  const filtrado = tr.threadSince("mili", 0, { limit: 50 }).map((m) => m.text)
+  assert.ok(conSecretos.includes("MENSAJE_SECRETO_MILI"), "pidiéndolo explícito, viene todo")
+  assert.ok(!filtrado.includes("MENSAJE_SECRETO_MILI"), "por defecto, no")
+  assert.ok(filtrado.includes("MENSAJE_NORMAL_MILI"), "lo normal sigue")
+})
+
+test("summarizeMedia: con 2º PIN puesto, un adjunto secreto no se manda a la nube", async () => {
+  const src = (await import("node:fs")).readFileSync(new URL("../src/lib/brain/media-ai.mjs", import.meta.url), "utf8")
+  assert.ok(/const secreto = isSecretRow\(m\)/.test(src), "mira si la fila es de fuente secreta")
+  assert.ok(/if \(secreto\) return \{ kind: "image"/.test(src), "y no llama a la visión en la nube")
+  assert.equal((src.match(/\.\.\.cadena/g) || []).length, 2, "los dos resúmenes usan la cadena local cuando corresponde")
+})
+
+// El "OCR local" y el "whisper local" son SERVICIOS CONFIGURABLES: OCR_URL puede apuntar a cualquier host de internet.
+// Para una fila secreta hay que confirmar que el destino está en tu red antes de mandarle el archivo entero.
+test("destinoConfiable: solo tu red, salvo que declares que el host es tuyo", async () => {
+  const { destinoConfiable } = await import("../src/lib/media-trust.mjs")
+  for (const u of ["http://127.0.0.1:8600", "http://localhost:8600", "http://192.168.1.20/ocr", "http://10.0.0.5", "http://ocr.internal"])
+    assert.equal(destinoConfiable(u), true, u)
+  for (const u of ["https://ocr.example.com", "https://api.openai.com", "http://203.0.113.9:8600", ""])
+    assert.equal(destinoConfiable(u), false, u)
+  process.env.MEDIA_HOST_PROPIO = "1"
+  assert.equal(destinoConfiable("https://ocr.example.com"), true, "declarado tuyo a mano")
+  delete process.env.MEDIA_HOST_PROPIO
+})
+
+test("isSecretSelfRow falla CERRADO (fallaba abierto justo cuando todo lo demás tapaba)", async () => {
+  const { writeFileSync } = await import("node:fs")
+  writeFileSync(join(dir, "data", "secret-numbers.json"), '["5199900')   // ilegible → no se puede calcular
+  secret.setSecretAccount("email", "x", false)                          // invalida el cache del gate
+  if (secret.secretGate().blockAll) {
+    assert.equal(tr.isSecretSelfRow({ jid: "lo-que-sea" }), true, "sin poder decidir, la nota propia es secreta")
+  }
+  writeFileSync(join(dir, "data", "secret-numbers.json"), '["51999000001"]')
+  secret.setSecretAccount("email", "x", false)
+})

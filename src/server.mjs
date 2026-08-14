@@ -24,7 +24,8 @@ import * as secret from "./lib/secret.mjs"
 import { localFlags, clientIpFrom, csrfReason, hostAllowed } from "./lib/http-gate.mjs"
 import * as maintenance from "./lib/maintenance.mjs"
 import * as mailArchive from "./lib/mail-archive.mjs"
-import { ocrCas, ocrEnabled } from "./lib/ocr.mjs"
+import { ocrCas, ocrEnabled, ocrUrlActual } from "./lib/ocr.mjs"
+import { destinoConfiable } from "./lib/media-trust.mjs" // 🔒 el OCR configurado puede ser un host en internet
 import { casSecreto, searchThreadKeys } from "./lib/db.mjs" // 🔒 gateo de archivos del CAS por ruta (OCR, papelera, /cas/)
 import { cuarentenaVault, restaurarVault, purgarRagDeNotas } from "./lib/secret-vault.mjs" // 🔒 notas del vault ya escritas
 import { clipFlag, getMeta, delMeta, delMetaLike, rebuildStats, freeThreadMedia, restoreMedia, listNotes, noteCategories, noteJunkCount, noteAction, totalUnread } from "./lib/db.mjs"
@@ -366,7 +367,11 @@ const server = createServer(async (req, res) => {
     const secretTok = String(req.headers["x-secret-token"] || cookies.secret || "").trim()
     const secretOn = secret.validSecretSession(secretTok)
     // guard para endpoints por-hilo: un hilo de cuenta secreta NO existe si no está desbloqueado (como si el key no fuera válido)
-    const secretBlocked = (key) => !secretOn && !!key && secret.secretThreadKeys().has(key)
+    // 🔒 ¿esta clave de hilo está tapada? Cubre el hilo 100%-secreto Y el parcial (que se muestra filtrado por-mensaje):
+    // para las rutas que MANDAN el hilo a un tercero, un parcial es tan sensible como uno entero.
+    // Existía hace rato y no se usaba en ningún lado; las rutas que llevan la clave en el CUERPO del POST se salteaban
+    // el gate de arriba, que solo mira el query string.
+    const secretBlocked = (key) => { if (secretOn || !key) return false; const g = secret.secretGate(); return g.blockAll || g.hide.has(key) || g.preview.has(key) }
     if (path === "/api/secret/status") return json(res, 200, { pinSet: secret.secretPinSet(), unlocked: secretOn })
     // crear/cambiar el 2º PIN: SOLO con la sesión principal (ya estás authed). Debe ser distinto del PIN de entrada (lo valida setSecretPin).
     if (path === "/api/secret/setup" && req.method === "POST") { const b = await body(req); const r = secret.setSecretPin(b.pin, b.oldPin, clientIp); return json(res, r.error ? 400 : 200, r) }
@@ -412,11 +417,14 @@ const server = createServer(async (req, res) => {
       const q = Object.fromEntries(url.searchParams)
       // 🔒 gateo por-hilo. /api/thread SE AUTO-FILTRA por-mensaje (contacto fusionado → ves lo no-secreto); los demás endpoints por-hilo
       // (media/targets/delta/sync/catchup/suggest/person) NO filtran → se bloquean si el hilo tiene ALGO secreto. 100% secreto → todo vacío.
-      if (!secretOn) { const g = secret.secretGate(); const sk = q.key || q.name
+      // Se miran las DOS: el gate usaba `q.key || q.name` pero los handlers resuelven `q.name || q.key`, así que mandando
+      // las dos con una clave inocente en `key` se saltaba el gate y el handler igual atendía el `name` secreto.
+      if (!secretOn) { const g = secret.secretGate(); const claves = [q.key, q.name].filter(Boolean)
+        const sk = claves.find((k) => g.hide.has(k) || g.preview.has(k)) || claves[0]
         if (sk && g.any) {
-          const hasAny = g.hide.has(sk) || g.preview.has(sk)
-          if (hasAny && (path.startsWith("/api/thread/") || path === "/api/person" || path === "/api/person/full" || path === "/api/contact/profile")) return json(res, 200, { items: [], secret: true })
-          if (g.hide.has(sk) && path === "/api/thread") return json(res, 200, { items: [], secret: true })
+          const hasAny = claves.some((k) => g.hide.has(k) || g.preview.has(k))
+          if (hasAny && (path.startsWith("/api/thread/") || path === "/api/person" || path === "/api/person/full" || path === "/api/contact/profile" || path === "/api/contact/social")) return json(res, 200, { items: [], secret: true })
+          if (claves.some((k) => g.hide.has(k)) && path === "/api/thread") return json(res, 200, { items: [], secret: true })
         }
       }
       if (path === "/api/oauth/google/configured") return json(res, 200, { configured: goauth.googleConfigured() })
@@ -424,7 +432,7 @@ const server = createServer(async (req, res) => {
       if (path === "/api/summary") return json(res, 200, brain.summary())
       if (path === "/api/threads") { let t = brain.listThreads({ limit: +q.limit || 100, q: (q.q || "").slice(0, 80) }); if (!secretOn) { const g = secret.secretGate(); if (g.any) t = t.filter((x) => !g.hide.has(x.key)).map((x) => { const p = g.preview.get(x.key); return p ? { ...x, lastText: ((p.text || "").replace(/\s+/g, " ").slice(0, 120)) || "…", ts: p.ts, lastChannel: p.channel || x.lastChannel } : x }) } return jsonCached(req, res, t) } // 🔒 oculta hilos 100% secretos + parchea el preview de los parciales al último mensaje NO-secreto
       // OCR local (opcional): extrae texto de una imagen/PDF del CAS (facturas, documentos) sin nube. Requiere OCR_URL.
-      if (path === "/api/ocr" && req.method === "POST") { const b = await body(req); if (!ocrEnabled()) return json(res, 200, { text: "", disabled: true }); if (casSecreto(b.media, { secretOn })) return json(res, 200, { text: "" }); const text = await ocrCas(b.media || "").catch(() => ""); return json(res, 200, { text }) }
+      if (path === "/api/ocr" && req.method === "POST") { const b = await body(req); if (!ocrEnabled()) return json(res, 200, { text: "", disabled: true }); if (casSecreto(b.media)) { if (!destinoConfiable(ocrUrlActual())) return json(res, 200, { text: "" }) } else if (casSecreto(b.media, { secretOn })) return json(res, 200, { text: "" }); const text = await ocrCas(b.media || "").catch(() => ""); return json(res, 200, { text }) }
       // contador barato de entrantes (thread_stats.unread es monotónico por ingesta) → el cliente detecta "llegó algo nuevo" y suena. Sin recomputar la bandeja.
       if (path === "/api/unread") { let n = totalUnread(); if (!secretOn) n -= secret.secretUnread(); return json(res, 200, { n: Math.max(0, n) }) } // 🔒 no contar no-leídos secretos si está bloqueado
       if (path === "/api/person") return json(res, 200, await brain.personCard(q.name || q.key || "", { force: q.force === "1" }))
@@ -465,8 +473,8 @@ const server = createServer(async (req, res) => {
       // string → se lo salteaban enteros. Redactarle un borrador a alguien es leerle el historial, así que se chequea acá.
       // La respuesta es la MISMA que para un nombre que no existe: un "secret:true" sería un oráculo (preguntás un nombre
       // y la propia respuesta te confirma que esa persona existe y está oculta).
-      if (path === "/api/reply") { const b = await body(req); if (!secretOn && secretoPorNombre(b.name)) return json(res, 200, { error: "El último mensaje ya es tuyo — nada pendiente." }); return json(res, 200, await brain.draftReply(b.name || "", b.instruction || "")) }
-      if (path === "/api/meeting-prep") { if (!secretOn && secretoPorNombre(q.q)) return json(res, 200, { error: "No hay reunión." }); return json(res, 200, await brain.meetingPrep(q.q || "")) }
+      if (path === "/api/reply") { const b = await body(req); const oculto = secretoPorNombre(b.name) || secretoPorNombre(b.key); if (!secretOn && oculto) return json(res, 200, { error: "El último mensaje ya es tuyo — nada pendiente." }); return json(res, 200, await brain.draftReply(b.name || "", b.instruction || "", { localOnly: oculto })) }
+      if (path === "/api/meeting-prep") { if (!secretOn && secretoPorNombre(q.q)) return json(res, 200, { error: "No hay reunión." }); return json(res, 200, await brain.meetingPrep(q.q || "", { localOnly: secretoPorNombre(q.q) })) }
       // ── voz + briefing ──
       if (path === "/api/briefing") { const override = q.lat ? { lat: +q.lat, lon: +q.lon, name: q.name, city: q.city, tz: q.tz } : null; return json(res, 200, await briefing.buildBriefing({ override })) }
       if (path === "/api/daily-plan") return json(res, 200, await briefing.dailyPlan())
@@ -629,7 +637,7 @@ const server = createServer(async (req, res) => {
       // PILOTO AUTOMÁTICO ("modo vacaciones"): config por-contacto, preview (dry-run, NO envía) y audit log
       if (path === "/api/autopilot/config" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setAutopilot(b.key, !!b.enabled, { maxPerDay: b.maxPerDay })) }
       if (path === "/api/autopilot/config") return json(res, 200, brain.getAutopilot(q.key || ""))
-      if (path === "/api/autopilot/preview" && req.method === "POST") { const b = await body(req); try { return json(res, 200, await brain.considerReply(b.key, { dryRun: true, force: true })) } catch (e) { return json(res, 400, { error: e.message }) } }
+      if (path === "/api/autopilot/preview" && req.method === "POST") { const b = await body(req); if (secretBlocked(b.key)) return json(res, 200, { action: "skip", reason: "sin mensajes" }); try { return json(res, 200, await brain.considerReply(b.key, { dryRun: true, force: true })) } catch (e) { return json(res, 400, { error: e.message }) } }
       if (path === "/api/autopilot/log") return json(res, 200, { log: brain.autopilotLog(60) })
       if (path === "/api/autopilot/feedback" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.autopilotFeedback(b.key, { good: b.good, correction: b.correction, original: b.original })) }
       if (path === "/api/autopilot/train-card") return json(res, 200, await brain.trainCard()) // 🎓 Entrená tu IA: trae un mensaje real + el borrador de la IA para aprobar/corregir
@@ -720,7 +728,7 @@ const server = createServer(async (req, res) => {
       if (path === "/api/apify/accounts") return json(res, 200, apify.apifyAccounts())
       if (path === "/api/contact/social") return json(res, 200, brain.getContactSocial(q.key || "") || { links: {}, profiles: null })
       if (path === "/api/contact/links" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setContactLinks(b.key, b.links || {})) }
-      if (path === "/api/contact/investigate" && req.method === "POST") { const b = await body(req); try { return json(res, 200, await brain.investigateContact(b.key, b.links)) } catch (e) { return json(res, 400, { error: e.message }) } }
+      if (path === "/api/contact/investigate" && req.method === "POST") { const b = await body(req); if (secretBlocked(b.key)) return json(res, 200, { links: {}, profiles: {}, sources: [], errors: {}, updatedAt: Date.now() }); try { return json(res, 200, await brain.investigateContact(b.key, b.links)) } catch (e) { return json(res, 400, { error: e.message }) } }
       if (path === "/api/contact/unmerge" && req.method === "POST") { ws.unmergeContact((await body(req)).channelId); return json(res, 200, { ok: true }) }
       if (path === "/api/contact/photo" && req.method === "POST") { const b = await body(req); ws.setContactPhoto(b.key, b.url); return json(res, 200, { ok: true }) }
       if (path === "/api/contact/category" && req.method === "POST") { const b = await body(req); ws.setContactCategory(b.key, b.category); return json(res, 200, { ok: true }) }

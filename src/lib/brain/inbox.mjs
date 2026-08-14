@@ -19,7 +19,7 @@ import { jf, waGroups, avatarMap, contactName, photoFor } from "./kernel/contact
 import { peopleNodes, cardFor, fm } from "./kernel/vault.mjs"
 import { cleanMsg } from "./kernel/convo.mjs"
 import { owner, ownerFirst } from "../hub.mjs"
-import { llm, geminiMultimodal, geminiUploadFile } from "../llm.mjs"
+import { llm, smartChain, geminiMultimodal, geminiUploadFile } from "../llm.mjs"
 import { MY_EMAILS } from "../thread.mjs"
 import { isSpam, llmSpam, notSpam } from "../spam.mjs"
 import { ocrCas, ocrEnabled } from "../ocr.mjs"
@@ -300,8 +300,12 @@ async function catchupMediaPart(r, budget) {
 export async function catchup(key, ws, since = 0) {
   const marker = Number(since) || ws.lastSeen(key)
   if (!marker) return { summary: "", count: 0 }
-  const rows = dbThreadSince(key, marker, { limit: 300 })
+  const rows = dbThreadSince(key, marker, { limit: 300, incluirSecretos: true }) // ver la nota en threadSince: acá se decide abajo, con hiloSecreto
   if (!rows.length) return { summary: "", count: 0 }
+  // 🔒 ¿este hilo tiene material de una cuenta secreta? Desbloquear con el 2º PIN significa "mostrámelo A MÍ", NO
+  // "subíselo a Google": el camino multimodal sube las fotos, los audios y los PDFs a la Files API, y el transcripto va
+  // por gemini. Si hay algo secreto, se resume SIN adjuntos y con modelo local. Peor resumen, pero no sale de la máquina.
+  const hiloSecreto = secretThreadKeys().has(key) || rows.some((m) => isSecretMsg(m))
   const isGroup = rows.some((m) => /@g\.us$|@thread\.v2$|@newsletter$|@broadcast$/.test(m.jid || ""))
   const dias = Math.max(1, Math.round((Date.now() - marker) / 86400000))
   const sys = `Sos un asistente que le pone al día a ${ownerFirst()} sobre ${isGroup ? "un grupo" : "un contacto"} que no revisó hace ${dias} día(s). Te paso TODO lo que pasó: textos, imágenes, documentos, audios y videos. DEBÉS mirar las imágenes, leer los documentos y escuchar los audios/videos — no te quedes solo con el texto (a veces el texto solo dice "ok" y lo importante está en un audio o un PDF adjunto). Resumí en español, directo y humano (no suenes a IA), SOLO lo importante: qué pasó, qué dicen los audios/documentos/imágenes, qué le preguntaron o pidieron, qué decisiones/fechas hay, y qué requiere respuesta suya. Viñetas cortas. Marcá con ⚠️ lo urgente o que espera respuesta. No inventes: si un audio no se entiende, decilo.`
@@ -313,7 +317,8 @@ export async function catchup(key, ws, since = 0) {
   for (const r of rows) {
     const who = stripWA(contactName(r.sender) || contactName(r.name) || r.name || "?")
     const txt = cleanMsg(r.text)
-    if (r.media && r.mediaType !== "sticker" && mediaAttached < MAX_MEDIA) {
+    // el adjunto se SUBE a la Files API acá, antes de cualquier llamada: si el hilo es secreto no se toca (ni se sube ni se OCRea)
+    if (!hiloSecreto && r.media && r.mediaType !== "sticker" && mediaAttached < MAX_MEDIA) {
       const part = await catchupMediaPart(r, budget)
       if (part) {
         parts.push({ text: `\n${who} envió ${CATCHUP_LABEL[r.mediaType] || "un archivo"}${r.filename ? ` "${r.filename}"` : ""}${txt ? ` (con nota: "${txt}")` : ""} — analizalo:` })
@@ -336,11 +341,11 @@ export async function catchup(key, ws, since = 0) {
   // audio/video) NO existe en local sin GPU. Nube deliberada. El texto puro cae a LLM_CHAIN_CATCHUP (gemini,ollama). Con GPU: local.
   let summary = ""
   if (mediaAttached > 0) { // Gemini nativo ve imágenes, lee PDFs, escucha audios y procesa video+audio
-    try { summary = (await geminiMultimodal(intro, [...parts, { text: closing }], { system: sys, temperature: 0.3 })).trim() } catch { summary = "" }
+    try { summary = hiloSecreto ? "" : (await geminiMultimodal(intro, [...parts, { text: closing }], { system: sys, temperature: 0.3 })).trim() } catch { summary = "" }
   }
   if (!summary) { // sin media procesable o falló el multimodal → resumen de texto (rápido, gemini→ollama)
     const transcript = parts.filter((p) => p.text).map((p) => p.text).join("\n").slice(0, 9000)
-    summary = await llm(`${intro}\n\n${transcript}${closing}`, { system: sys, chain: process.env.LLM_CHAIN_CATCHUP || "gemini,ollama", temperature: 0.3 }).then((s) => (s || "").trim()).catch(() => "")
+    summary = await llm(`${intro}\n\n${transcript}${closing}`, { system: sys, chain: hiloSecreto ? smartChain({ sensitive: true, feature: "catchup" }) : (process.env.LLM_CHAIN_CATCHUP || "gemini,ollama"), temperature: 0.3 }).then((s) => (s || "").trim()).catch(() => "")
   }
   return { summary, count: rows.length, days: dias, media: mediaAttached }
 }

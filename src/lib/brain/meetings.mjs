@@ -1,7 +1,7 @@
 // brain/meetings — notetaker/prep de reuniones: briefing de la próxima, detalle, tarjetas pre-generadas por cron, lectura rápida.
 // Importa el helper de tiempo de schedule (agenda/mtgId/catOf/mtgWhen/durMin/resolveAttendee) — dep unidireccional meetings→schedule.
 import { owner, ownerFirst, myEmails } from "../hub.mjs"
-import { llm } from "../llm.mjs"
+import { llm, smartChain } from "../llm.mjs"
 import { setMeta, getMeta } from "../db.mjs"
 import { jf } from "./kernel/contacts.mjs"
 import { peopleNodes } from "./kernel/vault.mjs"
@@ -15,7 +15,9 @@ import { resolvePerson, personView } from "../brain.mjs"
 // ───────────────────────────────── código movido verbatim desde brain.mjs (M2) ─────────────────────────────────
 
 // ── MEETING PREP ──
-export async function meetingPrep(query) {
+// `localOnly`: la reunión es con un contacto SECRETO → el briefing se arma con modelo local. Mismo criterio que
+// composeCorrect y draftReply: desbloquear con el 2º PIN es "mostrámelo a mí", no "mandáselo a un tercero".
+export async function meetingPrep(query, { localOnly = false } = {}) {
   const now = new Date().toISOString().slice(0, 10)
   const cal = [...j("calendar.jsonl"), ...j("calendar-google.jsonl")].filter((e) => (e.start || "") >= now).sort((a, b) => (a.start || "").localeCompare(b.start || ""))
   const mtg = query ? cal.find((e) => (e.title || "").toLowerCase().includes(query.toLowerCase())) : cal[0]
@@ -28,7 +30,7 @@ export async function meetingPrep(query) {
   const brief = await llm(`Sos jefe de gabinete de ${ownerFirst()}. Briefing accionable para esta reunión, español, con: objetivo, quién es cada asistente, estado del tema, pendientes, qué preparar. Breve.
 REUNIÓN: ${mtg.title} · ${mtg.start} · organiza ${mtg.organizer}
 ASISTENTES CONOCIDOS:\n${knownCtx || "(ninguno)"}
-DESCONOCIDOS: ${unknown.join(", ") || "ninguno"}`)
+DESCONOCIDOS: ${unknown.join(", ") || "ninguno"}`, localOnly ? { chain: smartChain({ sensitive: true, feature: "meetings" }) } : undefined)
   return { title: mtg.title, start: mtg.start, organizer: mtg.organizer, attendees, known, unknown, brief: brief.trim() }
 }
 

@@ -7,6 +7,7 @@ import { join } from "node:path"
 const ocrUrl = () => (process.env.OCR_URL || "").replace(/\/$/, "")
 const ocrToken = () => process.env.OCR_TOKEN || ""
 export function ocrEnabled() { return !!ocrUrl() }
+export const ocrUrlActual = () => ocrUrl() // para decidir si se le puede mandar un archivo de una cuenta secreta
 
 // OCR de un archivo del CAS (/cas/xx/hash.ext) → texto plano. "" si está deshabilitado, no existe, o falla.
 export async function ocrCas(casPath, { timeoutMs = 180000 } = {}) {
