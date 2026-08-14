@@ -4,6 +4,7 @@
 import { readFileSync, existsSync, readdirSync } from "fs"
 import { ownerFirst, company } from "./lib/hub.mjs"
 import { llm } from "./lib/llm.mjs"
+import { isSecretJsonl } from "./lib/secret.mjs" // 🔒 lo que se le manda al LLM no puede incluir canales secretos
 
 const question = process.argv.slice(2).join(" ").trim()
 if (!question) { console.log('Uso: node src/ask.mjs "tu pregunta"'); process.exit(1) }
@@ -21,7 +22,7 @@ for (const [t, folder] of [["person", "People"], ["company", "Companies"], ["pro
   if (existsSync(`./vault/${folder}`)) nodes[t] = readdirSync(`./vault/${folder}`).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3))
 const allNames = [...nodes.person, ...nodes.company, ...nodes.project]
 
-const events = j("./data/messages.jsonl")
+const events = j("./data/messages.jsonl").filter((e) => !isSecretJsonl(e)) // 🔒 esto va a un LLM: los canales secretos no
 const cal = [...j("./data/calendar.jsonl"), ...j("./data/calendar-google.jsonl")]
 const holidays = existsSync("./data/holidays.json") ? JSON.parse(readFileSync("./data/holidays.json", "utf8")) : {}
 

@@ -26,6 +26,7 @@ import * as maintenance from "./lib/maintenance.mjs"
 import * as mailArchive from "./lib/mail-archive.mjs"
 import { ocrCas, ocrEnabled } from "./lib/ocr.mjs"
 import { casSecreto } from "./lib/db.mjs" // 🔒 gateo de archivos del CAS por ruta (OCR, papelera, /cas/)
+import { cuarentenaVault, restaurarVault, purgarRagDeNotas } from "./lib/secret-vault.mjs" // 🔒 notas del vault ya escritas
 import { clipFlag, getMeta, delMeta, delMetaLike, rebuildStats, freeThreadMedia, restoreMedia, listNotes, noteCategories, noteJunkCount, noteAction, totalUnread } from "./lib/db.mjs"
 import { channelCatalog, bridgeNets, tokenNets } from "./lib/channels.mjs" // registro de canales (única fuente de verdad de qué canales hay + cómo se vinculan)
 import { getMediaPolicy, setMediaDefault, setThreadMediaPolicy } from "./lib/media-policy.mjs"
@@ -51,6 +52,15 @@ function purgeSecretDerived() {
   try { for (const p of ["personcard:", "mtgcard:", "espcard:"]) delMetaLike(p) } catch {} // tarjetas pre-generadas por contacto/reunión/espacio
   try { brain.invalidateThreads() } catch {}
   try { brain.invalidateCoach() } catch {}
+  // 🔒 el vault ya escrito. Filtrar la entrada evita que se escriba MÁS, pero las notas que graphify/learn ya generaron
+  // siguen ahí — y se sincronizan a otro server por rsync. No se borran (serían notas tuyas): se mueven a data/secret-vault
+  // y vuelven solas si desmarcás la cuenta. Se hace en los dos sentidos porque esta misma función corre al marcar Y al desmarcar.
+  try {
+    const vueltas = restaurarVault()
+    const movidas = cuarentenaVault({ incluirBrain: true }) // al MARCAR sí: el self-model se regenera limpio
+    if (movidas.length) purgarRagDeNotas(movidas) // y sus vectores salen del índice semántico
+    if (movidas.length || vueltas.length) console.log(`[secret] vault: ${movidas.length} notas a cuarentena, ${vueltas.length} devueltas`)
+  } catch (e) { console.error("[secret] no pude mover las notas del vault:", e?.message || e) }
 }
 function loginPage(pinSet, canSetup) {
   const setup = !pinSet

@@ -6,6 +6,7 @@ import { readFileSync, existsSync, readdirSync } from "fs"
 import { llm } from "./lib/llm.mjs"
 import { buildStyleProfile, buildStyleProfiles, styleExamples, categoryOf } from "./lib/style.mjs"
 import { ownerFirst, company } from "./lib/hub.mjs"
+import { isSecretJsonl } from "./lib/secret.mjs" // 🔒 lo que se le manda al LLM no puede incluir canales secretos
 
 const argv = process.argv.slice(2)
 const query = (argv[0] || "").trim()
@@ -31,7 +32,8 @@ const names = new Set([canon.toLowerCase(), ...((aliases.people[canon] || []).ma
 const chans = new Set(Object.entries(idmap).filter(([, v]) => v === canon).map(([k]) => k))
 const card = existsSync(`./vault/People/${slug(canon)}.md`) ? readFileSync(`./vault/People/${slug(canon)}.md`, "utf8") : ""
 for (const c of (card.match(/channels: \[(.*?)\]/)?.[1] || "").split(",").map((s) => s.trim()).filter(Boolean)) chans.add(c)
-const thread = j("./data/messages.jsonl").filter((e) => chans.has(channelId(e)) || names.has((e.name || "").toLowerCase())).sort((a, b) => (a.ts || 0) - (b.ts || 0))
+// 🔒 el filtro por fuente secreta va primero; el orden cronológico es imprescindible (de acá salen "los últimos 8" y el último entrante)
+const thread = j("./data/messages.jsonl").filter((e) => !isSecretJsonl(e) && (chans.has(channelId(e)) || names.has((e.name || "").toLowerCase()))).sort((a, b) => (a.ts || 0) - (b.ts || 0))
 if (!thread.length) { console.log(`No tengo historial con ${canon} para responder.`); process.exit(0) }
 
 const lastInbound = [...thread].reverse().find((e) => e.dir !== "out")

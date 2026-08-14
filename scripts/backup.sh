@@ -38,6 +38,10 @@ for f in data/*.json data/*.jsonl; do
   case "$f" in */messages.jsonl) continue ;; esac
   FILES+=("$f")   # rag.jsonl, cas-index.json y todos los configs (chicos)
 done
+# notas apartadas por ser de una cuenta secreta (data/secret-vault/). El glob de arriba no entra en subdirectorios, así que
+# quedaban con UNA sola copia: la del disco local — y encima el rsync del vault ya borró la del server remoto.
+# El backup va cifrado, igual que todo lo demás acá.
+[ -d data/secret-vault ] && FILES+=( data/secret-vault ) && echo "  + notas en cuarentena (cuentas secretas)"
 
 # 3. tar → zstd → openssl aes-256-cbc. ATÓMICO: se escribe a .partial y recién al terminar OK se renombra al nombre final,
 #    así un backup truncado (openssl muere a mitad) NUNCA queda como "el último" que elegiría el restore.

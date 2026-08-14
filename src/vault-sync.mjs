@@ -28,6 +28,22 @@ function hasRealFiles(dir) {
   return false
 }
 if (!hasRealFiles("vault")) { console.error("[vault-sync] ⛔ vault/ sin archivos reales (dirs vacíos / recién recreado) → NO sincronizo (--delete borraría el backup remoto)"); process.exit(1) }
+
+// 🔒 ÚLTIMA COMPUERTA. La cuarentena corre cuando marcás una cuenta como secreta, pero eso es un solo intento: si el
+// proceso se murió a la mitad, o si graphify escribió una nota nueva después, quedaba contenido secreto esperando el
+// próximo rsync. Acá es donde el vault SALE de la máquina, así que se revisa una vez más antes de mandarlo.
+try {
+  const { secretGate } = await import("./lib/secret.mjs")
+  // Un `cuarentenaVault()` vacío NO significa "no hay nada que ocultar": si el gate no se pudo calcular, devuelve vacío
+  // sin lanzar, y esta compuerta dejaba pasar el rsync entero. Este proceso arranca de cero cada vez, así que nunca tiene
+  // un cálculo bueno previo del que agarrarse: hay que preguntar explícitamente.
+  const g = secretGate()
+  if (g.blockAll || g.degraded) { console.error("[vault-sync] ⛔ no puedo calcular qué cuentas son secretas → NO sincronizo (reintento en la próxima corrida)"); process.exit(1) }
+  const { cuarentenaVault, restaurarVault } = await import("./lib/secret-vault.mjs")
+  const vueltas = restaurarVault() // lo que dejó de ser secreto vuelve al vault antes de subirlo
+  const movidas = cuarentenaVault()
+  if (movidas.length || vueltas.length) console.log(`[vault-sync] 🔒 ${movidas.length} notas apartadas, ${vueltas.length} devueltas antes de sincronizar`)
+} catch (e) { console.error("[vault-sync] ⛔ no pude revisar las cuentas secretas → NO sincronizo:", e?.message || e); process.exit(1) }
 try {
   execFileSync("rsync", ["-az", "--delete", "--exclude", ".obsidian", "-e", `ssh -i ${KEY} -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new`, "vault/", DEST], { stdio: ["ignore", "ignore", "inherit"] })
   console.log(`[vault-sync] ✅ vault → server ${new Date().toISOString().slice(11, 16)}`)

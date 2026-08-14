@@ -6,6 +6,7 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync, append
 import { loadEnv } from "./lib/env.mjs"
 import { llm, smartChain } from "./lib/llm.mjs"
 import { tailJsonl } from "./lib/jsonl.mjs"
+import { isSecretJsonl } from "./lib/secret.mjs" // 🔒 lo que aprende el modelo de vos NO puede incluir canales secretos
 import { harden, fence } from "./lib/safety.mjs"
 import { owner } from "./lib/hub.mjs"
 
@@ -23,7 +24,9 @@ const dateStr = (t) => new Date(t).toISOString().slice(0, 10)
 function recentDigest() {
   const raw = tailJsonl("./data/messages.jsonl") // solo la cola (~12MB) — evita ERR_STRING_TOO_LONG en el jsonl de >1GB
   const msgs = []
-  for (const r of raw.slice(-6000)) { if (NOW - (r.ts || 0) < 12 * DAY) msgs.push(r) }
+  // 🔒 de acá salen 500 mensajes LITERALES al LLM y el resultado se escribe en vault/_Brain, que después se sincroniza a
+  // otro server. Leer el jsonl directo esquiva todos los filtros de la DB, así que el gateo va acá.
+  for (const r of raw.slice(-6000)) { if (NOW - (r.ts || 0) < 12 * DAY && !isSecretJsonl(r)) msgs.push(r) }
   const people = {}
   for (const m of msgs) { const k = m.name || m.sender || "?"; (people[k] ||= { in: 0, out: 0, ch: new Set() }); people[k][m.dir === "out" ? "out" : "in"]++; people[k].ch.add(m.channel) }
   // muestra: hasta 500 mensajes recientes, compactos

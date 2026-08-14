@@ -4,6 +4,7 @@
 import { readFileSync, existsSync, readdirSync } from "fs"
 import { llm } from "./lib/llm.mjs"
 import { ownerFirst, company } from "./lib/hub.mjs"
+import { isSecretJsonl } from "./lib/secret.mjs" // 🔒 lo que se le manda al LLM no puede incluir canales secretos
 
 const query = process.argv.slice(2).join(" ").trim()
 if (!query) { console.log('Uso: node src/who.mjs "Nombre Persona"'); process.exit(1) }
@@ -28,7 +29,7 @@ const card = existsSync(`./vault/People/${slug(canon)}.md`) ? readFileSync(`./va
 for (const c of (card.match(/channels: \[(.*?)\]/)?.[1] || "").split(",").map((s) => s.trim()).filter(Boolean)) chans.add(c)
 
 // ── 3. juntar eventos de TODOS los canales ──
-const events = j("./data/messages.jsonl").filter((e) => chans.has(channelId(e)) || names.has((e.name || "").toLowerCase()))
+const events = j("./data/messages.jsonl").filter((e) => !isSecretJsonl(e) && (chans.has(channelId(e)) || names.has((e.name || "").toLowerCase()))) // 🔒
 events.sort((a, b) => (a.ts || 0) - (b.ts || 0))
 const byChan = {}
 for (const e of events) byChan[e.channel] = (byChan[e.channel] || 0) + 1

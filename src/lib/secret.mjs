@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync, existsSync, unlinkSync, renameSync } from 
 import { randomBytes, scryptSync, timingSafeEqual } from "crypto"
 import { verifyPin as verifyMainPin, rateLimitedScoped, recordFailScoped, clearFailsScoped } from "./auth.mjs"
 import { handle } from "./db-core.mjs"
+import { computeThread } from "./thread.mjs" // el jsonl crudo no trae `thread`: lo calcula la ingesta
 
 const PIN_FILE = "./data/secret-pin.json"       // hash scrypt+salt del 2º PIN (gitignore como todo data/)
 const ACC_FILE = "./data/secret-accounts.json"  // qué cuentas son secretas: [{channel, account}]  (email=por-cuenta; msgs=por-red channel:*)
@@ -279,6 +280,24 @@ export function secretMsgExcludeSql() {
   if (emails.length) { parts.push(`(channel='email' AND lower(account) IN (${emails.map(() => "?").join(",")}))`); params.push(...emails) }
   if (hide.length) { parts.push(`thread IN (${hide.map(() => "?").join(",")})`); params.push(...hide) }
   return parts.length ? { clause: parts.join(" OR "), params } : { clause: null, params: [] }
+}
+// 🔒 ¿esta línea CRUDA de data/messages.jsonl es de fuente secreta?
+// Tres procesos leen ese archivo directo, salteándose la DB y todos sus filtros: el indexador del RAG, `learn` (que le manda
+// 500 mensajes al LLM y escribe vault/_Brain) y `graphify` (que escribe vault/People). El jsonl NO trae `thread` — lo calcula
+// la ingesta — y sin hilo no se ve el caso del import viejo, donde el número secreto vive SOLO en la clave del hilo.
+// Ante cualquier duda devuelve true: preferimos no aprender de un mensaje a escribirlo en una nota que después se sincroniza.
+let _jsonlIndeciso = false
+// ¿alguna vez, en este proceso, NO se pudo decidir? Ojo: no alcanza con mirar secretGate(), porque computeThread lee sus
+// propios mapas de contactos y un JSON roto ahí tira una excepción con el gate perfectamente sano — y entonces esto marca
+// TODO como secreto. Quien tome decisiones irreversibles con este resultado (graphify avanza un offset) tiene que preguntar.
+export function secretJsonlIndeciso() { return _jsonlIndeciso }
+export function isSecretJsonl(r) {
+  if (!r) return false
+  try { return isSecretRow({ ...r, thread: r.thread || computeThread(r) }) } catch (e) {
+    if (!_jsonlIndeciso) console.error("[secret] no pude calcular el hilo de una línea del jsonl:", e?.message || e, "— la doy por secreta")
+    _jsonlIndeciso = true
+    return true
+  }
 }
 // no-leídos de hilos 100% secretos (para restar del contador). Los parciales no se restan (over-count menor, no filtra contenido).
 export function secretUnread() {

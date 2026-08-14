@@ -214,3 +214,25 @@ test("archivos del CAS: se niegan por RUTA si el mensaje que los trae es secreto
   assert.equal(tr.casSecreto("/cas/bb22.jpg"), false, "la normal sí")
   assert.equal(tr.casSecreto("/cas/aa11.jpg", { secretOn: true }), false, "con 2º PIN sí")
 })
+
+// ── LO QUE SALE DE LA MÁQUINA ── Estos tres selectores alimentan procesos que mandan datos afuera: el audio crudo a un
+// servicio de transcripción, los cuerpos de correo a un resumidor, y un link a yt-dlp (que hace que TU IP pegue a
+// Instagram/TikTok con una URL que solo existe en un chat secreto). Ninguno filtraba.
+test("selectores de egreso: audio, correos y links de una fuente secreta no salen", () => {
+  const h = dbc.handle()
+  h.prepare("UPDATE messages SET mediaType='audio', media='/cas/aa.ogg' WHERE text=?").run("MENSAJE_SECRETO_MILI")
+  h.prepare("UPDATE messages SET mediaType='audio', media='/cas/bb.ogg' WHERE text=?").run("MENSAJE_NORMAL_MILI")
+  const audios = tr.audioToSummarize(0, { limit: 50 }).map((r) => r.media)
+  assert.ok(audios.includes("/cas/bb.ogg"), "el audio normal sí se transcribe")
+  assert.ok(!audios.includes("/cas/aa.ogg"), "el audio de la línea secreta NO se manda a transcribir")
+
+  h.prepare("UPDATE messages SET text=? WHERE text=?").run("mirá esto https://instagram.com/p/secreto", "MENSAJE_DE_SOLO")
+  const vids = tr.videoCandidates().map((r) => r.thread)
+  assert.ok(!vids.includes("solo"), "un link de un hilo secreto no se manda a descargar")
+
+  h.prepare("UPDATE messages SET channel='email', account='cuenta-secreta', body='<p>PRIVADO</p>', thread='solo' WHERE text=?").run("hola solo")
+  secret.setSecretAccount("email", "cuenta-secreta", true)
+  const mails = tr.emailsToSummarize({ limit: 50 }).map((r) => r.body)
+  assert.ok(!mails.includes("<p>PRIVADO</p>"), "el cuerpo de una cuenta secreta no va al resumidor")
+  secret.setSecretAccount("email", "cuenta-secreta", false)
+})

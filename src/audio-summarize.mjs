@@ -6,7 +6,7 @@ loadEnv() // self-suficiente: sin esto, corrido standalone (o spawn sin env here
 import { readFileSync, existsSync } from "fs"
 import { audioToSummarize, setMessageSummary, getMeta, setMeta } from "./lib/db.mjs"
 import { stt } from "./lib/voice.mjs"
-import { llm } from "./lib/llm.mjs"
+import { llm, smartChain } from "./lib/llm.mjs"
 
 const NOW = Date.now()
 const BATCH = +process.env.AUDIO_SUMMARY_BATCH || 12
@@ -44,7 +44,9 @@ export async function summarizeBatch(rows) {
     try {
       const text = (await stt(readFileSync(path), mimeFor(r.media))).trim()
       if (!text || text.length < 2) { setMessageSummary(r.id, "(sin voz clara)"); clear(r.id); continue }
-      const sum = (await llm(audioSummaryPrompt(text), { area: "summarize", temperature: 0.2, task: "audio-summary" })).trim().replace(/^["']+|["']+$/g, "")
+      // 🔒 la transcripción de una nota de voz tuya es dato máximamente privado: cadena sensible (local salvo escape explícito),
+      // igual que graphify o learn. Antes salía por la cadena por defecto, o sea nube primero.
+      const sum = (await llm(audioSummaryPrompt(text), { area: "summarize", temperature: 0.2, task: "audio-summary", feature: "audio-summary", chain: smartChain({ sensitive: true, feature: "audio-summary" }) })).trim().replace(/^["']+|["']+$/g, "")
       setMessageSummary(r.id, (sum || "(sin resumen)").slice(0, 600)); done++; clear(r.id)
     } catch (e) {
       const n = (fails[r.id] || 0) + 1; fails[r.id] = n; dirty = true

@@ -273,12 +273,14 @@ export function accountMessageStats(account) {
 // ── absorbidas en Wave 3 (reads) ──
 // mensajes con link de video y sin media todavía (candidatos del fetcher). (era video-fetch.candidates)
 export function videoCandidates() {
+  // 🔒 con esto yt-dlp sale a buscar el link a Instagram/TikTok: tu IP pega a ese sitio con una URL que solo existe en un
+  // chat secreto, y el archivo baja al CAS. Trae las columnas del filtro por-mensaje.
   return db().prepare(
-    `SELECT id, text, thread FROM messages WHERE media IS NULL AND (
+    `SELECT id, text, thread, channel, account, jid FROM messages WHERE media IS NULL AND (
        text LIKE '%instagram.com%' OR text LIKE '%tiktok.com%' OR text LIKE '%facebook.com%'
        OR text LIKE '%fb.watch%' OR text LIKE '%youtu%' OR text LIKE '%twitter.com%' OR text LIKE '%//x.com/%')
      ORDER BY ts DESC LIMIT 5000`
-  ).all()
+  ).all().filter((r) => !isSecretRow(r))
 }
 // mensajes ENTRANTES nuevos de conversaciones 1:1 (excluye grupos/canales/spam) desde una marca. (era msg-push)
 export function inbound1to1Since(since) {
@@ -294,10 +296,12 @@ export function totalUnread() {
 }
 // audios nuevos sin resumen (recibidos + notas de voz propias) desde una marca. (era audio-summarize)
 export function audioToSummarize(from, { limit } = {}) {
-  return db().prepare(`SELECT id, media, ts FROM messages
+  // 🔒 esto le manda el AUDIO CRUDO a un servicio de transcripción. Era el único selector de filas del archivo sin gate,
+  // justo al lado de messageById, cuyo comentario dice que transcribir es leer. Trae thread/channel/account/jid para decidir.
+  return db().prepare(`SELECT id, media, ts, thread, channel, account, jid FROM messages
     WHERE mediaType='audio' AND media IS NOT NULL AND media!='' AND (dir!='out' OR thread='self')
       AND (summary IS NULL OR summary='') AND ts >= ?
-    ORDER BY ts DESC LIMIT ?`).all(from, limit)
+    ORDER BY ts DESC LIMIT ?`).all(from, limit * 3 + 10).filter((r) => !isSecretRow(r)).slice(0, limit)
 }
 // un mensaje por id (o undefined). (era meetings.reprocessMeeting)
 // 🔒 mismo criterio que getBody: sin 2º PIN, un mensaje de fuente secreta no se entrega por id (reenviarlo, transcribirlo
@@ -532,6 +536,9 @@ export function mediaWithoutFile() {
 }
 // emails con cuerpo y sin resumen (para el cron de pitch/resumen). (era email-summarize)
 export function emailsToSummarize({ limit = 12 } = {}) {
-  return db().prepare(`SELECT id, name, text, body FROM messages
-  WHERE channel='email' AND body IS NOT NULL AND (summary IS NULL OR summary='') ORDER BY ts DESC LIMIT ?`).all(limit)
+  // 🔒 los cuerpos van a un resumidor. Hoy solo los tapa smartChain({sensitive}); si el usuario elige "resumen de emails"
+  // en la nube desde la Consola —opción legítima— salían enteros. El filtro va acá, no en la política del modelo.
+  return db().prepare(`SELECT id, name, text, body, thread, channel, account, jid FROM messages
+  WHERE channel='email' AND body IS NOT NULL AND (summary IS NULL OR summary='') ORDER BY ts DESC LIMIT ?`).all(limit * 3 + 10)
+    .filter((r) => !isSecretRow(r)).slice(0, limit)
 }

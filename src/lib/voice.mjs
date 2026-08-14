@@ -101,6 +101,10 @@ export async function stt(buf, mime = "audio/webm") {
     try { writeFileSync(f, buf); return (await transcribeWhisper(f, { lang: "es" })).trim() }
     finally { try { unlinkSync(f) } catch {} }
   }
+  // Elegiste transcripción LOCAL: si no hay backend local disponible, esto CORTA. Antes seguía de largo y le mandaba el
+  // audio crudo a OpenAI sin decir nada — el usuario había pedido explícitamente que el audio no saliera de la máquina.
+  // Quedarse sin transcripción es un problema; mandar la nota de voz a un tercero a espaldas del usuario es otro.
+  if (sttMode() === "local") throw new Error("stt: configuraste transcripción LOCAL y no hay whisper disponible (WHISPER_URL o whisper.cpp). NO mando el audio a la nube.")
   if (!OA()) throw new Error("no hay transcripción configurada (ni OpenAI ni whisper local)")
   // HARD_CAP de nube reventado → NO gastar STT en la nube (hueco del incidente cloud-leak: stt hacía su fetch por fuera del medidor).
   // Cae a whisper local si está disponible; si no, corta en vez de seguir sangrando el key managed.

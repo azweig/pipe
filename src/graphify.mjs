@@ -3,6 +3,7 @@
 // Uso:  node src/graphify.mjs           (procesa lo nuevo)
 //       node src/graphify.mjs --all     (reprocesa TODO desde cero)
 import { loadNewEvents, resetOffsets } from "./lib/store.mjs"
+import { isSecretJsonl, secretGate, secretJsonlIndeciso } from "./lib/secret.mjs" // 🔒 el grafo/vault no puede aprender de canales secretos (se sincroniza afuera)
 import { upsertNode, loadIdentity, saveIdentity } from "./lib/vault.mjs"
 import { llm, smartChain } from "./lib/llm.mjs"
 import { harden, fence } from "./lib/safety.mjs"
@@ -53,9 +54,18 @@ async function processBatch(events, known) {
 async function main() {
   if (process.argv.includes("--all")) { resetOffsets(); console.log("↻ reprocesando TODO desde cero") }
   const { events: allEvents, commit } = await loadNewEvents() // streaming por bytes (no crashea con el jsonl de >2GB)
-  const events = allEvents.filter((e) => e.dir !== "out") // los salientes no crean entidades, solo sirven al coach/who
+  // 🔒 graphify escribe vault/People/*.md con canales, menciones y timeline por mensaje, y eso se sincroniza a otro server.
+  // Lee el jsonl crudo (por offset de bytes), así que no pasa por ningún filtro de la DB: se gatea acá, en la entrada.
+  const events = allEvents.filter((e) => e.dir !== "out" && !isSecretJsonl(e)) // los salientes no crean entidades, solo sirven al coach/who
   if (!allEvents.length) { commit(); console.log("Sin eventos nuevos."); return } // commit igual: persiste el offset de bytes (migra el formato viejo)
-  if (!events.length) { commit(); console.log("Solo salientes — nada que grafiar."); return } // avanzar el offset igual
+  // Si el gate no se pudo calcular, isSecretJsonl dice que TODO es secreto (falla cerrado, y está bien). Pero acá eso se
+  // combinaba con avanzar el offset: los mensajes quedaban marcados como procesados y no se grafiaban NUNCA MÁS. El
+  // offset solo se mueve si sabemos de verdad que no había nada que aprender.
+  if (!events.length) {
+    const g = secretGate()
+    if (g.blockAll || g.degraded || secretJsonlIndeciso()) { console.error("[graphify] no pude decidir qué es secreto → NO avanzo el offset (reintento en la próxima corrida)"); return }
+    commit(); console.log("Solo salientes — nada que grafiar."); return
+  }
   console.log(`📥 ${events.length} eventos nuevos → graphify (lotes de ${BATCH})`)
 
   const identity = loadIdentity()

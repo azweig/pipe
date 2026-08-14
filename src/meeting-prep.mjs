@@ -5,7 +5,7 @@ import { readFileSync, existsSync, readdirSync } from "fs"
 import { llm } from "./lib/llm.mjs"
 import { researchEntity, hasWebSearch, linkedinProfile } from "./lib/research.mjs"
 import { owner, myEmails, ownerFirst, company } from "./lib/hub.mjs"
-import { isSecretMsg } from "./lib/secret.mjs" // 🔒 el prep de reunión no usa mensajes de fuente secreta
+import { isSecretJsonl } from "./lib/secret.mjs" // 🔒 el prep de reunión no usa mensajes de fuente secreta
 
 const query = process.argv.slice(2).join(" ").trim().toLowerCase()
 const j = (f) => (existsSync(f) ? readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean) : [])
@@ -28,7 +28,7 @@ let mtg = query ? cal.find((e) => (e.title || "").toLowerCase().includes(query))
 if (!mtg) { console.log(query ? `No encontré reunión con "${query}".` : "No hay reuniones próximas."); process.exit(0) }
 
 // ── 2. asistentes: resolver a nodos, separar desconocidos ──
-const events = j("./data/messages.jsonl").filter((e) => !isSecretMsg(e)) // 🔒
+const events = j("./data/messages.jsonl").filter((e) => !isSecretJsonl(e)) // 🔒 isSecretMsg no alcanza: el jsonl no trae `thread` y el import viejo se colaba
 const attendees = [...new Set([...(mtg.attendees || []), mtg.organizer].filter(Boolean))].filter((a) => !ME.includes(String(a).toLowerCase()))
 const known = [], unknown = []
 for (const a of attendees) {
