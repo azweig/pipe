@@ -236,3 +236,44 @@ test("selectores de egreso: audio, correos y links de una fuente secreta no sale
   assert.ok(!mails.includes("<p>PRIVADO</p>"), "el cuerpo de una cuenta secreta no va al resumidor")
   secret.setSecretAccount("email", "cuenta-secreta", false)
 })
+
+// El asistente responde preguntas hechas DESDE un hilo secreto. `localOnly` significa modelo LOCAL (no "sin internet":
+// lo que sale a buscar es la pregunta, no tus datos). El paso que razona sobre tu historial imponía su propia cadena
+// con la nube primero, así que ese contexto pasaba por un tercero igual.
+test("ask(localOnly): el modelo que razona sobre tu historial es local", async () => {
+  const ask = await import("../src/lib/brain/ask.mjs")
+  const src = (await import("node:fs")).readFileSync(new URL("../src/lib/brain/ask.mjs", import.meta.url), "utf8")
+  assert.ok(/export async function ask\(question, \{ localOnly/.test(src), "ask acepta localOnly")
+  assert.ok(/chain: localOnly \? smartChain\(\{ sensitive: true/.test(src), "y lo usa para elegir la cadena, no solo el llamador")
+  assert.equal(typeof ask.ask, "function")
+})
+
+// Los adjuntos de correo NO viven en la columna `media` sino en `attachments` (JSON). Mirar solo `media` dejaba el PDF de
+// una cuenta de correo secreta servido por HTTP sin 2º PIN — y el correo es el canal que más adjuntos genera.
+test("CAS: un ADJUNTO de correo de cuenta secreta tampoco se entrega por su ruta", () => {
+  const h = dbc.handle()
+  secret.setSecretAccount("email", "cuenta-x", true)
+  // filas propias: los tests anteriores mutan las del seed y el anclaje por texto deja de encontrarlas
+  const ins = h.prepare("INSERT INTO messages (id,thread,channel,account,dir,name,text,ts,attachments) VALUES (?,?,?,?,?,?,?,?,?)")
+  ins.run("att1", "email:secreto@x.example", "email", "cuenta-x", "in", "X", "con adjunto", 60,
+    JSON.stringify([{ name: "contrato.pdf", cas: "/cas/cd/attach.pdf", mime: "application/pdf", size: 10 }]))
+  ins.run("att2", "email:normal@x.example", "email", "cuenta-normal", "in", "Y", "con adjunto", 61,
+    JSON.stringify([{ name: "publico.pdf", cas: "/cas/ef/ok.pdf", mime: "application/pdf", size: 10 }]))
+  assert.equal(tr.casSecreto("/cas/cd/attach.pdf"), true, "el adjunto de la cuenta secreta no se sirve")
+  assert.equal(tr.casSecreto("/cas/ef/ok.pdf"), false, "el de la cuenta normal sí")
+  assert.equal(tr.casSecreto("/cas/cd/attach.pdf", { secretOn: true }), false, "con 2º PIN sí")
+  secret.setSecretAccount("email", "cuenta-x", false)
+  h.prepare("DELETE FROM messages WHERE id IN ('att1','att2')").run()
+})
+
+// El piloto se hace pasar por vos y le escribe a TERCEROS. Su material (persona, perfil de voz, respuestas pasadas) se
+// destila de tus salientes: sin filtro, una frase textual de un chat secreto salía hacia otro contacto.
+test("piloto: el material del que aprende no incluye canales secretos", async () => {
+  const ap = await import("../src/lib/brain/autopilot.mjs")
+  const src = (await import("node:fs")).readFileSync(new URL("../src/lib/brain/autopilot.mjs", import.meta.url), "utf8")
+  const consultas = src.match(/SELECT text[^`"]*FROM messages WHERE dir='out'[^`"]*/g) || []
+  assert.ok(consultas.length >= 2, "están las dos consultas que destilan tus salientes")
+  for (const c of consultas) assert.ok(/thread, channel, account, jid/.test(c), "traen las columnas del filtro por-mensaje")
+  assert.equal((src.match(/isSecretRow/g) || []).length >= 3, true, "y las tres fuentes filtran")
+  assert.equal(typeof ap.runAutopilot, "function")
+})

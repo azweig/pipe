@@ -104,7 +104,10 @@ export const looksEmptyAnswer = (t) => { const x = String(t || "").trim(); retur
 export async function answerQuestion(question, { web = true, localOnly = false } = {}) {
   const personalQ = PERSONAL.test(String(question || "")) // pregunta sobre SUS cosas → no sale a ningún buscador
   if (isSmallTalk(question)) return { text: "Acá estoy. Preguntame lo que necesites — busco en tus conversaciones y en internet.", smallTalk: true, usedWeb: false, ownMatches: 0 }
-  const own = await ask(question).catch(() => ({ answer: "", matches: 0 }))
+  // El MODELO local tiene que valer para todo el camino, no solo para la síntesis final: ask() arma su propia cadena con
+  // la nube primero, así que el paso que razona sobre tu historial usaba un tercero igual. (La búsqueda web sigue como
+  // está por decisión propia, arriba: lo que sale a buscar es la pregunta, no tus datos.)
+  const own = await ask(question, { localOnly }).catch(() => ({ answer: "", matches: 0 }))
   // Si el paso sobre TUS datos no encontró nada, suele devolver una NEGATIVA ("no hay información sobre…").
   // Pasarla como contexto contagia al modelo final, que repite la negativa incluso en preguntas de conocimiento
   // general. Ej. real: "¿cuál es la capital de Israel?" → "no tengo información explícita". Se descarta.

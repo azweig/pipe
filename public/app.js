@@ -2492,7 +2492,9 @@ window.sendMsg = async () => {
 async function showSendOptions(text, ch) {
   if (!text || !text.trim() || !convState) return
   openSheet(`<div class="row" style="gap:8px;padding:0;background:none;box-shadow:none;margin:0">${ORB}<b>Revisando tu texto…</b></div>`)
-  const c = await post("/api/compose/correct", { text, channel: ch }) || { original: text, corrected: text, alternative: "" }
+  // 🔒 se manda la clave del hilo: el server la necesita para saber si el destino es una cuenta secreta y, en ese caso,
+  // corregir con el modelo local en vez de mandar lo que estás escribiendo a un tercero.
+  const c = await post("/api/compose/correct", { text, channel: ch, key: convState.key }) || { original: text, corrected: text, alternative: "" }
   const opt = (val, tag, hi) => (val && val.trim()) ? `<button class="sendopt${hi ? " hi" : ""}" onclick="closeSheet();pickSend('${enck(val)}')"><div class="so-tag">${tag}</div><div class="so-txt">${esc(val)}</div></button>` : ""
   const corr = (c.corrected || "").trim(), orig = (c.original || text).trim(), alt = (c.alternative || "").trim()
   const corrChanged = corr && corr !== orig

@@ -272,7 +272,10 @@ Devolvé SOLO el texto, como lo escribiría ${ownerFirst()}.`, { system: UNTRUST
 // ── COMPOSITOR: corrección rápida ANTES de enviar (los teclados son malos). Devuelve 3 opciones: original, corregido y
 // una alternativa mejor redactada del MISMO mensaje. LLM liviano y rápido (es solo corregir un texto corto).
 
-export async function composeCorrect(text, { channel } = {}) {
+// `localOnly`: lo que estás escribiendo va para un hilo SECRETO. Esta función corregía SIEMPRE con la nube (y con un
+// fallback que fuerza OpenAI), o sea que el texto que tecleabas en el chat secreto salía a un tercero antes de enviarlo.
+// La firma no recibía el hilo, así que no había dónde decidir: ahora sí.
+export async function composeCorrect(text, { channel, localOnly = false } = {}) {
   const { scheduleSlots } = await import("./schedule.mjs") // huecos libres para el "momento de espera" del envío (runtime)
   const t = (text || "").trim()
   if (t.length < 2) return { original: t, corrected: t, alternative: "" }
@@ -298,7 +301,7 @@ Texto: """${tMasked}"""`
   const primary = llm(prompt, {
     json: true,
     feature: "correct",
-    chain: process.env.LLM_CHAIN_CORRECT || "openai,ollama",
+    chain: localOnly ? "ollama" : (process.env.LLM_CHAIN_CORRECT || "openai,ollama"), // 🔒 hilo secreto → solo modelo local
     models: { ollama: process.env.OLLAMA_MODEL_CORRECT || "qwen2.5:3b" },
     numPredict: 260,
     temperature: 0.2,
@@ -312,6 +315,7 @@ Texto: """${tMasked}"""`
       r = await Promise.race([primary, new Promise((_, rej) => setTimeout(() => rej(new Error("correct-timeout")), CORRECT_TIMEOUT_MS))])
     } catch (e1) {
       // fallback: SIN feature → no rutea a la GPU box; chain "openai" fuerza la nube (la key ya está validada). Solo si existe.
+      if (localOnly) throw e1 // 🔒 hilo secreto: sin fallback a la nube — mejor no corregir que filtrar lo que estás escribiendo
       if (!process.env.OPENAI_API_KEY) throw e1
       r = await llm(prompt, { json: true, chain: "openai", numPredict: 260, temperature: 0.2, task: "correct-fallback", bypassCap: true })
     }

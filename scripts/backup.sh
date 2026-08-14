@@ -76,8 +76,29 @@ if [ -n "${BACKUP_RCLONE_REMOTE:-}" ] && command -v rclone >/dev/null; then
   #     Content-addressed = inmutable → 'copy' es incremental (solo sube blobs nuevos) y ADITIVO (nunca borra del backup, ni siquiera
   #     si el CAS local se trunca/corrompe — por eso copy y NO sync). El índice (cas.db) ya va en el bundle cifrado de arriba.
   if [ -d data/cas ]; then
-    rclone copy data/cas "$BACKUP_RCLONE_REMOTE/cas" --transfers 8 --checkers 16 \
-      && echo "→ CAS offsite: $(du -sh data/cas 2>/dev/null | cut -f1)"
+    # 🔒 A DIFERENCIA del bundle de arriba, esto sube los blobs TAL CUAL: sin cifrar, al almacenamiento de un tercero.
+    #    Las fotos, PDFs y notas de voz de una cuenta secreta no pueden salir así, y sin un remoto cifrado la única
+    #    opción honesta es dejarlas fuera y decirlo. Si tu remoto ES un `crypt:` de rclone, poné BACKUP_CAS_CIFRADO=1
+    #    y se suben todas (ahí sí viajan cifradas de punta a punta).
+    EXC=""
+    if [ "${BACKUP_CAS_CIFRADO:-0}" != "1" ]; then
+      LISTA="$TMP/cas-secretos.txt"
+      if node scripts/cas-secretos.mjs > "$LISTA" 2>/dev/null; then
+        if [ -s "$LISTA" ]; then
+          EXC="--exclude-from $LISTA"
+          echo "  ⚠️  $(wc -l < "$LISTA" | tr -d ' ') archivos de cuentas secretas NO se suben (el remoto no está cifrado)."
+          echo "      Si tu remoto es un 'crypt:' de rclone, exportá BACKUP_CAS_CIFRADO=1 para incluirlos."
+        fi
+      else
+        echo "  ⛔ no pude determinar qué archivos son de cuentas secretas → NO subo el CAS offsite." >&2
+        SKIP_CAS=1
+      fi
+    fi
+    if [ "${SKIP_CAS:-0}" != "1" ]; then
+      # shellcheck disable=SC2086
+      rclone copy data/cas "$BACKUP_RCLONE_REMOTE/cas" --transfers 8 --checkers 16 $EXC \
+        && echo "→ CAS offsite: $(du -sh data/cas 2>/dev/null | cut -f1)"
+    fi
   fi
 else
   echo "⚠️  sin BACKUP_RCLONE_REMOTE: el backup vive en el MISMO disco que la data (un fallo de disco = pérdida total) y los 64GB de"

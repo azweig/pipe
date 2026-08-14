@@ -293,7 +293,11 @@ let _jsonlIndeciso = false
 export function secretJsonlIndeciso() { return _jsonlIndeciso }
 export function isSecretJsonl(r) {
   if (!r) return false
-  try { return isSecretRow({ ...r, thread: r.thread || computeThread(r) }) } catch (e) {
+  // SIEMPRE se calcula, nunca `r.thread || computeThread(r)`: el jsonl sí trae `thread`, pero en formato CRUDO y sin el
+  // prefijo del canal ("1555…@s.whatsapp.net"), mientras que el conjunto de hilos ocultos guarda la clave ya normalizada
+  // ("whatsapp:1555…@s.whatsapp.net"). Con el `||`, el valor crudo ganaba, no matcheaba nunca, y esta función quedaba
+  // idéntica a isSecretMsg — o sea, sin la protección que venía a agregar.
+  try { return isSecretRow({ ...r, thread: computeThread(r) || r.thread }) } catch (e) {
     if (!_jsonlIndeciso) console.error("[secret] no pude calcular el hilo de una línea del jsonl:", e?.message || e, "— la doy por secreta")
     _jsonlIndeciso = true
     return true

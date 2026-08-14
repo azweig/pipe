@@ -12,7 +12,7 @@ import { phoneOf, MY_NUMBERS, nameExtends } from "../thread.mjs"
 import { ownerFirst, company } from "../hub.mjs"
 import { llm } from "../llm.mjs"
 import { threadTargets } from "./reply.mjs" // contactProfile compone los destinos del contacto (hoisted, llamada en runtime)
-import { isSecretMsg, secretThreadKeys } from "../secret.mjs" // 🔒 fichas/tarjetas/timeline no muestran mensajes de fuente secreta sin 2º PIN
+import { isSecretMsg, isSecretJsonl, secretThreadKeys } from "../secret.mjs" // 🔒 fichas/tarjetas/timeline no muestran mensajes de fuente secreta sin 2º PIN
 
 // PERFIL de contacto (rico, desde la DB → confiable y completo). Para la página de persona.
 export function contactProfile(key) {
@@ -50,7 +50,7 @@ export function personView(nameOrKey) {
     for (const c of (fm(card, "channels")).split(",").map((s) => s.trim()).filter(Boolean)) chans.add(c)
     filter = (e) => chans.has(channelId(e)) || names.has((e.name || "").toLowerCase())
   } else filter = (e) => `${e.channel}:${e.jid || e.account}` === nameOrKey
-  const timeline = events.filter(filter).filter((e) => !isSecretMsg(e)).sort((a, b) => (a.ts || 0) - (b.ts || 0)) // 🔒 saca los mensajes del canal secreto (contacto parcial); un contacto 100%-secreto queda con timeline vacío
+  const timeline = events.filter(filter).filter((e) => !isSecretJsonl(e)).sort((a, b) => (a.ts || 0) - (b.ts || 0)) // 🔒 saca los mensajes del canal secreto (contacto parcial); un contacto 100%-secreto queda con timeline vacío
     .map((e) => ({ ts: e.ts, channel: e.channel, dir: e.dir || "in", text: e.text || "", media: e.media || null, kind: e.kind || null, who: e.dir === "out" ? "Vos" : (e.name || canon || numOf(e.jid) || "?") }))
   const card = canon ? cardFor("People", canon) : ""
   const links = [...new Set([...card.matchAll(/\[\[([^\]]+)\]\]/g)].map((m) => m[1]))].filter((x) => x !== canon)

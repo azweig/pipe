@@ -32,8 +32,19 @@ export function getBody(id, { secretOn = false } = {}) { const r = db().prepare(
 export function casSecreto(pub, { secretOn = false } = {}) {
   if (secretOn) return false
   const p = String(pub || "").trim(); if (!p) return false
-  try { return db().prepare("SELECT thread, channel, account, jid FROM messages WHERE media=? LIMIT 50").all(p).some((r) => isSecretRow(r)) }
-  catch { return true } // si no se puede consultar, no se entrega
+  try {
+    if (db().prepare("SELECT thread, channel, account, jid FROM messages WHERE media=? LIMIT 50").all(p).some((r) => isSecretRow(r))) return true
+    // Los ADJUNTOS de correo no viven en `media`: van en la columna `attachments`, un JSON [{name,cas,mime,size}]. Mirar
+    // solo `media` dejaba el PDF de una cuenta de correo secreta servido por HTTP sin 2º PIN — y el correo es justo el
+    // canal que más adjuntos genera. El LIKE acota por el hash antes de parsear (el hash está dentro del JSON).
+    const hash = p.replace(/^\/?(cas|media)\//, "")
+    if (!hash) return false
+    return db().prepare("SELECT thread, channel, account, jid, attachments FROM messages WHERE attachments IS NOT NULL AND attachments LIKE ? LIMIT 50")
+      .all(`%${hash}%`).some((r) => {
+        if (!isSecretRow(r)) return false
+        try { return (JSON.parse(r.attachments) || []).some((a) => String(a?.cas || "").includes(hash)) } catch { return true }
+      })
+  } catch { return true } // si no se puede consultar, no se entrega
 }
 export function getAttachments(id) { const r = db().prepare("SELECT attachments FROM messages WHERE id=?").get(id); return r?.attachments || null } // JSON de adjuntos (incluye los inline cid:)
 export function setAttachments(id, json) { db().prepare("UPDATE messages SET attachments=? WHERE id=?").run(json, id) } // el trigger de rev bumpea solo → los clientes re-sincronizan

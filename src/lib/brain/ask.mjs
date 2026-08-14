@@ -3,7 +3,7 @@ import { existsSync, statSync, readFileSync } from "fs"
 import { embed, topK } from "../embed.mjs"
 import { route as routeFacets, activate as activateGraph } from "../router.mjs"
 import { search as dbSearch, searchBody as dbSearchBody, conversationsByThreads as dbConvsByThreads, filesByTerms as dbFilesByTerms, mediaInThreads as dbMediaInThreads, bodyMatchInThreads as dbBodyMatch, recentInThread as dbRecentInThread, messageById as dbMessageById } from "../db.mjs"
-import { llm } from "../llm.mjs"
+import { llm, smartChain } from "../llm.mjs"
 import { UNTRUSTED_NOTE } from "../safety.mjs"
 import { ownerFirst } from "../hub.mjs"
 import { stripWA } from "./kernel/keys.mjs"
@@ -70,7 +70,10 @@ export async function retrieveContext(question, { limit = 14, semantic: useSeman
   return { items: ctxItems.slice(0, limit), semanticOk }
 }
 
-export async function ask(question) {
+// `localOnly`: la pregunta viene de una línea SECRETA → el modelo que razona sobre tu historial tiene que ser local.
+// Antes esta función imponía su propia cadena (nube primero) y el llamador solo cuidaba la síntesis final, así que el
+// contexto igual pasaba por un tercero.
+export async function ask(question, { localOnly = false } = {}) {
   const fmt = (ts) => new Date(ts).toISOString().slice(0, 16).replace("T", " ")
   const { items: ctxItems, semanticOk } = await retrieveContext(question, { limit: 28 })
   if (!semanticOk) console.warn("[ask] RAG semántico no disponible (Ollama caído) → respondo solo por búsqueda de palabras (FTS)") // #29: ya no es silencioso
@@ -88,7 +91,7 @@ ${ctx || "(sin datos)"}
 
 RESPUESTA:`
   // gemini primero (rápido/confiable); ollama en este box cuelga con prompts grandes. catch para no romper el endpoint.
-  const answer = await llm(prompt, { system: UNTRUSTED_NOTE, feature: "ask", chain: process.env.LLM_CHAIN_ASK || "gemini,ollama", temperature: 0.2, task: "ask", bypassCap: true }).then((s) => (s || "").trim()).catch(() => "")
+  const answer = await llm(prompt, { system: UNTRUSTED_NOTE, feature: "ask", chain: localOnly ? smartChain({ sensitive: true, feature: "ask" }) : (process.env.LLM_CHAIN_ASK || "gemini,ollama"), temperature: 0.2, task: "ask", bypassCap: true }).then((s) => (s || "").trim()).catch(() => "")
   return { answer, matches: ctxItems.length, ragMode: semanticOk ? "semántico" : "keyword", degraded: !semanticOk }
 }
 

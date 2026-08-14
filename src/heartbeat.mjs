@@ -3,6 +3,7 @@
 import { readFileSync, writeFileSync, renameSync, existsSync } from "fs"
 import { channelHealth, ingestLag } from "./lib/brain.mjs"
 import { storageStatus } from "./lib/quota.mjs"
+import { isSecretNumber } from "./lib/secret.mjs" // 🔒 el push va a la pantalla de bloqueo, sin 2º PIN
 
 const F = "./data/health-alert.json"
 const NOW = Date.now()
@@ -44,7 +45,11 @@ try {
       const downFresh = down.filter((n) => NOW - (state["wa:" + n] || 0) > 20 * 3600e3)
       if (downFresh.length) {
         const push = await import("./lib/push.mjs")
-        const r = await push.sendPush({ title: "⚠️ WhatsApp desconectado", body: `Revinculá en /link: ${downFresh.join(", ")}. Reciben pero no pueden enviar.`, url: "/link", tag: "wa-loggedout" })
+        // 🔒 la notificación aparece en la pantalla de bloqueo, sin 2º PIN de por medio: un número marcado como secreto no
+        // puede salir ahí. Si el que se cayó es secreto, se avisa igual pero sin decir cuál.
+        const visibles = downFresh.filter((n) => !isSecretNumber(n))
+        const cuales = visibles.length === downFresh.length ? downFresh.join(", ") : (visibles.length ? `${visibles.join(", ")} (y otra línea)` : "una de tus líneas")
+        const r = await push.sendPush({ title: "⚠️ WhatsApp desconectado", body: `Revinculá en /link: ${cuales}. Reciben pero no pueden enviar.`, url: "/link", tag: "wa-loggedout" })
         console.log(`heartbeat: WhatsApp caído (${downFresh.join(", ")}) → push a ${r.sent}`)
         for (const n of downFresh) state["wa:" + n] = NOW
         save(state)

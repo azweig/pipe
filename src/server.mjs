@@ -25,7 +25,7 @@ import { localFlags, clientIpFrom, csrfReason, hostAllowed } from "./lib/http-ga
 import * as maintenance from "./lib/maintenance.mjs"
 import * as mailArchive from "./lib/mail-archive.mjs"
 import { ocrCas, ocrEnabled } from "./lib/ocr.mjs"
-import { casSecreto } from "./lib/db.mjs" // 🔒 gateo de archivos del CAS por ruta (OCR, papelera, /cas/)
+import { casSecreto, searchThreadKeys } from "./lib/db.mjs" // 🔒 gateo de archivos del CAS por ruta (OCR, papelera, /cas/)
 import { cuarentenaVault, restaurarVault, purgarRagDeNotas } from "./lib/secret-vault.mjs" // 🔒 notas del vault ya escritas
 import { clipFlag, getMeta, delMeta, delMetaLike, rebuildStats, freeThreadMedia, restoreMedia, listNotes, noteCategories, noteJunkCount, noteAction, totalUnread } from "./lib/db.mjs"
 import { channelCatalog, bridgeNets, tokenNets } from "./lib/channels.mjs" // registro de canales (única fuente de verdad de qué canales hay + cómo se vinculan)
@@ -47,9 +47,31 @@ function setSid(res, token, ttl, secure) { res.setHeader("Set-Cookie", `sid=${to
 function tokEq(given, expected) { const a = Buffer.from(String(given || "")), b = Buffer.from(String(expected || "")); return a.length === b.length && timingSafeEqual(a, b) }
 // 🔒 al marcar/desmarcar una cuenta secreta: purga los artefactos DERIVADOS horneados por cron (pueden ser PREVIOS a la marca → contienen
 // lo secreto). Se regeneran filtrados en el próximo cron; mientras, los fallbacks EN VIVO (home/coach/notas/cards) ya excluyen lo secreto.
+// 🔒 ¿este NOMBRE (o clave) de contacto corresponde a algo secreto? El gate por-hilo compara contra claves de hilo, así que
+// una ruta que recibe "Laura Fields" en el cuerpo de un POST se le escapa. Acá se resuelve el nombre a su hilo primero.
+// Se usa en las rutas que redactan/preparan con un LLM: escribirle un borrador a un contacto secreto es leer su historial.
+function secretoPorNombre(nombreOClave) {
+  const v = String(nombreOClave || "").trim()
+  if (!v) return false
+  try {
+    const g = secret.secretGate()
+    if (g.blockAll) return true
+    if (g.hide.has(v) || g.preview.has(v)) return true
+    const norm = (s) => String(s || "").trim().toLowerCase()
+    for (const k of g.hide) if (norm(k) === norm(v)) return true
+    // El nombre no es una clave del hilo: hay que resolverlo. Se usa el buscador de claves (índice FTS sobre el nombre +
+    // LIKE sobre thread_stats) y NO listThreads: ésa arma 600 hilos y su cache guarda una sola entrada por límite, así
+    // que llamarla acá recomputaba todo en cada request Y desalojaba el cache de la bandeja.
+    return searchThreadKeys(v, { limit: 40 }).some((k) => g.hide.has(k) || g.preview.has(k))
+  } catch { return true } // si no se puede decidir, no se redacta
+}
 function purgeSecretDerived() {
   try { for (const k of ["home_brief", "notes_digest"]) delMeta(k) } catch {}          // snapshots de texto libre (LLM)
   try { for (const p of ["personcard:", "mtgcard:", "espcard:"]) delMetaLike(p) } catch {} // tarjetas pre-generadas por contacto/reunión/espacio
+  // Todo lo DESTILADO de tus salientes: perfil de estilo (singular y el plural por categoría), la persona y el perfil de
+  // voz del piloto. Los cuatro se armaron con texto de la línea que acabás de marcar y vuelven a entrar al LLM en cada
+  // borrador. Se borran para que se reconstruyan limpios (las consultas que los reconstruyen ya filtran).
+  try { for (const f of ["./data/style-profile.json", "./data/style-profiles.json", "./data/persona.json", "./data/voice-profile.json"]) if (existsSync(f)) unlinkSync(f) } catch {}
   try { brain.invalidateThreads() } catch {}
   try { brain.invalidateCoach() } catch {}
   // 🔒 el vault ya escrito. Filtrar la entrada evita que se escriba MÁS, pero las notas que graphify/learn ya generaron
@@ -398,7 +420,7 @@ const server = createServer(async (req, res) => {
         }
       }
       if (path === "/api/oauth/google/configured") return json(res, 200, { configured: goauth.googleConfigured() })
-      if (path === "/api/wa/status") return json(res, 200, { loggedOut: await loggedOutNumbers() }) // números WhatsApp caídos → banner de re-link
+      if (path === "/api/wa/status") { const lo = await loggedOutNumbers(); return json(res, 200, { loggedOut: secretOn ? lo : lo.filter((n) => !secret.isSecretNumber(n)) }) } // 🔒 el banner de re-vinculación mostraba el número secreto // números WhatsApp caídos → banner de re-link
       if (path === "/api/summary") return json(res, 200, brain.summary())
       if (path === "/api/threads") { let t = brain.listThreads({ limit: +q.limit || 100, q: (q.q || "").slice(0, 80) }); if (!secretOn) { const g = secret.secretGate(); if (g.any) t = t.filter((x) => !g.hide.has(x.key)).map((x) => { const p = g.preview.get(x.key); return p ? { ...x, lastText: ((p.text || "").replace(/\s+/g, " ").slice(0, 120)) || "…", ts: p.ts, lastChannel: p.channel || x.lastChannel } : x }) } return jsonCached(req, res, t) } // 🔒 oculta hilos 100% secretos + parchea el preview de los parciales al último mensaje NO-secreto
       // OCR local (opcional): extrae texto de una imagen/PDF del CAS (facturas, documentos) sin nube. Requiere OCR_URL.
@@ -410,7 +432,7 @@ const server = createServer(async (req, res) => {
       if (path === "/api/coach") return json(res, 200, brain.coachData())
       if (path === "/api/coach/action" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.coachAction(b.key, b.action)) }
       if (path === "/api/spam/unmark" && req.method === "POST") { const b = await body(req); if (b.key) setNotSpam(b.key); return json(res, 200, { ok: true }) } // #31: corregir falso positivo del clasificador
-      if (path === "/api/compose/correct" && req.method === "POST") { const b = await body(req); return json(res, 200, await brain.composeCorrect(b.text, { channel: b.channel })) } // 3 opciones antes de enviar
+      if (path === "/api/compose/correct" && req.method === "POST") { const b = await body(req); const localOnly = secretoPorNombre(b.key) || secretoPorNombre(b.name); return json(res, 200, await brain.composeCorrect(b.text, { channel: b.channel, localOnly })) } // 3 opciones antes de enviar
       if (path === "/api/coach/weekly") return json(res, 200, await brain.weeklyReview())
       if (path === "/api/coach/social") return json(res, 200, await brain.socialDigest({ days: +q.days || 3, force: q.force === "1" })) // resumen IG/FB/LinkedIn (cacheado 2h)
       if (path === "/api/coach/linkedin") return json(res, 200, await brain.linkedinDrafts({ force: q.force === "1" })) // borradores LinkedIn (cacheados)
@@ -439,8 +461,12 @@ const server = createServer(async (req, res) => {
       if (path === "/api/search") { const b = await body(req); return json(res, 200, brain.searchMessages(b.q || q.q || "")) }
       if (path === "/api/ask") { const b = await body(req); return json(res, 200, await brain.ask(b.q || q.q || "")) }
       if (path === "/api/router-search") { const b = await body(req); return json(res, 200, await brain.routerSearch(b.q || q.q || "")) } // robotito: facetas (0 tokens) → fallback RAG
-      if (path === "/api/reply") { const b = await body(req); return json(res, 200, await brain.draftReply(b.name || "", b.instruction || "")) }
-      if (path === "/api/meeting-prep") return json(res, 200, await brain.meetingPrep(q.q || ""))
+      // 🔒 estos dos toman el contacto del CUERPO del POST (b.name), y el gate por-hilo de arriba solo mira el query
+      // string → se lo salteaban enteros. Redactarle un borrador a alguien es leerle el historial, así que se chequea acá.
+      // La respuesta es la MISMA que para un nombre que no existe: un "secret:true" sería un oráculo (preguntás un nombre
+      // y la propia respuesta te confirma que esa persona existe y está oculta).
+      if (path === "/api/reply") { const b = await body(req); if (!secretOn && secretoPorNombre(b.name)) return json(res, 200, { error: "El último mensaje ya es tuyo — nada pendiente." }); return json(res, 200, await brain.draftReply(b.name || "", b.instruction || "")) }
+      if (path === "/api/meeting-prep") { if (!secretOn && secretoPorNombre(q.q)) return json(res, 200, { error: "No hay reunión." }); return json(res, 200, await brain.meetingPrep(q.q || "")) }
       // ── voz + briefing ──
       if (path === "/api/briefing") { const override = q.lat ? { lat: +q.lat, lon: +q.lon, name: q.name, city: q.city, tz: q.tz } : null; return json(res, 200, await briefing.buildBriefing({ override })) }
       if (path === "/api/daily-plan") return json(res, 200, await briefing.dailyPlan())

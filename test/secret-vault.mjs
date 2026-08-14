@@ -162,3 +162,23 @@ test("un GRUPO de la línea secreta no convierte a sus participantes en cuentas 
   assert.ok(!objs.nombres.has("carla reyes"), "…pero sus participantes no son cuentas secretas: hablás con ellos por la otra línea")
   h.prepare("DELETE FROM messages WHERE id='g1'").run()
 })
+
+test("purgarRagDeNotas: escribe por partes y avisa si falla (antes reventaba en silencio con un índice grande)", () => {
+  const rag = join(dir, "data", "rag.jsonl")
+  const lineas = []
+  for (let i = 0; i < 5000; i++) lineas.push(JSON.stringify({ id: `note:People/Rita#${i}`, kind: "note", ref: "People/Rita", text: "x", vec: [i] }))
+  lineas.push(JSON.stringify({ id: "note:People/Pedro#0", kind: "note", ref: "People/Pedro", text: "ok", vec: [1] }))
+  lineas.push(JSON.stringify({ id: "msg:abc", kind: "msg", ref: "whatsapp/x", text: "m", vec: [2] }))
+  lineas.push("{esto no es json}") // línea corrupta: se conserva, no se pierde data
+  writeFileSync(rag, lineas.join("\n") + "\n")
+  const quitadas = sv.purgarRagDeNotas(["People/Rita.md"])
+  assert.equal(quitadas, 5000, "todas las líneas de esa nota, en varios volcados")
+  const quedan = readFileSync(rag, "utf8").trim().split("\n")
+  assert.equal(quedan.length, 3, "lo demás intacto, incluida la línea corrupta")
+  assert.ok(quedan.includes("{esto no es json}"))
+  // y el caso que el índice MIXTO esquivaba: si hay que quitar TODO, el temporal nunca se creaba, el rename fallaba con
+  // ENOENT y el catch devolvía 0 — el índice secreto quedaba entero justo cuando había que vaciarlo.
+  writeFileSync(rag, [0, 1, 2].map((i) => JSON.stringify({ id: `note:People/Rita#${i}`, kind: "note", ref: "People/Rita", text: "todo secreto", vec: [i] })).join("\n") + "\n")
+  assert.equal(sv.purgarRagDeNotas(["People/Rita.md"]), 3, "se quitan las tres")
+  assert.equal(readFileSync(rag, "utf8").trim(), "", "y el índice queda vacío de verdad")
+})

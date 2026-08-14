@@ -39,9 +39,10 @@ try {
   // un cálculo bueno previo del que agarrarse: hay que preguntar explícitamente.
   const g = secretGate()
   if (g.blockAll || g.degraded) { console.error("[vault-sync] ⛔ no puedo calcular qué cuentas son secretas → NO sincronizo (reintento en la próxima corrida)"); process.exit(1) }
-  const { cuarentenaVault, restaurarVault } = await import("./lib/secret-vault.mjs")
+  const { cuarentenaVault, restaurarVault, purgarRagDeNotas } = await import("./lib/secret-vault.mjs")
   const vueltas = restaurarVault() // lo que dejó de ser secreto vuelve al vault antes de subirlo
   const movidas = cuarentenaVault()
+  if (movidas.length) purgarRagDeNotas(movidas) // si no, la nota sale del vault pero sus vectores siguen alimentando a la IA
   if (movidas.length || vueltas.length) console.log(`[vault-sync] 🔒 ${movidas.length} notas apartadas, ${vueltas.length} devueltas antes de sincronizar`)
 } catch (e) { console.error("[vault-sync] ⛔ no pude revisar las cuentas secretas → NO sincronizo:", e?.message || e); process.exit(1) }
 try {

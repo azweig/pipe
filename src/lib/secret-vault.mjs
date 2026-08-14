@@ -17,7 +17,7 @@
 // bordes: comparar sopas de dígitos daba falsos positivos absurdos (una fecha + un presupuesto "parecían" el número).
 //
 // LÍMITE HONESTO: una nota que hable de la persona con un apodo que no está en la base ni en los alias no se detecta.
-import { existsSync, readFileSync, readdirSync, mkdirSync, renameSync, rmdirSync, writeFileSync, statSync } from "fs"
+import { existsSync, readFileSync, readdirSync, mkdirSync, renameSync, rmdirSync, appendFileSync, writeFileSync, unlinkSync, statSync } from "fs"
 import { join, dirname, relative, basename } from "path"
 import { listSecretNumbers, listSecretAccounts, secretThreadKeys, secretGate } from "./secret.mjs"
 import { handle } from "./db-core.mjs"
@@ -174,27 +174,37 @@ export function restaurarVault() {
 // vuelve a agregar en la corrida siguiente (reconstruye su set de ids leyendo el archivo).
 export function purgarRagDeNotas(refsRelativas = []) {
   if (!refsRelativas.length || !existsSync(RAG)) return 0
-  const fuera = new Set(refsRelativas.map((r) => String(r).replace(/\.md$/, "")))
+  const fuera = new Set(refsRelativas.map((r) => String(r).replace(ES_NOTA, "")))
   const tmp = `${RAG}.${process.pid}.tmp`
   let quitadas = 0
   try {
-    const buf = readFileSync(RAG)
-    const salida = []
-    let start = 0
+    // Se escribe línea por línea con appendFileSync, NO juntando todo con join(): el índice puede pasar los ~512MB que
+    // aguanta un string en Node y reventaba con ERR_STRING_TOO_LONG — dentro de un catch que devolvía 0 en silencio, o
+    // sea que la purga "no hacía nada" justo en las instalaciones donde más hacía falta.
+    const buf = readFileSync(RAG) // el Buffer sí supera ese límite
+    // el temporal se crea VACÍO antes del bucle: si TODAS las líneas se quitan nunca se appendeaba nada, el rename
+    // fallaba con ENOENT y el catch devolvía 0 — o sea, el índice quedaba intacto justo cuando había que vaciarlo entero.
+    writeFileSync(tmp, "")
+    let start = 0, pendiente = []
+    const volcar = () => { if (pendiente.length) { appendFileSync(tmp, pendiente.join("\n") + "\n"); pendiente = [] } }
     for (let i = 0; i < buf.length; i++) {
       if (buf[i] !== 10) continue
       const linea = buf.toString("utf8", start, i); start = i + 1
       if (!linea) continue
-      let r; try { r = JSON.parse(linea) } catch { salida.push(linea); continue }
-      // ref de una nota = "People/Fulano#3" → comparamos contra la parte anterior al #
-      const ref = String(r.ref || "").split("#")[0]
+      let r; try { r = JSON.parse(linea) } catch { pendiente.push(linea); if (pendiente.length >= 2000) volcar(); continue }
+      const ref = String(r.ref || "").split("#")[0] // "People/Fulano#3" → "People/Fulano"
       if (r.kind === "note" && fuera.has(ref)) { quitadas++; continue }
-      salida.push(linea)
+      pendiente.push(linea)
+      if (pendiente.length >= 2000) volcar()
     }
-    if (!quitadas) return 0
-    writeFileSync(tmp, salida.join("\n") + "\n")
+    volcar()
+    if (!quitadas) { try { unlinkSync(tmp) } catch {}; return 0 }
     renameSync(tmp, RAG)
-  } catch { return 0 }
+  } catch (e) {
+    console.error("[secret] no pude purgar el índice semántico:", e?.message || e)
+    try { unlinkSync(tmp) } catch {}
+    return 0
+  }
   return quitadas
 }
 
