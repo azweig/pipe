@@ -11,7 +11,10 @@
 // Una cadena sin traducir cae en español. Es un fallback deliberado: mejor español legible que un hueco.
 (function () {
   "use strict"
-  var LANGS = ["es", "en", "pt", "fr", "de", "zh", "ja"] // los mismos que pipe.one
+  // SOLO los idiomas que TIENEN diccionario en /i18n/. Ofrecer los 7 de pipe.one era prometer de más: elegir Deutsch
+  // recargaba, el import de /i18n/de.js caía en el fallback SPA (200 con index.html → falla el parse) y la app quedaba
+  // ENTERA en español con el selector marcando alemán. Agregar un idioma = sumar su archivo y sumarlo acá.
+  var LANGS = ["es", "en", "pt"]
   var NAMES = { es: "Español", en: "English", pt: "Português", fr: "Français", de: "Deutsch", zh: "中文", ja: "日本語" }
   var LANG = (function () {
     try { var s = localStorage.getItem("lang"); if (LANGS.indexOf(s) >= 0) return s } catch (e) {}

@@ -5,7 +5,7 @@ import { tz, ownerFirst } from "./lib/hub.mjs"
 import { setBusyTimeout, upsertMetric, metricHistory, messagesForResponseRate, activeOutboundThreads, recentCalls, openActionItems, setMeta } from "./lib/db.mjs"
 import { listThreads, agenda, coachData } from "./lib/brain.mjs"
 import { secretGate } from "./lib/secret.mjs" // 🔒 la Home (cron, sin 2º PIN) no hornea nada de fuente secreta
-import { llm } from "./lib/llm.mjs"
+import { llm, smartChain } from "./lib/llm.mjs"
 import { tts } from "./lib/voice.mjs"
 import { newsSearch, hasWebSearch } from "./lib/research.mjs"
 import * as ws from "./lib/workspace.mjs"
@@ -165,7 +165,11 @@ DATOS (materia prima, NO para copiar textual):
 ${facts}
 Devolvé SOLO el texto del briefing.`
   let text = ""
-  try { text = (await llm(prompt, { chain: process.env.LLM_CHAIN_CORRECT || "openai,ollama", numPredict: 180, temperature: 0.4 })).trim() } catch {}
+  // El briefing lee tu corpus: pendientes, promesas sin cumplir CON el nombre del contacto, previews de hilos. Es material
+  // sensible y estaba con la nube HARDCODEADA (`openai,ollama`), sin feature ni gate — la 5ª reincidencia de la serie que
+  // test/sensitive-chain.mjs dice haber matado. Ahora pasa por smartChain como el resto: local por defecto, nube solo si
+  // el dueño la eligió a propósito para esta feature en Ajustes.
+  try { text = (await llm(prompt, { chain: smartChain({ sensitive: true, feature: "home-brief" }), feature: "home-brief", numPredict: 180, temperature: 0.4 })).trim() } catch {}
   if (!text) text = facts.split("\n")[0] || "Día tranquilo. Nada urgente pide tu atención ahora."
   let audioSec = 0
   try {

@@ -192,7 +192,11 @@ export async function testKey({ keyId, provider, token } = {}) {
   } catch (e) { return { ok: false, error: (e?.message || String(e)).slice(0, 140) } }
 }
 export function providerKey(prov) { return keyFor(prov) } // para voice.mjs / módulos que hacen su propio fetch con la key del hub
-export function sttMode() { return llmConfig().stt || "openai" } // transcripción de audio: "openai" (nube) | "local" (whisper self-hosted)
+// Transcripción de audio: "local" (whisper en tu máquina) por DEFECTO. Antes era "openai", así que en un hub con key de
+// OpenAI CADA nota de voz recibida se subía a la nube automáticamente — sin que apareciera en el interruptor de features
+// sensibles de la UI, que mientras tanto decía "todo local". Era la reincidencia literal del incidente de julio.
+// Si el hub no tiene whisper, stt() ya cae solo a la nube; ahora eso es una degradación explícita, no el default.
+export function sttMode() { return llmConfig().stt || "local" } // transcripción de audio: "openai" (nube) | "local" (whisper self-hosted)
 // sanea ollamaHost (lo pega el usuario → server-side fetch = SSRF). http(s), NO metadata de nube, NO el puerto de la app (pivot a isLocal).
 const APP_PORT = String(process.env.PORT || "3000")
 const _META = /^(169\.254\.169\.254|metadata\.google\.internal|100\.100\.100\.200)$/i
@@ -324,6 +328,8 @@ export function usageStats() {
 // TAREAS SENSIBLES: las que procesan tu corpus. El hub elige local/nube POR FEATURE en Configuración → Motor de IA. DEFAULT = local.
 export const SENSITIVE_FEATURES = [
   { key: "graphify", label: "Grafo de conocimiento" },
+  { key: "home-brief", label: "Resumen del día (Home)" },
+  { key: "coach", label: "Radar / Coach proactivo" },
   { key: "email", label: "Resumen de emails" },
   { key: "extract", label: "Extraer tareas y promesas" },
   { key: "enrich", label: "Enriquecer conversaciones" },

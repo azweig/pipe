@@ -32,8 +32,13 @@ hr
 
 mkdir -p data
 [ -f .env ] || cp .env.example .env
+# El .env lleva SECRETS_KEY (la clave AES que descifra TODOS los tokens en reposo) y tus API keys. Sin esto queda 0644 por
+# umask: legible por cualquier usuario de la máquina. secrets.mjs ya protege su .secret-key con 0600; esto lo empareja.
+chmod 600 .env 2>/dev/null || true
 # set_env KEY VALUE  → escribe/actualiza una var en .env sin tocar el resto (ni las líneas comentadas de ejemplo)
-set_env(){ [ -z "${2:-}" ] && return 0; touch .env; grep -v "^$1=" .env > .env.tmp 2>/dev/null || true; echo "$1=$2" >> .env.tmp; mv .env.tmp .env; }
+# El chmod va ACÁ ADENTRO, no una vez al principio: cada set_env RECREA el archivo con `mv`, así que el nuevo nace con el
+# umask por defecto (0644) y pisa cualquier permiso anterior. Verificado: con el chmod solo arriba, el .env terminaba en 644.
+set_env(){ [ -z "${2:-}" ] && return 0; touch .env; grep -v "^$1=" .env > .env.tmp 2>/dev/null || true; echo "$1=$2" >> .env.tmp; mv .env.tmp .env; chmod 600 .env 2>/dev/null || true; }
 ask(){ # ask "Pregunta" [default] → deja la respuesta en REPLY_VAL ("" si vacío)
   local q="$1" def="${2:-}"; if [ -n "$def" ]; then printf '%s [%s]: ' "$q" "$def"; else printf '%s (Enter = saltar): ' "$q"; fi
   read -r ans; REPLY_VAL="${ans:-$def}"; }
@@ -108,3 +113,6 @@ echo "  Arrancá:   node src/daemon.mjs        (web UI → http://localhost:3000
 echo "  Producción: systemd → deploy/pipe.service   ·   go-live → docs/DEPLOY.md"
 echo "  Conectá WhatsApp, correo y demás DESDE LA APP:  Configuración → Agregar conexión"
 echo
+
+# red de seguridad: si algo recreó el .env por otra vía, que igual quede protegido al terminar
+chmod 600 .env 2>/dev/null || true

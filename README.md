@@ -82,9 +82,24 @@ Then `node src/daemon.mjs` (web UI on http://localhost:3000). Connect WhatsApp, 
 ```bash
 git clone https://github.com/azweig/pipe.git && cd pipe
 cp .env.example .env                              # fill in the AI keys you use
-cp hub-config.example.json data/hub-config.json   # your identity (name, numbers, emails)
 
 docker compose up -d --build                      # web UI on http://localhost:3000
+```
+
+**Set your access PIN from inside the container.** Pipe only lets you create the first PIN from localhost, and from the
+container's point of view your browser is *not* local (it arrives via the Docker bridge). So do it here, once:
+
+```bash
+docker compose exec pipe sh -c \
+  'curl -s -X POST localhost:3000/api/auth/setup -H "Content-Type: application/json" -d "{\"pin\":\"YOUR-PIN\"}"'
+```
+
+**Your identity** (name, numbers, emails) goes in `data/hub-config.json`, which lives in the `pipe-data` volume — copying it
+on the host has no effect. Set it from the app once you're in (**Settings → Your identity**), or write it into the volume:
+
+```bash
+docker compose exec pipe sh -c 'cat > /app/data/hub-config.json' < hub-config.example.json
+docker compose restart pipe
 ```
 
 ### From source

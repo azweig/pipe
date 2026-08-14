@@ -5,8 +5,15 @@
 # ── build stage: native toolchain for better-sqlite3 ──────────────────────────
 FROM node:20-bookworm-slim AS build
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
+# git = dep libsignal de Baileys · toolchain = build nativo de better-sqlite3.
+# Sin `git` el build fallaba en las DOS ramas del npm de abajo, así que `docker compose up --build` —el camino que el README
+# y la landing ofrecen como el más fácil— no compilaba nunca. deploy/Dockerfile ya lo tenía resuelto; este quedó atrás.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ git \
   && rm -rf /var/lib/apt/lists/*
+# libsignal se resuelve por git+ssh en el lock → reescribir a https (repo público, sin credenciales SSH en la imagen)
+RUN git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" \
+ && git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/" \
+ && git config --global url."https://github.com/".insteadOf "git@github.com:"
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev || npm install --omit=dev
 

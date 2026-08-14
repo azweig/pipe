@@ -455,7 +455,7 @@ function renderCfgSection(id) {
     <div class="cfg-note">${IC_INFO}<div>Tus datos van al motor que elijas. Tus tokens quedan en tu servidor, nunca se muestran.</div></div>`
   } else if (id === "mail") {
     const sOn = window.secretOn && window.secretOn()
-    const rows = (a.email || []).map((e) => `<div class="cfg-r"><div class="ric">${IC_MAIL}</div><div class="rm"><b>${esc(e.name || e.user)}</b><span>${e.name ? esc(e.user) + " · " : ""}${esc(e.host || "")}${e.count ? ` · ${e.count} correos` : ""}${e.last ? ` · ${ago(e.last)}` : ""}</span></div>${sOn ? `<button class="rx" onclick="secretAccountToggle('email','${esc(e.label)}')" title="Cuenta secreta — se oculta con el PIN" style="font-size:12px;font-weight:700;color:${secretIsAccountSecret("email", e.label) ? "var(--accent)" : "var(--muted2)"};width:auto">${secretIsAccountSecret("email", e.label) ? "☑ secreta" : "☐ secreta"}</button>` : ""}${e.kind === "imap" ? `<button class="rx" onclick="removeEmail('${esc(e.label)}')" title="Quitar">✕</button>` : ""}</div>`).join("")
+    const rows = (a.email || []).map((e) => `<div class="cfg-r"><div class="ric">${IC_MAIL}</div><div class="rm"><b>${esc(e.name || e.user)}</b><span>${e.name ? esc(e.user) + " · " : ""}${esc(e.host || "")}${e.count ? ` · ${e.count} correos` : ""}${e.last ? ` · ${ago(e.last)}` : ""}</span></div>${sOn ? `<button class="rx" onclick="secretAccountToggle('email','${esc(e.label)}')" title="Cuenta secreta — se oculta con el PIN" style="font-size:12px;font-weight:700;color:${secretIsAccountSecret("email", e.label) ? "var(--accent)" : "var(--muted2)"};width:auto">${secretIsAccountSecret("email", e.label) ? "☑ secreta" : "☐ secreta"}</button>` : ""}${e.kind === "imap" ? `<button class="rx" onclick="removeEmail(${escj(e.label)})" title="Quitar">✕</button>` : ""}</div>`).join("")
     body = ((a.email || []).length ? `<div class="cfg-card">${rows}</div>` : `<div class="cfg-empty"><b>Todavía no conectaste ningún correo</b><p>Tocá “Agregar cuenta de correo” para sumar tu primera bandeja.</p></div>`)
       + (sOn ? "" : `<button class="btn ghost" onclick="secretUnlockConfig()">PIN</button>`)
       + `<button class="btn" onclick="addConnectionSheet('correo')">➕ Agregar cuenta de correo</button>
@@ -467,7 +467,7 @@ function renderCfgSection(id) {
     const nums = (a.messaging && a.messaging[0] && a.messaging[0].numbers) || []
     const sOn = window.secretOn && window.secretOn()
     // cada número = una fila; desbloqueado muestra el check "cuenta secreta" (marcarlo oculta TODA su actividad, automático)
-    const rows = nums.map((n) => `<div class="cfg-r"><div class="ric">${IC_PHONE}</div><div class="rm"><b>+${esc(n)}</b><span>WhatsApp</span></div>${sOn ? `<button class="rx" onclick="secretWaToggle('${esc(n)}')" title="Cuenta secreta — se oculta con el PIN" style="font-size:12px;font-weight:700;color:${secretIsNumberSecret(n) ? "var(--accent)" : "var(--muted2)"};width:auto">${secretIsNumberSecret(n) ? "☑ cuenta secreta" : "☐ cuenta secreta"}</button>` : ""}</div>`).join("")
+    const rows = nums.map((n) => `<div class="cfg-r"><div class="ric">${IC_PHONE}</div><div class="rm"><b>+${esc(n)}</b><span>WhatsApp</span></div>${sOn ? `<button class="rx" onclick="secretWaToggle(${escj(n)})" title="Cuenta secreta — se oculta con el PIN" style="font-size:12px;font-weight:700;color:${secretIsNumberSecret(n) ? "var(--accent)" : "var(--muted2)"};width:auto">${secretIsNumberSecret(n) ? "☑ cuenta secreta" : "☐ cuenta secreta"}</button>` : ""}</div>`).join("")
     const card = nums.length ? `<div class="cfg-card">${rows}</div>` : `<div class="cfg-empty"><b>Sin canales de mensajería</b><p>Tocá “Agregar canal” para vincular tu primer chat.</p></div>`
     const pinBtn = sOn ? "" : `<button class="btn ghost" onclick="secretUnlockConfig()">PIN</button>`
     const warn = (wa.loggedOut || []).length ? `<div class="cfg-note warn">${IC_ALERT}<div>WhatsApp se desconectó. Volvé a vincularlo para seguir recibiendo y enviando.</div></div>` : ""
@@ -527,7 +527,7 @@ window.loadApifyCfg = async () => {
       <div class="ric">${SVG.search}</div>
       <div class="rm"><b>${esc(a.name || "Cuenta Apify")}</b><span>${a.runs || 0} corrida${(a.runs || 0) === 1 ? "" : "s"} · ~$${Number(a.usd || 0).toFixed(2)}${a.hint ? ` · ••••${esc(a.hint)}` : ""}</span></div>
       ${a.exhausted ? `<span class="cfg-badge" style="background:rgba(224,102,47,.12);color:var(--warn)">AGOTADA este mes</span>` : ""}
-      <button class="rx" onclick="apifyRemove('${esc(a.id)}')" title="Quitar">✕</button></div>`).join("")
+      <button class="rx" onclick="apifyRemove(${escj(a.id)})" title="Quitar">✕</button></div>`).join("")
   const list = accs.length ? `<div class="cfg-card">${rows}</div>` : `<div class="cfg-empty"><b>Sin cuentas Apify</b><p>Cargá una para activar el enriquecimiento social de tus contactos. Con el plan gratis alcanza para arrancar.</p></div>`
   box.innerHTML = `${list}
     <button class="btn" onclick="apifyAddSheet()">➕ Agregar cuenta Apify</button>
@@ -906,7 +906,7 @@ window.bridgeConnectSheet = (net, label) => {
   <h2 style="margin:6px 0 4px">${esc(label || net)}</h2>
   <div class="sub" style="margin:0 0 12px">Vinculá por QR o código (bridge del servidor).</div>
   <input class="inp" id="brPhone" inputmode="tel" placeholder="+código de país (opcional)" style="${CINP}">
-  <div style="display:flex;gap:8px"><button class="btn" style="flex:1" onclick="brLink('${esc(net)}',true)">Código por número</button><button class="btn ghost" style="flex:1" onclick="brLink('${esc(net)}',false)">QR</button></div>
+  <div style="display:flex;gap:8px"><button class="btn" style="flex:1" onclick="brLink(${escj(net)},true)">Código por número</button><button class="btn ghost" style="flex:1" onclick="brLink(${escj(net)},false)">QR</button></div>
   <div id="brOut" style="margin-top:16px;text-align:center;min-height:44px"></div>`)
 }
 window.brLink = async (net, byPhone) => {
@@ -1263,8 +1263,8 @@ function _aiRender() {
   const keyRow = (k) => `<div class="cfg-r" style="align-items:center;flex-wrap:wrap">
     <div class="ric">${k.provider === "ollama" ? "🖥️" : "🔑"}</div>
     <div class="rm" style="flex:1;min-width:80px"><b>${esc(k.name || k.provider)}</b><span>${esc(AI_PLABEL[k.provider] || k.provider)}${k.hint ? " · " + esc(k.hint) : (k._new ? " · nueva (sin guardar)" : "")}</span></div>
-    <button class="chip" onclick="aiTest('${esc(k.id)}')" style="cursor:pointer">Probar</button>
-    ${k.provider === "ollama" ? "" : `<button class="rx" onclick="aiDel('${esc(k.id)}')" title="Quitar">✕</button>`}
+    <button class="chip" onclick="aiTest(${escj(k.id)})" style="cursor:pointer">Probar</button>
+    ${k.provider === "ollama" ? "" : `<button class="rx" onclick="aiDel(${escj(k.id)})" title="Quitar">✕</button>`}
     <div id="aitest-${esc(k.id)}" class="tiny" style="flex-basis:100%;margin-top:3px;text-align:right"></div></div>`
   const keyOpt = (sel) => `<option value="">— automático —</option>` + d.keysList.filter((k) => k.provider === "ollama" || k.hasToken || k._new).map((k) => `<option value="${esc(k.id)}"${sel === k.id ? " selected" : ""}>${esc(k.name || k.provider)}</option>`).join("")
   const provOfKey = (id) => (d.keysList.find((k) => k.id === id) || {}).provider
@@ -1396,8 +1396,8 @@ function noteCard(n) {
 }
 window.noteOpen = (id) => {
   const n = notesList.find((x) => x.id === id); if (!n) return
-  const media = n.mediaType === "audio" && n.media ? `<div style="margin-bottom:10px">${spdAudio(`<audio controls preload="metadata" src="${n.media}" style="flex:1;min-width:0"></audio>`)}</div>`
-    : (n.media ? `<img src="${n.media}" alt="Imagen de la nota" style="max-width:100%;border-radius:10px;margin-bottom:10px">` : "")
+  const media = n.mediaType === "audio" && n.media ? `<div style="margin-bottom:10px">${spdAudio(`<audio controls preload="metadata" src="${esc(n.media)}" style="flex:1;min-width:0"></audio>`)}</div>`
+    : (n.media ? `<img src="${esc(n.media)}" alt="Imagen de la nota" style="max-width:100%;border-radius:10px;margin-bottom:10px">` : "")
   openSheet(`<h2 style="margin:0 0 6px">${esc(n.title || "Nota")}</h2><div class="tiny muted" style="margin-bottom:12px">${esc(n.category || "")}${n.channel ? " · " + esc(n.channel) : ""} · ${ago(n.ts)}</div>${media}<div style="white-space:pre-wrap;line-height:1.6;font-size:15px">${fmtText(n.text || n.summary || "")}</div>`)
 }
 window.loadNotes = async (cat, status) => {
@@ -2348,7 +2348,7 @@ window.secretManageSheet = async () => {
   await loadSecretState()
   const nums = (acc.messaging && acc.messaging[0] && acc.messaging[0].numbers) || []
   const emails = acc.email || []
-  const numRows = nums.map((n) => `<button class="btn ${secretIsNumberSecret(n) ? "" : "ghost"}" style="margin-bottom:6px;text-align:left" onclick="secretWaToggleSheet('${esc(n)}')">${secretIsNumberSecret(n) ? "☑" : "☐"}  WhatsApp +${esc(n)}</button>`).join("")
+  const numRows = nums.map((n) => `<button class="btn ${secretIsNumberSecret(n) ? "" : "ghost"}" style="margin-bottom:6px;text-align:left" onclick="secretWaToggleSheet(${escj(n)})">${secretIsNumberSecret(n) ? "☑" : "☐"}  WhatsApp +${esc(n)}</button>`).join("")
   const emailRows = emails.map((e) => `<button class="btn ${secretIsAccountSecret("email", e.label) ? "" : "ghost"}" style="margin-bottom:6px;text-align:left" onclick="secretAccountToggleSheet('email','${esc(e.label)}')">${secretIsAccountSecret("email", e.label) ? "☑" : "☐"}  ${esc(e.name || e.user)}</button>`).join("")
   openSheet(`<h2 style="margin:0 0 4px">Cuentas ocultas</h2><div class="sub" style="margin:0 0 12px">Marcá qué cuenta ocultar — toda su actividad se esconde sin el PIN.</div>
     <div class="section-title" style="margin:0 0 6px">WhatsApp</div>${numRows || '<div class="sub" style="margin-bottom:8px">—</div>'}
@@ -2765,10 +2765,10 @@ window.viewMedia = async (key) => {
   openSheet(`<h2 class="sheet-h"><span class="ei">${IC_CLIP}</span>Adjuntos<span class="sheet-n">${d.items.length}</span></h2>
     <div class="media-cfg"><div class="media-cfg-row"><div class="ric">${IC_DISK}</div><div class="rm"><b>Guardar fotos y archivos</b><span>De este chat. El audio siempre se guarda.</span></div><button class="switch${chatStore ? " on" : ""}" role="switch" aria-checked="${chatStore}" aria-label="Guardar media de este chat" onclick="toggleChatMedia(${escj(key)}, ${!chatStore})"></button></div>
       <button class="btn ghost btn-danger" onclick="freeChatMedia(${escj(key)})"><span class="ei">${IC_TRASH}</span>Liberar espacio de este chat</button></div>
-    ${imgs.length ? `<div class="media-sec"><span class="ei">${IC_IMG}</span>Imágenes<span class="media-n">${imgs.length}</span></div><div class="media-grid">${imgs.slice(0, 30).map((i) => `<img loading="lazy" src="${i.media}" alt="Imagen adjunta" onclick="window.open(${escj(i.media)},'_blank')">`).join("")}</div>` : ""}
+    ${imgs.length ? `<div class="media-sec"><span class="ei">${IC_IMG}</span>Imágenes<span class="media-n">${imgs.length}</span></div><div class="media-grid">${imgs.slice(0, 30).map((i) => `<img loading="lazy" src="${esc(i.media)}" alt="Imagen adjunta" onclick="window.open(${escj(i.media)},'_blank')">`).join("")}</div>` : ""}
     ${vids.length ? `<div class="media-sec"><span class="ei">${IC_VIDEO}</span>Videos<span class="media-n">${vids.length}</span></div>${vids.slice(0, 12).map((i) => row(IC_VIDEO, i)).join("")}` : ""}
     ${docs.length ? `<div class="media-sec"><span class="ei">${IC_DOC}</span>Documentos<span class="media-n">${docs.length}</span></div>${docs.slice(0, 25).map((i) => row(IC_DOC, i)).join("")}` : ""}
-    ${av.length ? `<div class="media-sec"><span class="ei">${IC_AUDIO}</span>Audios<span class="media-n">${av.length}</span></div>${av.slice(0, 15).map((i) => spdAudio(`<audio controls preload="none" src="${i.media}" class="media-aud" style="flex:1;min-width:0"></audio>`)).join("")}` : ""}
+    ${av.length ? `<div class="media-sec"><span class="ei">${IC_AUDIO}</span>Audios<span class="media-n">${av.length}</span></div>${av.slice(0, 15).map((i) => spdAudio(`<audio controls preload="none" src="${esc(i.media)}" class="media-aud" style="flex:1;min-width:0"></audio>`)).join("")}` : ""}
     ${!d.items.length ? '<div class="nt-none" style="margin-top:20px">Sin adjuntos en esta conversación.</div>' : ""}`)
 }
 window.toggleChatMedia = async (keyEnc, store) => { await post("/api/media-policy", { key: decodeURIComponent(keyEnc), mode: store ? "store" : "skip" }).catch(() => {}); viewMedia(keyEnc) }
@@ -3363,7 +3363,7 @@ window.newEspacio = (parent) => { openSheet(`<h2>Nuevo espacio</h2><input class=
   <input class="inp" id="e-icon" placeholder="Emoji (opcional, ej: 🎓)" style="margin-bottom:14px"><button class="btn" onclick="saveEsp(${escj(parent || "")})">Crear</button>`) }
 window.saveEsp = async (parent) => { await post("/api/espacio", { name: document.getElementById("e-name").value, icon: document.getElementById("e-icon").value, parent: parent || null }); closeSheet(); location.hash.startsWith("#espacio/") ? viewEspacio(location.hash.split("/")[1]) : viewEspacios() }
 const ruleIcon = { email: "✉️", domain: "🌐", phone: "📱", name: "👤" }
-const ruleText = (r) => `${ruleIcon[r.type] || "•"} ${r.type === "domain" ? "*@" + r.value : esc(r.value)}`
+const ruleText = (r) => `${ruleIcon[r.type] || "•"} ${r.type === "domain" ? "*@" + esc(r.value) : esc(r.value)}`
 async function viewEspacio(id) {
   render(skel(3))
   const d = await api("/api/espacio/view?id=" + id) || {}

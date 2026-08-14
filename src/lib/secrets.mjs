@@ -19,6 +19,23 @@ function masterKey() {
     try { writeFileSync(KEYFILE, k, { mode: 0o600 }); chmodSync(KEYFILE, 0o600) } catch {} // {mode} en el write → sin ventana de 0644 entre write y chmod
     _key = Buffer.from(k, "base64"); return _key
   }
+  // MIGRACIÓN: hasta que se arregló el parser de .env, un `cp .env.example .env` dejaba SECRETS_KEY con el TEXTO DEL
+  // COMENTARIO (truthy), y con eso se cifró todo. Al arreglar el parser ese valor pasa a "" → caeríamos acá y generaríamos
+  // una clave nueva al azar, dejando ilegibles los tokens BYOK, las contraseñas IMAP y las passphrases encubiertas.
+  // Antes de generar nada: si ya hay secretos cifrados en disco, avisamos y NO seguimos en silencio.
+  const yaHaySecretos = (() => {
+    for (const f of ["./data/llm-config.json", "./data/integrations.json", "./data/accounts.json", "./data/covert.json"]) {
+      try { if (existsSync(f) && readFileSync(f, "utf8").includes(PREFIX)) return f } catch { /* ilegible → seguimos */ }
+    }
+    return null
+  })()
+  if (yaHaySecretos) {
+    console.error(`\n⚠️  [secrets] Hay tokens cifrados en ${yaHaySecretos} pero no encuentro la clave para descifrarlos.`)
+    console.error("   Si tu .env tenía SECRETS_KEY con un comentario pegado (versiones viejas de .env.example), ese comentario")
+    console.error("   ERA la clave. Recuperalo así, con el texto EXACTO que tenías después del '=':")
+    console.error('     SECRETS_KEY="# clave AES-256 (32 bytes). Generala con:  openssl rand -base64 32 . …"')
+    console.error("   Si no, vas a tener que volver a pegar tus tokens en Ajustes. Genero una clave nueva y sigo.\n")
+  }
   _key = randomBytes(32); try { writeFileSync(KEYFILE, _key.toString("base64"), { mode: 0o600 }); chmodSync(KEYFILE, 0o600) } catch (e) { console.error("[secrets] no pude persistir .secret-key:", e.message) }
   return _key
 }
