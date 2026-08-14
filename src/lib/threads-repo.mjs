@@ -2,12 +2,17 @@
 // Cuerpos movidos verbatim desde db.mjs; `db` = alias de handle() de db-core.
 import { handle as db } from "./db-core.mjs"
 import { owner } from "./hub.mjs"
-import { isSecretSelfNote, secretSelfClause, secretThreadKeys, isSecretRow } from "./secret.mjs"
+import { isSecretSelfNote, secretSelfClause, secretThreadKeys, isSecretRow , secretGate} from "./secret.mjs"
 
 // helper: appende " AND NOT (<secret>)" a un WHERE de self-notes (thread='self') si hay cuentas secretas. Idempotente si no hay nada.
 function _selfSecretAnd(alias = "m") { const c = secretSelfClause(alias); return c.clause ? { sql: ` AND NOT (${c.clause})`, params: c.params } : { sql: "", params: [] } }
 // helper: excluye hilos 100%-secretos (gate.hide) de un agregado — " AND <col> NOT IN (...)". Para conteos/KPIs sin fila representativa.
-function _hideAnd(col = "thread") { const h = [...secretThreadKeys()]; return h.length ? { sql: ` AND ${col} NOT IN (${h.map(() => "?").join(",")})`, params: h } : { sql: "", params: [] } }
+function _hideAnd(col = "thread") {
+  // blockAll = el gate no pudo calcularse y no hay uno bueno previo → no devolvemos NADA. Bandeja vacía y ruidosa
+  // es preferible a filtrar lo que había que ocultar.
+  if (secretGate().blockAll) return { sql: " AND 1=0", params: [] }
+  const h = [...secretThreadKeys()]; return h.length ? { sql: ` AND ${col} NOT IN (${h.map(() => "?").join(",")})`, params: h } : { sql: "", params: [] }
+}
 
 const escLike = (s) => String(s).replace(/[\\%_]/g, "\\$&") // escapa comodines LIKE del DOMINIO (cliente_1 → cliente\_1); el '!%:' queda literal (ese % es intencional)
 const mdomLike = (prefix = "") => prefix + "!%:%" // AGNÓSTICO del dominio Matrix: matchea salas portal !<id>:<dominio> de cualquier server (el server_name que sea) → no depende de MATRIX_DOMAIN

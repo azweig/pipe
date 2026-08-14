@@ -336,10 +336,10 @@ const server = createServer(async (req, res) => {
     const secretBlocked = (key) => !secretOn && !!key && secret.secretThreadKeys().has(key)
     if (path === "/api/secret/status") return json(res, 200, { pinSet: secret.secretPinSet(), unlocked: secretOn })
     // crear/cambiar el 2º PIN: SOLO con la sesión principal (ya estás authed). Debe ser distinto del PIN de entrada (lo valida setSecretPin).
-    if (path === "/api/secret/setup" && req.method === "POST") { const b = await body(req); const r = secret.setSecretPin(b.pin); return json(res, r.error ? 400 : 200, r) }
+    if (path === "/api/secret/setup" && req.method === "POST") { const b = await body(req); const r = secret.setSecretPin(b.pin, b.oldPin, clientIp); return json(res, r.error ? 400 : 200, r) }
     // desbloquear: verifica el 2º PIN → token de sesión secreta (también en cookie para la web)
     if (path === "/api/secret/unlock" && req.method === "POST") {
-      const b = await body(req); const r = secret.unlockSecret(b.pin); if (r.error) return json(res, 401, r)
+      const b = await body(req); const r = secret.unlockSecret(b.pin, clientIp); if (r.error) return json(res, 401, r)
       res.setHeader("Set-Cookie", `secret=${r.token}; Path=/; Max-Age=${Math.floor(r.ttl / 1000)}; HttpOnly; SameSite=Strict${httpsProto ? "; Secure" : ""}`)
       return json(res, 200, { ok: true, token: r.token })
     }
@@ -564,7 +564,11 @@ const server = createServer(async (req, res) => {
       // ✍️ FIRMAS de correo, por cuenta ("*" = la de por defecto). Un email se responde con firma; un WhatsApp no.
       if (path === "/api/signatures") return json(res, 200, { signatures: sig.listSignatures(), fallback: sig.defaultSignature() })
       if (path === "/api/signature" && req.method === "POST") { const b = await body(req); return json(res, 200, { signatures: sig.setSignature(b.account || "*", { text: b.text, html: b.html }) }) }
-      if (path === "/api/hub-config/save" && req.method === "POST") { const b = await body(req); return json(res, 200, hub.setHubConfig(b)) }
+      if (path === "/api/hub-config/save" && req.method === "POST") { const b = await body(req)
+        // 🔒 myNumbers es lo que el gate usa para saber qué línea es secreta: editarlo APAGA la función entera sin tocar el
+        // 2º PIN. Era un bypass total con solo la sesión principal, un POST y sin rastro. Con marcas activas, exige el 2º PIN.
+        if (!secretOn && secret.listSecretNumbers().length && b && "myNumbers" in b) return json(res, 403, { error: "Tenés cuentas ocultas: para cambiar tus números propios hay que desbloquear con el 2º PIN." })
+        return json(res, 200, hub.setHubConfig(b)) }
       if (path === "/api/objetivos") return json(res, 200, ws.objetivos())
       if (path === "/api/objetivo" && req.method === "POST") return json(res, 200, ws.saveObjetivo(await body(req)))
       if (path === "/api/objetivo/delete" && req.method === "POST") { ws.deleteObjetivo((await body(req)).id); return json(res, 200, { ok: true }) }

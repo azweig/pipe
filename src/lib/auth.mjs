@@ -1,15 +1,26 @@
 // Auth por PIN para exponer pipe en internet (hub.example.com) con un mínimo de seguridad.
 // Modelo (según security-best-practices, backend Node): PIN hasheado con scrypt+salt server-side; la cookie SOLO lleva un
 // token aleatorio (nunca el PIN); sesiones server-side de larga duración ("recordar este equipo"); rate-limit anti-fuerza-bruta.
-import { readFileSync, writeFileSync, existsSync } from "fs"
+import { readFileSync, writeFileSync, existsSync, renameSync } from "fs"
 import { randomBytes, scryptSync, timingSafeEqual } from "crypto"
 
 const PIN_FILE = "./data/auth-pin.json"
 const SESS_FILE = "./data/auth-sessions.json"
 const SESSION_TTL = 90 * 86400000 // 90 días: en tus 3 celulares no volvés a tipear el PIN
 
-const loadJ = (f, d) => (existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : d)
-const saveJ = (f, v) => writeFileSync(f, JSON.stringify(v), { mode: 0o600 }) // 600: el PIN hash y los tokens de sesión no deben ser legibles por otros usuarios del box
+// El archivo de SESIONES se reescribe en cada login/logout. Sin tmp+rename, un corte a mitad de escritura (disco lleno,
+// corte de luz, SIGKILL) lo dejaba truncado — y como este loadJ NO tenía try/catch, a partir de ahí login(), validSession()
+// y logoutAll() tiraban en cada request: NADIE podía entrar a su propio hub, ni por el túnel local, hasta borrar el archivo
+// a mano por SSH. Ahora la escritura es atómica y un archivo ilegible se trata como "no hay sesiones" (se vuelve a loguear),
+// que es fallar cerrado sin dejar a nadie afuera. El PIN, que es lo que autentica, vive en OTRO archivo y no se toca acá.
+const loadJ = (f, d) => {
+  if (!existsSync(f)) return d
+  try { return JSON.parse(readFileSync(f, "utf8")) } catch (e) {
+    console.error(`[auth] ${f} ilegible (${e?.message || e}) — sigo sin sesiones guardadas; hay que volver a entrar con el PIN.`)
+    return d
+  }
+}
+const saveJ = (f, v) => { const tmp = `${f}.tmp`; writeFileSync(tmp, JSON.stringify(v), { mode: 0o600 }); renameSync(tmp, f) } // 600: el PIN hash y los tokens de sesión no deben ser legibles por otros usuarios del box
 
 export function pinIsSet() { return existsSync(PIN_FILE) }
 
@@ -49,6 +60,13 @@ function persist() { saveJ(SESS_FILE, sessions()) }
 // ── rate-limit por IP (en memoria): 5 intentos → 15 min de bloqueo. Un PIN es corto, hay que frenar la fuerza bruta ONLINE. ──
 const attempts = new Map()
 const rateLimited = (ip) => { const a = attempts.get(ip); return !!(a && a.until > Date.now()) }
+// Mismo limitador, contadores SEPARADOS por ámbito: lo usa el 2º PIN (secret.mjs), que no tenía ninguno —
+// con la sesión principal en mano, 6 dígitos sin freno se rompen a fuerza bruta en minutos.
+// Separador NUL a propósito: con ":" un XFF de valor "secret:1.2.3.4" (controlable si no hay proxy que lo anexe)
+// colisionaba con el ámbito secreto de esa IP y permitía bloquearle el 2º PIN a un tercero desde el login, sin autenticar.
+export const rateLimitedScoped = (scope, ip) => rateLimited(`${scope}\u0000${ip}`)
+export const recordFailScoped = (scope, ip) => recordFail(`${scope}\u0000${ip}`)
+export const clearFailsScoped = (scope, ip) => attempts.delete(`${scope}\u0000${ip}`)
 const RL_PRUNE = +process.env.RATE_MAP_PRUNE || 1000 // umbral de poda del Map (configurable para el test de regresión)
 const RL_MAX = +process.env.RATE_MAP_MAX || 5000     // umbral de evict LRU (backstop de memoria)
 function recordFail(ip) {

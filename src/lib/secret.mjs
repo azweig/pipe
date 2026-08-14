@@ -3,9 +3,9 @@
 // (un WhatsApp, un mail, etc.) y TODOS sus mensajes NO existen en ningún lado (bandeja, config, push, búsqueda, IA, contadores, piloto)
 // hasta que se verifica el 2º PIN → se emite un token de sesión secreta CORTO (sliding, 5 min) POR DISPOSITIVO. El cliente además borra
 // todo al perder foco (blur/segundo plano/refresh) y no persiste nada en local. Enforcement en el SERVIDOR (no solo en la UI).
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs"
+import { readFileSync, writeFileSync, existsSync, unlinkSync, renameSync } from "fs"
 import { randomBytes, scryptSync, timingSafeEqual } from "crypto"
-import { verifyPin as verifyMainPin } from "./auth.mjs"
+import { verifyPin as verifyMainPin, rateLimitedScoped, recordFailScoped, clearFailsScoped } from "./auth.mjs"
 import { handle } from "./db-core.mjs"
 
 const PIN_FILE = "./data/secret-pin.json"       // hash scrypt+salt del 2º PIN (gitignore como todo data/)
@@ -13,13 +13,44 @@ const ACC_FILE = "./data/secret-accounts.json"  // qué cuentas son secretas: [{
 const THR_FILE = "./data/secret-threads.json"   // qué HILOS puntuales son secretos: ["<thread key>"]  (WhatsApp/Telegram: se marca la CONVERSACIÓN)
 const SECRET_TTL = 5 * 60000                     // sesión secreta = 5 min (sliding). Corta a propósito: privacidad > comodidad.
 
-const loadJ = (f, d) => { try { return existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : d } catch { return d } }
-const saveJ = (f, v) => writeFileSync(f, JSON.stringify(v), { mode: 0o600 }) // 600: hash y flags no legibles por otros users del box
+// Un archivo AUSENTE es normal (todavía no marcaste nada) → default. Un archivo PRESENTE PERO ILEGIBLE es una falla, y
+// devolver el default ahí es fallar ABIERTO: si secret-numbers.json se corta a la mitad, listSecretNumbers() da [] y
+// NADA vuelve a ser secreto — sin error, sin log, y sin el límite de 15s del cache. Ahora se distingue y se grita.
+// Un archivo AUSENTE es normal (todavía no marcaste nada) → default, sin ruido.
+// Un archivo PRESENTE PERO ILEGIBLE es una FALLA: devolver el default ahí sería fallar ABIERTO (nada sería secreto nunca
+// más, en silencio). Tampoco lanzamos: probamos lanzar y fue peor — las llamadas viven fuera del try del gate, así que la
+// excepción atravesaba todo, tiraba /api entero con 500 y los catch{} de ask/inbox/autopilot se la comían igual.
+// En su lugar levantamos una BANDERA que el gate convierte en "ocultá todo" (ver secretGate).
+let _marcasIlegibles = null // null = todo bien · string = qué archivo falló
+const loadJ = (f, d) => {
+  if (!existsSync(f)) return d
+  try { const v = JSON.parse(readFileSync(f, "utf8")); if (_marcasIlegibles === f) _marcasIlegibles = null; return v } catch (e) {
+    if (_marcasIlegibles !== f) console.error(`[secret] ${f} ilegible (${e?.message || e}) — oculto TODO hasta poder leerlo.`)
+    _marcasIlegibles = f
+    return d
+  }
+}
+export function secretMarksBroken() { return _marcasIlegibles }
+// Escritura ATÓMICA (tmp + rename): un corte a mitad de writeFileSync dejaba el JSON truncado, que es justo el caso de arriba.
+const saveJ = (f, v) => { const tmp = `${f}.${process.pid}.tmp`; writeFileSync(tmp, JSON.stringify(v), { mode: 0o600 }); renameSync(tmp, f) } // 600: hash y flags no legibles por otros users del box
 
 // ── 2º PIN ──
 export function secretPinSet() { return existsSync(PIN_FILE) }
 // setear/cambiar el 2º PIN. Exige 6-12 dígitos (igual que el principal) y que sea DISTINTO del PIN de entrada (si no, no aísla nada).
-export function setSecretPin(pin) {
+// `oldPin` es OBLIGATORIO si ya hay un PIN puesto. Antes no se pedía: cualquiera con la sesión principal lo redefinía en un
+// POST y veía todo lo oculto — y el modelo de amenaza de esta función es EXACTAMENTE ese (alguien con tu teléfono
+// desbloqueado, tu pareja, tu socio). El PIN de entrada sí exigía el anterior desde siempre; este no. Ahora sí.
+export function setSecretPin(pin, oldPin, ip = "") {
+  if (secretPinSet()) {
+    // MISMO límite que unlockSecret: sin esto el endpoint era un oráculo de fuerza bruta a ~28ms por intento (≈4h para
+    // 6 dígitos), y peor: como cada intento fallido revelaba si el candidato era el PIN PRINCIPAL, se podía encadenar
+    // para recuperarlo, saltando el rate-limit que changePin sí tiene.
+    if (rateLimitedScoped("secret", ip)) return { error: "Demasiados intentos fallidos. Esperá 15 minutos." }
+    if (!verifySecretPin(String(oldPin || ""))) recordFailScoped("secret", ip)
+    // Si lo olvidaste no hay puerta trasera A PROPÓSITO (una la usaría cualquiera que tenga tu sesión abierta, que es
+    // justo de quien esto te protege). La salida es borrar data/secret-pin.json desde el servidor.
+    if (!verifySecretPin(String(oldPin || ""))) return { error: "Para cambiar el PIN secreto tenés que poner el actual. Si lo olvidaste, borrá data/secret-pin.json en tu servidor." }
+  }
   if (!/^\d{6,12}$/.test(String(pin || ""))) return { error: "El PIN secreto debe tener entre 6 y 12 dígitos." }
   if (verifyMainPin(String(pin))) return { error: "El PIN secreto tiene que ser DISTINTO del PIN de entrada." }
   const salt = randomBytes(16).toString("hex")
@@ -39,9 +70,13 @@ export function clearSecretPin() { try { if (existsSync(PIN_FILE)) unlinkSync(PI
 // ── sesión secreta (SOLO en memoria; nunca a disco → un reinicio del server re-bloquea todo) ──
 // token aleatorio de 256 bits; expira a los 5 min de inactividad. validSecretSession DESLIZA la expiración en cada uso (actividad).
 const _sess = new Map() // token -> expiresAt
-export function unlockSecret(pin) {
+// `ip` para el rate-limit. No tenía NINGUNO: con la sesión principal ya abierta (que es justo el escenario que esta función
+// existe para cubrir), 6 dígitos sin freno se rompen a fuerza bruta en minutos. El PIN de entrada lo tiene desde siempre.
+export function unlockSecret(pin, ip = "") {
   if (!secretPinSet()) return { error: "no hay PIN secreto configurado" }
-  if (!verifySecretPin(pin)) return { error: "PIN incorrecto" }
+  if (rateLimitedScoped("secret", ip)) return { error: "Demasiados intentos fallidos. Esperá 15 minutos." }
+  if (!verifySecretPin(pin)) { recordFailScoped("secret", ip); return { error: "PIN incorrecto" } }
+  clearFailsScoped("secret", ip) // al acertar se limpia, igual que el login principal (si no, 4 fallos viejos te bloqueaban después)
   const token = randomBytes(32).toString("hex")
   _sess.set(token, Date.now() + SECRET_TTL)
   return { ok: true, token, ttl: SECRET_TTL }
@@ -60,7 +95,8 @@ export function lockAllSecret() { _sess.clear() }                            // 
 // Modelo: EMAIL es por-cuenta (account = label limpio: gmail-personal, outlook…). MENSAJERÍA (whatsapp/telegram/…) es por-RED
 // completa, porque el `account` de esos mensajes es la fuente de ingesta (history/matrix/wa1…), no una cuenta → se marca con account="*".
 const accKey = (channel, account) => `${String(channel || "").toLowerCase()}:${String(account || "").toLowerCase()}`
-export function listSecretAccounts() { return loadJ(ACC_FILE, []) }
+let _accs = { ts: 0, val: null }
+export function listSecretAccounts() { const now = Date.now(); if (_accs.val && now - _accs.ts < 15000) return _accs.val; _accs = { ts: now, val: loadJ(ACC_FILE, []) }; return _accs.val }
 // ¿este (channel, account) de un mensaje cae en una cuenta secreta? (exacto O comodín de red channel:*)
 export function isSecretAccount(channel, account) {
   const set = secretAccountSet()
@@ -70,7 +106,7 @@ export function setSecretAccount(channel, account, secret) {
   const list = listSecretAccounts().filter((a) => accKey(a.channel, a.account) !== accKey(channel, account))
   if (secret) list.push({ channel: String(channel || "").toLowerCase(), account: String(account || "") })
   saveJ(ACC_FILE, list)
-  _g = { ts: 0, val: null }; _jo = { ts: 0, map: null }  // invalida caches del gateo por-canal; NO re-bloquea
+  _g = { ts: 0, val: null }; _jo = { ts: 0, map: null }; _nums = { ts: 0, val: null }; _accs = { ts: 0, val: null }  // invalida caches del gateo por-canal; NO re-bloquea
   return { ok: true, secret: !!secret }
 }
 export function secretAccountSet() { return new Set(listSecretAccounts().map((a) => accKey(a.channel, a.account))) }
@@ -80,26 +116,40 @@ export const secretKey = accKey
 // sola, sin marcar conversación por conversación. Para WhatsApp, la "cuenta" es tu NÚMERO owner; todos los rooms/jids donde ese número
 // participa (sender o jid) pertenecen a esa cuenta → se ocultan enteros (in+out). Para email, la cuenta es el label (isSecretAccount). ──
 const NUM_FILE = "./data/secret-numbers.json" // tus números de WhatsApp marcados como cuenta secreta
-export function listSecretNumbers() { return loadJ(NUM_FILE, []) }
+// Cache de 15s, igual que el gate. Sin esto isSecretRow() —que corre POR FILA en cada búsqueda— hacía un readFileSync
+// + JSON.parse por fila, en el event loop del HTTP: medido, cientos de syscalls por búsqueda.
+let _nums = { ts: 0, val: null }
+export function listSecretNumbers() { const now = Date.now(); if (_nums.val && now - _nums.ts < 15000) return _nums.val; _nums = { ts: now, val: loadJ(NUM_FILE, []) }; return _nums.val }
 export function isSecretNumber(n) { n = String(n || "").replace(/\D/g, ""); return !!n && listSecretNumbers().includes(n) }
 export function setSecretNumber(num, secret) {
   num = String(num || "").replace(/\D/g, ""); if (!num) return { error: "número inválido" }
   const list = listSecretNumbers().filter((x) => x !== num)
   if (secret) list.push(num)
   saveJ(NUM_FILE, list)
-  _g = { ts: 0, val: null }; _jo = { ts: 0, map: null } // invalida caches del gateo por-canal; NO re-bloquea
+  _g = { ts: 0, val: null }; _jo = { ts: 0, map: null }; _nums = { ts: 0, val: null }; _accs = { ts: 0, val: null } // invalida caches del gateo por-canal; NO re-bloquea
   return { ok: true, secret: !!secret }
 }
 // ── OCULTACIÓN POR CANAL (parcial, por-mensaje). CANAL de un mensaje = por qué cuenta tuya entró: email→la cuenta; WhatsApp→tu número
 // dueño de esa sala (derivado: tu número —de la config— aparece como participante). Marcás un canal → se ocultan SUS mensajes. Contacto
 // con canales mixtos → SIGUE visible mostrando lo no-secreto; 100% secreto → desaparece. Import viejo sin dueño → secreto si el hilo
 // tiene un canal secreto de WhatsApp (elección del usuario). NADA hardcodeado: los números salen de hub-config.myNumbers. ──
+// hub-config.json truncado devolvía [] en silencio → ninguna línea era secreta. La variante que propaga la usa el gate.
+function myNumbersOrThrow() { return (JSON.parse(readFileSync("./data/hub-config.json", "utf8")).myNumbers || []).map((x) => String(x).replace(/\D/g, "")).filter(Boolean) }
 function myNumbers() { try { return (JSON.parse(readFileSync("./data/hub-config.json", "utf8")).myNumbers || []).map((x) => String(x).replace(/\D/g, "")).filter(Boolean) } catch { return [] } }
 let _jo = { ts: 0, map: null }
 function jidOwnerMap() { // sala(jid) → tu número dueño. Cache 60s.
   const now = Date.now(); if (_jo.map && now - _jo.ts < 60000) return _jo.map
   const map = new Map()
   try { const db = handle(); for (const n of myNumbers()) for (const r of db.prepare("SELECT DISTINCT jid FROM messages WHERE sender LIKE ? AND jid IS NOT NULL AND jid!=''").all("%" + n + "%")) if (!map.has(r.jid)) map.set(r.jid, n) } catch {}
+  _jo = { ts: now, map }; return _jo.map
+}
+// Igual que jidOwnerMap pero PROPAGANDO el error. El catch mudo de arriba hacía que un fallo de DB devolviera un Map vacío
+// y el gate se cacheara como SANO durante 15s, con hide vacío: exactamente el leak silencioso que había que cerrar.
+function jidOwnerMapOrThrow() {
+  const now = Date.now(); if (_jo.map && now - _jo.ts < 60000) return _jo.map
+  const map = new Map()
+  const db = handle()
+  for (const n of myNumbersOrThrow()) for (const r of db.prepare("SELECT DISTINCT jid FROM messages WHERE sender LIKE ? AND jid IS NOT NULL AND jid!=''").all("%" + n + "%")) if (!map.has(r.jid)) map.set(r.jid, n)
   _jo = { ts: now, map }; return _jo.map
 }
 // ¿la CLAVE del hilo es un DM 1:1 (no grupo) cuyo número es una cuenta secreta? Cubre imports viejos con jid="" donde el número
@@ -113,16 +163,35 @@ function secretNumberInDMKey(key) {
 }
 let _g = { ts: 0, val: null }
 const EMPTY_GATE = () => ({ hide: new Set(), preview: new Map(), any: false, secretJids: new Set(), waSecretThreads: new Set() })
+// Último gate calculado BIEN. Ante un fallo transitorio (SQLITE_BUSY es rutina bajo carga) preferimos seguir usando el
+// último bueno antes que dejar la bandeja vacía: oculta lo mismo que hace un rato y no rompe la app.
+let _lastGood = null
+// FALLO SIN ÚLTIMO BUENO = ocultar TODO. Es la única definición honesta de "falla cerrado": si no podemos calcular qué
+// esconder, no mostramos nada en vez de mostrarlo todo. `blockAll` lo respetan los repos, el gate HTTP e isSecretMsg.
+//
+// `hide` NO puede ser un Set vacío acá: media docena de lectores (bandeja, home, ask, nudges) filtran con `hide.has(key)`
+// y un Set vacío les decía "no ocultes nada" — exactamente lo contrario de fallar cerrado. Este Set contesta que SÍ a
+// cualquier hilo. Sigue siendo un Set de verdad (vacío al recorrerlo) para no romper a quien lo itere, y `size` es
+// positivo porque hay quien lo usa como "¿hay algo que ocultar?".
+class TodoEsSecreto extends Set {
+  has() { return true }
+  get size() { return Number.MAX_SAFE_INTEGER }
+}
+const BLOCK_ALL_GATE = () => ({ hide: new TodoEsSecreto(), preview: new Map(), any: true, secretJids: new Set(), waSecretThreads: new Set(), blockAll: true, degraded: true })
+
 export function secretGate() {
   const now = Date.now(); if (_g.val && now - _g.ts < 15000) return _g.val
-  const secNums = new Set(listSecretNumbers()), secEmailLabels = listSecretAccounts().filter((a) => a.channel === "email" && a.account && a.account !== "*").map((a) => String(a.account).toLowerCase())
-  if (!secNums.size && !secEmailLabels.length) { _g = { ts: now, val: EMPTY_GATE() }; return _g.val }
-  const jo = jidOwnerMap()
+  // TODAS las lecturas van DENTRO del try. Antes estaban afuera, así que el catch "fail-closed" no las veía nunca —
+  // justo el caso que su propio comentario citaba (un fallo de DB al mapear jids) pasaba de largo y el gate quedaba abierto.
+  try {
+    const secNums = new Set(listSecretNumbers()), secEmailLabels = listSecretAccounts().filter((a) => a.channel === "email" && a.account && a.account !== "*").map((a) => String(a.account).toLowerCase())
+    if (_marcasIlegibles) throw new Error(`marcas ilegibles: ${_marcasIlegibles}`) // no sabemos qué ocultar → ocultamos todo
+    if (!secNums.size && !secEmailLabels.length) { _g = { ts: now, val: EMPTY_GATE() }; return _g.val }
+    const jo = jidOwnerMapOrThrow()
   const secretJids = [], nonSecretJids = []
   for (const [jid, owner] of jo) (secNums.has(owner) ? secretJids : nonSecretJids).push(jid)
   const IN = (a) => a.map(() => "?").join(",")
   const hide = new Set(), preview = new Map(), waSecretThreads = new Set()
-  try {
     const db = handle()
     // condición SECRETO: whatsapp de sala secreta, o email de cuenta secreta
     const sParts = [], sParams = []
@@ -149,15 +218,24 @@ export function secretGate() {
     // DM 1:1 cuya CLAVE es un número secreto (imports viejos con jid="" donde el número solo vive en la clave) → ocultar entero.
     // Patrón 'whatsapp:<num>@%' matchea el DM (whatsapp:<num>@s.whatsapp.net) y NO el grupo (whatsapp:<num>-<ts>@g.us). Usa el índice de thread.
     for (const n of secNums) for (const r of db.prepare("SELECT DISTINCT thread FROM messages WHERE thread LIKE ? OR thread = ?").all(`whatsapp:${n}@%`, `whatsapp:${n}`)) if (secretNumberInDMKey(r.thread) && !preview.has(r.thread)) hide.add(r.thread)
-  } catch {}
-  _g = { ts: now, val: { hide, preview, any: true, secretJids: new Set(secretJids), waSecretThreads } }
-  return _g.val
+    _lastGood = { hide, preview, any: true, secretJids: new Set(secretJids), waSecretThreads }
+    _g = { ts: now, val: _lastGood }
+    return _g.val
+  } catch (e) {
+    // No pudimos calcular el gate. Si tenemos uno bueno reciente, lo seguimos usando (un SQLITE_BUSY no debe vaciarte la
+    // bandeja). Si NUNCA calculamos uno, ocultamos todo: preferimos una bandeja vacía y ruidosa antes que filtrar.
+    console.error("[secret] no pude calcular el gate:", e?.message || e, _lastGood ? "— uso el último cálculo bueno" : "— OCULTO TODO hasta poder calcularlo")
+    const val = _lastGood ? { ..._lastGood, degraded: true } : BLOCK_ALL_GATE()
+    _g = { ts: now, val } // cachear 15s TAMBIÉN en degradado: sin esto se recomputaba por request Y por fila filtrada,
+    return val            // y con busy_timeout cada recómputo bloquea → un lock momentáneo se volvía un stall total.
+  }
 }
 // hilos que se ocultan ENTEROS (100% secretos). Los parciales NO están acá (se muestran filtrados por-mensaje).
 export function secretThreadKeys() { return secretGate().hide }
 // ¿ESTE mensaje es secreto? por CANAL: email de cuenta secreta, o WhatsApp de sala secreta, o import sin dueño en un hilo con canal secreto de WA.
 export function isSecretMsg(m) {
   if (!m) return false
+  if (secretGate().blockAll) return true // no sabemos qué es secreto → todo lo es (fail-closed)
   if (secretNumberInDMKey(String(m.thread || ""))) return true // DM 1:1 con un número secreto (incluye imports viejos con jid="")
   if (String(m.channel) === "email") return isSecretAccount("email", m.account)
   const g = secretGate(); const jid = String(m.jid || "")

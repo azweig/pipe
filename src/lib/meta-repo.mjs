@@ -2,7 +2,7 @@
 // Cuerpos movidos verbatim desde db.mjs; `db` = alias de handle() de db-core.
 // Los identificadores dinámicos de tabla se resuelven por allowlist (ver clipFlag: field ∈ {pinned, archived}).
 import { handle as db, withRetry } from "./db-core.mjs"
-import { secretSelfClause, secretThreadKeys } from "./secret.mjs"
+import { secretSelfClause, secretThreadKeys, secretGate } from "./secret.mjs"
 
 // 🔒 " AND NOT (<secret>)" para queries de 'self' (Notas): oculta clips de canal secreto sin 2º PIN.
 function _selfSecretAnd(alias = "m") { const c = secretSelfClause(alias); return c.clause ? { sql: ` AND NOT (${c.clause})`, params: c.params } : { sql: "", params: [] } }
@@ -50,16 +50,19 @@ export function insertPromesa(id, text, thread, name, due, ts, created, cita) {
 }
 // listados de PENDIENTES (para el server MCP read-only). Solo lo no-hecho, con la cita textual que respalda cada ítem.
 export function listTodos({ limit = 50 } = {}) {
+  if (secretGate().blockAll) return [] // el gate no pudo calcularse → no exponemos nada (fail-closed)
   const sk = secretThreadKeys() // 🔒 el MCP read-only tampoco expone acciones de hilos secretos
   return db().prepare("SELECT id, text, thread, name, due, cita, ts, created FROM todos WHERE done=0 ORDER BY created DESC LIMIT ?").all(Math.min(+limit || 50, 100)).filter((r) => !sk.has(r.thread))
 }
 export function listPromesas({ limit = 50 } = {}) {
+  if (secretGate().blockAll) return [] // el gate no pudo calcularse → no exponemos nada (fail-closed)
   const sk = secretThreadKeys() // 🔒
   return db().prepare("SELECT id, text, thread, name, due, cita, ts, created FROM promesas WHERE done=0 ORDER BY created DESC LIMIT ?").all(Math.min(+limit || 50, 100)).filter((r) => !sk.has(r.thread))
 }
 // ítems abiertos (done=0) de todos|promesas. kind por allowlist. Defensivo (nunca tira). (era home-brief.openActions)
 export function openActionItems(kind, { limit = 6 } = {}) {
   const tbl = _ACTION_TABLES[kind]; if (!tbl) return []
+  if (secretGate().blockAll) return []
   try { const sk = secretThreadKeys(); return db().prepare(`SELECT id,text,name,due,thread,ts FROM ${tbl} WHERE done=0 ORDER BY ts DESC LIMIT ?`).all(limit).filter((r) => !sk.has(r.thread)) } catch { return [] } // 🔒
 }
 // marca una tarea/promesa como hecha. kind: "prom"→promesas, cualquier otro→todos (fiel al original). Tabla por allowlist, nunca input crudo. (era brain.actionDone)
