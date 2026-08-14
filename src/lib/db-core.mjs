@@ -22,6 +22,7 @@ export function initSchema(h) {
     CREATE INDEX IF NOT EXISTS idx_dir_thread ON messages(dir, thread);
     CREATE INDEX IF NOT EXISTS idx_thread_dir_ts ON messages(thread, dir, ts);
     CREATE INDEX IF NOT EXISTS idx_grp ON messages(grp) WHERE grp IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_media ON messages(media) WHERE media IS NOT NULL; -- 🔒 permite gatear un archivo del CAS por su RUTA (OCR, papelera, /cas/) sin barrer la tabla
     CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(text, name, content='messages', content_rowid='rowid');
     CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
       INSERT INTO messages_fts(rowid, text, name) VALUES (new.rowid, new.text, new.name);

@@ -11,8 +11,8 @@ import { ocrCas, ocrEnabled } from "../ocr.mjs"
 const casPathOf = (media) => join(process.cwd(), "data", String(media || "").replace(/^\//, "")) // media = /cas/xx/hash.ext → ./data/cas/…
 const LANGS = { es: "español", en: "inglés", ja: "japonés", pt: "portugués", fr: "francés", de: "alemán", it: "italiano", zh: "chino", ko: "coreano", ru: "ruso", ar: "árabe", nl: "neerlandés", hi: "hindi" }
 
-export async function summarizeMedia(id) {
-  const m = messageById(id)
+export async function summarizeMedia(id, { secretOn = false } = {}) {
+  const m = messageById(id, { secretOn }) // 🔒 transcribir/describir un adjunto es leerlo: sin 2º PIN no existe
   if (!m) return { error: "mensaje no encontrado" }
   if (!m.media) return { error: "este mensaje no tiene archivo para transcribir" }
   const path = casPathOf(m.media)

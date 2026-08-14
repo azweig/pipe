@@ -133,3 +133,15 @@ test("marcas ilegibles: el gate oculta TODO y la bandeja queda vacía (no filtra
   assert.deepEqual(bandeja.filter((t) => !g.hide.has(t.key)), [], "no sale ningún hilo")
   assert.equal(s.secretMarksBroken()?.includes("secret-numbers.json"), true, "queda dicho qué archivo falló")
 })
+
+// El gate falla cerrado ocultando TODO, pero los generadores de SQL lo esparcían con [...set] — y ese set, aunque contesta
+// que sí a cualquier clave, está VACÍO al recorrerlo: salía una cláusula vacía justo cuando había que tapar todo (fail-OPEN).
+test("marcas ilegibles: los fragmentos de SQL excluyen TODO, no nada", () => {
+  assert.equal(s.secretGate().blockAll, true, "viene del test anterior: sin poder calcular, bloquea todo")
+  assert.equal(s.secretMsgExcludeSql().clause, "1=1", "se excluye toda fila")
+  assert.equal(s.secretSelfClause("m").clause, "1=1", "toda nota propia cuenta como secreta")
+  // y la trampa que lo causó, explícita: el set miente al preguntarle, pero recorrerlo no da nada
+  const hide = s.secretThreadKeys()
+  assert.equal(hide.has("lo-que-sea"), true)
+  assert.equal([...hide].length, 0, "por eso ningún generador de SQL puede confiar en recorrerlo")
+})

@@ -34,7 +34,8 @@ export function searchBody(query, { limit = 8 } = {}) {
   const words = ((query || "").toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || []).filter((w) => !STOP.has(w))
   if (!words.length) return []
   const q = words.map((w) => `"${w}"*`).join(" OR ")
-  try { return db().prepare(`SELECT m.thread, m.name, m.ts, m.channel, snippet(email_fts, 0, '', '', ' … ', 24) AS snip FROM email_fts f JOIN messages m ON m.rowid=f.rowid WHERE email_fts MATCH ? ORDER BY rank LIMIT ?`).all(q, limit) } catch { return [] }
+  // 🔒 ídem: trae account/jid para poder decidir, y filtra acá (el snippet del cuerpo va derecho al contexto de la IA)
+  try { return db().prepare(`SELECT m.thread, m.name, m.ts, m.channel, m.account, m.jid, snippet(email_fts, 0, '', '', ' … ', 24) AS snip FROM email_fts f JOIN messages m ON m.rowid=f.rowid WHERE email_fts MATCH ? ORDER BY rank LIMIT ?`).all(q, limit * 3 + 10).filter((r) => !isSecretRow(r)).slice(0, limit) } catch { return [] }
 }
 // cuerpos de email (donde viven montos/fechas, fuera del FTS) en los hilos ruteados que contengan alguno de los términos.
 // terms se expanden con la co-ocurrencia del grafo (juan→deuda) para saltar la brecha léxica.
@@ -44,7 +45,10 @@ export function bodyMatchInThreads(threads = [], terms = [], { limit = 4 } = {})
   const uniq = [...new Set(terms.map((t) => String(t).trim()).filter((t) => t.length >= 3))].slice(0, 8)
   if (!uniq.length) return []
   const clauses = uniq.map(() => "body LIKE ?").join(" OR ")
-  return db().prepare(`SELECT thread,name,ts,body FROM messages WHERE thread IN (${tph}) AND body IS NOT NULL AND body!='' AND (${clauses}) ORDER BY ts DESC LIMIT ?`).all(...threads, ...uniq.map((t) => "%" + t + "%"), limit)
+  // 🔒 filtra acá, no en el llamador: los cuerpos de correo alimentan el contexto de ask(). Sin traer channel/account/jid
+  // el chequeo por-mensaje devolvía false siempre (isSecretAccount("email", undefined)) y el cuerpo secreto se colaba.
+  return db().prepare(`SELECT thread,name,ts,body,channel,account,jid FROM messages WHERE thread IN (${tph}) AND body IS NOT NULL AND body!='' AND (${clauses}) ORDER BY ts DESC LIMIT ?`)
+    .all(...threads, ...uniq.map((t) => "%" + t + "%"), limit * 3 + 10).filter((r) => !isSecretRow(r)).slice(0, limit)
 }
 // archivos/media que están en los hilos ruteados O cuyo nombre/texto contiene alguno de los términos (para "docs de globex" en toda la DB).
 export function filesByTerms(terms = [], threads = [], { docs = true, limit = 40 } = {}) {
@@ -65,7 +69,9 @@ export function search(query, { limit = 80, byRank = false } = {}) {
   if (!words.length) return []
   const ftsq = words.map((w) => `"${w}"*`).join(" OR ")
   const order = byRank ? "rank" : "m.ts DESC" // rank = relevancia (bm25); ts = cronológico
-  const hide = new Set([...secretThreadKeys()])
+  // OJO: sin copiarlo. Cuando el gate falla cerrado, el set devuelve `true` a cualquier clave pero está VACÍO al recorrerlo
+  // — copiarlo a un Set nuevo tira ese "sí a todo" a la basura y el filtro se vuelve fail-open.
+  const hide = secretThreadKeys()
   const visible = (rows) => rows.filter((r) => !hide.has(r.thread) && !isSecretRow(r)).slice(0, limit)
   const over = limit * 3 + 30 // margen para que el filtrado no deje la búsqueda corta
   try {
@@ -73,8 +79,11 @@ export function search(query, { limit = 80, byRank = false } = {}) {
       WHERE messages_fts MATCH ? ORDER BY ${order} LIMIT ?`).all(ftsq, over))
   } catch { return visible(db().prepare("SELECT * FROM messages WHERE text LIKE ? ORDER BY ts DESC LIMIT ?").all("%" + words[0] + "%", over)) }
 }
+// corpus completo para reindexar. 🔒 Filtra los canales secretos en el ORIGEN: lo que entre acá termina vectorizado y
+// saliendo en respuestas de IA, donde ya no hay forma de distinguirlo. Necesita account/jid para decidir por-mensaje.
 export function allForRag({ since = 0 } = {}) {
-  return db().prepare("SELECT id, channel, thread, name, text, ts, grp FROM messages WHERE ts>? AND text!='' ORDER BY ts ASC").all(since)
+  return db().prepare("SELECT id, channel, thread, name, text, ts, grp, account, jid FROM messages WHERE ts>? AND text!='' ORDER BY ts ASC").all(since)
+    .filter((r) => !isSecretRow(r))
 }
 
 // reconstruye el índice FTS de asuntos/nombres (external-content: el trigger solo cubre INSERT, no UPDATE). (era meetings.updateMeeting) Wave 3.

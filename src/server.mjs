@@ -25,6 +25,7 @@ import { localFlags, clientIpFrom, csrfReason, hostAllowed } from "./lib/http-ga
 import * as maintenance from "./lib/maintenance.mjs"
 import * as mailArchive from "./lib/mail-archive.mjs"
 import { ocrCas, ocrEnabled } from "./lib/ocr.mjs"
+import { casSecreto } from "./lib/db.mjs" // 🔒 gateo de archivos del CAS por ruta (OCR, papelera, /cas/)
 import { clipFlag, getMeta, delMeta, delMetaLike, rebuildStats, freeThreadMedia, restoreMedia, listNotes, noteCategories, noteJunkCount, noteAction, totalUnread } from "./lib/db.mjs"
 import { channelCatalog, bridgeNets, tokenNets } from "./lib/channels.mjs" // registro de canales (única fuente de verdad de qué canales hay + cómo se vinculan)
 import { getMediaPolicy, setMediaDefault, setThreadMediaPolicy } from "./lib/media-policy.mjs"
@@ -391,7 +392,7 @@ const server = createServer(async (req, res) => {
       if (path === "/api/summary") return json(res, 200, brain.summary())
       if (path === "/api/threads") { let t = brain.listThreads({ limit: +q.limit || 100, q: (q.q || "").slice(0, 80) }); if (!secretOn) { const g = secret.secretGate(); if (g.any) t = t.filter((x) => !g.hide.has(x.key)).map((x) => { const p = g.preview.get(x.key); return p ? { ...x, lastText: ((p.text || "").replace(/\s+/g, " ").slice(0, 120)) || "…", ts: p.ts, lastChannel: p.channel || x.lastChannel } : x }) } return jsonCached(req, res, t) } // 🔒 oculta hilos 100% secretos + parchea el preview de los parciales al último mensaje NO-secreto
       // OCR local (opcional): extrae texto de una imagen/PDF del CAS (facturas, documentos) sin nube. Requiere OCR_URL.
-      if (path === "/api/ocr" && req.method === "POST") { const b = await body(req); if (!ocrEnabled()) return json(res, 200, { text: "", disabled: true }); const text = await ocrCas(b.media || "").catch(() => ""); return json(res, 200, { text }) }
+      if (path === "/api/ocr" && req.method === "POST") { const b = await body(req); if (!ocrEnabled()) return json(res, 200, { text: "", disabled: true }); if (casSecreto(b.media, { secretOn })) return json(res, 200, { text: "" }); const text = await ocrCas(b.media || "").catch(() => ""); return json(res, 200, { text }) }
       // contador barato de entrantes (thread_stats.unread es monotónico por ingesta) → el cliente detecta "llegó algo nuevo" y suena. Sin recomputar la bandeja.
       if (path === "/api/unread") { let n = totalUnread(); if (!secretOn) n -= secret.secretUnread(); return json(res, 200, { n: Math.max(0, n) }) } // 🔒 no contar no-leídos secretos si está bloqueado
       if (path === "/api/person") return json(res, 200, await brain.personCard(q.name || q.key || "", { force: q.force === "1" }))
@@ -440,7 +441,7 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { policy: getMediaPolicy(), storage: casStats(), quota: storageStatus() })
       }
       if (path === "/api/media/free" && req.method === "POST") { const b = await body(req); return json(res, 200, freeThreadMedia(b.key || null)) } // → papelera (30 días para deshacer)
-      if (path === "/api/media/trash") return json(res, 200, { items: casTrashList(), storage: casStats() }) // papelera: media borrada, recuperable hasta el purge
+      if (path === "/api/media/trash") return json(res, 200, { items: casTrashList().filter((it) => !casSecreto(it.pub || it.path || "", { secretOn })), storage: casStats() }) // 🔒 la papelera listaba las rutas del CAS: con la ruta se baja el archivo // papelera: media borrada, recuperable hasta el purge
       if (path === "/api/media/restore" && req.method === "POST") { const b = await body(req); return json(res, 200, restoreMedia(b.pub || "")) } // DESHACER un borrado
       if (path === "/api/voices" && req.method === "POST") { const b = await body(req); const c = briefing.setConfig({ voice: b.voice }); return json(res, 200, { ok: true, voice: c.voice }) } // elegir voz TTS
       if (path === "/api/voices") return json(res, 200, { voices: VOICES, current: briefing.getConfig().voice })
@@ -580,7 +581,7 @@ const server = createServer(async (req, res) => {
       if (path === "/api/contact/archive" && req.method === "POST") { const b = await body(req); const on = b.on !== false; const r = ws.archive(b.key, on); brain.invalidateThreads(); void Promise.resolve().then(() => mailArchive.archiveThreadOnServer(b.key, on)).catch(() => {}); return json(res, 200, { ok: true, archived: r }) } // propaga al buzón real (Gmail/Outlook/IMAP), fire-and-forget
       if (path === "/api/contact/spam" && req.method === "POST") { const b = await body(req); ws.addSpamSender(b.addr); if (b.key) ws.archive(b.key, true); brain.invalidateThreads(); return json(res, 200, { ok: true }) }
       if (path === "/api/contact/silence" && req.method === "POST") { const b = await body(req); const r = ws.silence(b.key, b.on !== false); brain.invalidateThreads(); return json(res, 200, { ok: true, silenced: r.includes(b.key) }) } // ruido que no es spam → pestaña Silenciados
-      if (path === "/api/email/body") return json(res, 200, { body: brain.emailBody(q.id || "") })
+      if (path === "/api/email/body") return json(res, 200, { body: brain.emailBody(q.id || "", { secretOn }) }) // 🔒 el id saltea el filtro por hilo
       if (path === "/api/thread/media") return json(res, 200, brain.threadMedia(q.key || ""))
       if (path === "/api/contact/profile") return json(res, 200, brain.contactProfile(q.key || ""))
       if (path === "/api/thread/targets") return json(res, 200, brain.threadTargets(q.key || ""))
@@ -607,7 +608,7 @@ const server = createServer(async (req, res) => {
       if (path === "/api/autopilot/council" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setCouncil({ enabled: b.enabled, members: b.members, chairman: b.chairman })) } // council: varios modelos locales draftean + chairman elige
       if (path === "/api/autopilot/council") return json(res, 200, { ...brain.getCouncil(), available: await brain.councilModels() })
       // #5: transcribir + resumir un video/audio/imagen on-demand (long-press/hover)
-      if (path === "/api/media/summarize" && req.method === "POST") { const b = await body(req); try { const r = await brain.summarizeMedia(b.id); return json(res, r && r.error ? 400 : 200, r) } catch (e) { return json(res, 500, { error: e.message }) } }
+      if (path === "/api/media/summarize" && req.method === "POST") { const b = await body(req); try { const r = await brain.summarizeMedia(b.id, { secretOn }); return json(res, r && r.error ? 400 : 200, r) } catch (e) { return json(res, 500, { error: e.message }) } }
       // ── IMPORT de historial de WhatsApp (self-service desde la app: "Exportar chat" → subir el .txt) ──
       if (path === "/api/import/whatsapp" && req.method === "POST") {
         const buf = await rawBody(req, 64 * 1024 * 1024) // el export de un chat, hasta 64MB
@@ -626,7 +627,7 @@ const server = createServer(async (req, res) => {
         return json(res, 200, r)
       }
       // REENVIAR mensajes preservando el media (audio/imagen/archivo), no solo el texto
-      if (path === "/api/forward" && req.method === "POST") { const b = await body(req); const r = await brain.forwardMessages(b.ids, b.key); return json(res, r && r.error ? 400 : 200, r) }
+      if (path === "/api/forward" && req.method === "POST") { const b = await body(req); const r = await brain.forwardMessages(b.ids, b.key, { secretOn }); return json(res, r && r.error ? 400 : 200, r) }
       // AUTO-TEST DE ENVÍO: último resultado (GET) o correr ahora (POST). El cron lo corre cada ~12h; verifica que el envío funciona de verdad.
       if (path === "/api/selftest" && req.method === "GET") return json(res, 200, lastSelfTest() || { ts: 0, results: [] })
       if (path === "/api/selftest" && req.method === "POST") return json(res, 200, await runSelfTest())
@@ -969,6 +970,8 @@ fetch('/api/wa-status?acc=${acc}').then(r=>r.json()).then(d=>{if(d.connected){do
       const full = normalize(join(process.cwd(), "data", path))
       const okBase = full.startsWith(join(process.cwd(), "data", "cas")) || full.startsWith(join(process.cwd(), "data", "media"))
       if (!okBase || !existsSync(full)) { res.writeHead(404); return res.end() }
+      // 🔒 el archivo se pide por RUTA, que no pasa por el gate por-hilo. Mismo 404 que si no existiera: un 403 confirmaría que sí.
+      if (casSecreto(path, { secretOn })) { res.writeHead(404); return res.end() }
       return serveFile(req, res, full, MIME[extname(full)] || "application/octet-stream", "public, max-age=31536000, immutable")
     }
     // ── estáticos ──

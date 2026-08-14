@@ -21,7 +21,20 @@ export function recentInThread(thread, { limit = 6 } = {}) {
   return db().prepare("SELECT name,text,ts,dir FROM messages WHERE thread=? AND text!='' ORDER BY ts DESC LIMIT ?").all(thread, limit).reverse()
 }
 
-export function getBody(id) { const r = db().prepare("SELECT body FROM messages WHERE id=?").get(id); return r?.body || null } // cuerpo HTML del email, on-demand
+// 🔒 LECTORES POR-ID: la bandeja y el visor ya filtran por hilo, pero pedir un id suelto los saltea — con el id de un correo
+// de una cuenta secreta se leía el cuerpo entero sin 2º PIN. Sin `secretOn` una fila secreta directamente NO EXISTE.
+// El id no es adivinable, pero sale en cualquier export/backup/captura vieja: no es un secreto, es un identificador.
+export function getBody(id, { secretOn = false } = {}) { const r = db().prepare("SELECT body, channel, account, thread, jid, sender FROM messages WHERE id=?").get(id); if (!r || (!secretOn && isSecretRow(r))) return null; return r.body || null } // cuerpo HTML del email, on-demand
+// 🔒 ¿este archivo del CAS es de fuente secreta? El CAS se sirve por RUTA (/cas/<sha>.jpg), que no pasa por el gate por-hilo:
+// con la ruta en la mano se bajaba la foto o se la mandaba a OCR. La ruta no es adivinable (es el hash del contenido), pero
+// sale en la papelera, en backups y en cualquier captura. Un mismo archivo puede estar en varios mensajes: si CUALQUIERA es
+// secreto, se niega. Va por el índice idx_media, así que es una búsqueda puntual y no un barrido.
+export function casSecreto(pub, { secretOn = false } = {}) {
+  if (secretOn) return false
+  const p = String(pub || "").trim(); if (!p) return false
+  try { return db().prepare("SELECT thread, channel, account, jid FROM messages WHERE media=? LIMIT 50").all(p).some((r) => isSecretRow(r)) }
+  catch { return true } // si no se puede consultar, no se entrega
+}
 export function getAttachments(id) { const r = db().prepare("SELECT attachments FROM messages WHERE id=?").get(id); return r?.attachments || null } // JSON de adjuntos (incluye los inline cid:)
 export function setAttachments(id, json) { db().prepare("UPDATE messages SET attachments=? WHERE id=?").run(json, id) } // el trigger de rev bumpea solo → los clientes re-sincronizan
 // emails cuyo cuerpo referencia imágenes inline (cid:) pero que NO tienen esas imágenes guardadas → candidatos al backfill
@@ -121,7 +134,7 @@ export function threadMaxRev(thread) {
 // hilos ENTRANTES recientes SIN respuesta, un mensaje representativo (el último) por hilo: excluye grupos, 'self',
 // y hilos donde ya respondí (dir='out'). Para el clasificador de spam capa 2. (era spam-classify.mjs)
 export function inboundUnansweredThreads(sinceTs, { limit = 500 } = {}) {
-  return db().prepare(`SELECT m.thread, m.name, m.jid, m.text, MAX(m.ts) ts FROM messages m
+  return db().prepare(`SELECT m.thread, m.name, m.jid, m.channel, m.account, m.text, MAX(m.ts) ts FROM messages m
     WHERE m.dir!='out' AND m.ts > ? AND m.thread!='self' AND m.grp IS NULL AND m.thread NOT LIKE '%@g.us' AND length(m.text) > 12
     AND m.thread NOT IN (SELECT DISTINCT thread FROM messages WHERE dir='out')
     GROUP BY m.thread ORDER BY ts DESC LIMIT ?`).all(sinceTs, limit).filter((r) => !isSecretRow(r)) // 🔒
@@ -244,7 +257,9 @@ export function allThreadLastTs() {
 }
 // todos mis mensajes SALIENTES con texto real (para perfilar el estilo). (era style.outboundMessages)
 export function sentMessages() {
-  return db().prepare("SELECT channel, name, thread, jid, text, ts, dir, grp FROM messages WHERE dir='out' AND text IS NOT NULL AND length(trim(text))>3 ORDER BY ts").all()
+  // 🔒 de acá sale el perfil de estilo y los ejemplos few-shot que ve el LLM al redactar. Un saliente tuyo de la línea
+  // secreta se usaba como ejemplo para escribirle a OTRO contacto: el texto se filtraba literal.
+  return db().prepare("SELECT channel, account, name, thread, jid, text, ts, dir, grp FROM messages WHERE dir='out' AND text IS NOT NULL AND length(trim(text))>3 ORDER BY ts").all().filter((r) => !isSecretRow(r))
 }
 // emails RECIBIDOS de un hilo (id + cuenta), para archivar en el buzón real. (era mail-archive.emailMsgsOf)
 export function emailMessagesInThread(thread) {
@@ -267,7 +282,7 @@ export function videoCandidates() {
 }
 // mensajes ENTRANTES nuevos de conversaciones 1:1 (excluye grupos/canales/spam) desde una marca. (era msg-push)
 export function inbound1to1Since(since) {
-  return db().prepare(`SELECT thread, name, text, ts, jid FROM messages
+  return db().prepare(`SELECT thread, name, text, ts, jid, channel, account FROM messages
   WHERE dir='in' AND ts > ? AND (grp IS NULL OR grp='')
     AND thread NOT LIKE '%@g.us%' AND thread NOT LIKE '%!%' AND thread NOT LIKE 'spam:%'
     AND thread NOT LIKE '%@newsletter%' AND thread NOT LIKE '%@broadcast%'
@@ -285,8 +300,12 @@ export function audioToSummarize(from, { limit } = {}) {
     ORDER BY ts DESC LIMIT ?`).all(from, limit)
 }
 // un mensaje por id (o undefined). (era meetings.reprocessMeeting)
-export function messageById(id) {
-  return db().prepare("SELECT * FROM messages WHERE id=?").get(id)
+// 🔒 mismo criterio que getBody: sin 2º PIN, un mensaje de fuente secreta no se entrega por id (reenviarlo, transcribirlo
+// o resumirlo son formas de leerlo). Los llamadores derivados (crons, reuniones) no pasan secretOn a propósito.
+export function messageById(id, { secretOn = false } = {}) {
+  const r = db().prepare("SELECT * FROM messages WHERE id=?").get(id)
+  if (!r || (!secretOn && isSecretRow(r))) return undefined
+  return r
 }
 
 // ── absorbidas en Wave 4 (signals — señales para coach/home) ──
@@ -402,16 +421,21 @@ export function latestThreadLike(pattern) {
   return db().prepare("SELECT thread FROM messages WHERE thread LIKE ? ORDER BY ts DESC LIMIT 1").get(pattern)
 }
 // conteo de enviados desde una marca. (era brain.weeklyReview)
+// 🔒 los tres agregados del review semanal (coach) excluyen lo secreto: no solo por el contenido — un contador que sube
+// de más, o un contacto en el "top", ya delata que la conversación existe. Es lo que promete el modo: no existe en ningún lado.
 export function sentCountSince(since) {
-  return db().prepare("SELECT COUNT(*) c FROM messages WHERE dir='out' AND ts>?").get(since).c
+  const h = _hideAnd("thread"), s = _selfSecretAnd("messages")
+  return db().prepare(`SELECT COUNT(*) c FROM messages WHERE dir='out' AND ts>?${h.sql}${s.sql}`).get(since, ...h.params, ...s.params).c
 }
 // conteo de recibidos reales (no self/spam/broadcast) desde una marca. (era brain.weeklyReview)
 export function recvCountSince(since) {
-  return db().prepare("SELECT COUNT(*) c FROM messages WHERE dir!='out' AND ts>? AND thread!='self' AND thread NOT LIKE '%status@broadcast%' AND thread NOT LIKE 'spam:%'").get(since).c
+  const h = _hideAnd("thread"), s = _selfSecretAnd("messages")
+  return db().prepare(`SELECT COUNT(*) c FROM messages WHERE dir!='out' AND ts>? AND thread!='self' AND thread NOT LIKE '%status@broadcast%' AND thread NOT LIKE 'spam:%'${h.sql}${s.sql}`).get(since, ...h.params, ...s.params).c
 }
 // hilos con más ida y vuelta desde una marca (para el review semanal). (era brain.weeklyReview)
 export function topThreadsSince(since, { limit = 12 } = {}) {
-  return db().prepare("SELECT thread, COUNT(*) c FROM messages WHERE ts>? AND thread NOT LIKE '%@g.us' AND thread NOT LIKE 'whatsapp:!%' AND thread NOT LIKE '%@newsletter' AND thread NOT LIKE '%status@broadcast%' AND thread NOT LIKE 'spam:%' AND thread!='self' GROUP BY thread ORDER BY c DESC LIMIT ?").all(since, limit)
+  const h = _hideAnd("thread"), s = _selfSecretAnd("messages") // 🔒 el "top de contactos" nombraba el hilo secreto y su nivel de actividad
+  return db().prepare(`SELECT thread, COUNT(*) c FROM messages WHERE ts>? AND thread NOT LIKE '%@g.us' AND thread NOT LIKE 'whatsapp:!%' AND thread NOT LIKE '%@newsletter' AND thread NOT LIKE '%status@broadcast%' AND thread NOT LIKE 'spam:%' AND thread!='self'${h.sql}${s.sql} GROUP BY thread ORDER BY c DESC LIMIT ?`).all(since, ...h.params, ...s.params, limit)
 }
 // todos los mensajes de un hilo (cualquier dir) desde una marca. (era brain.summarizeChat)
 export function threadMessagesSinceAll(key, since, { limit = 500 } = {}) {

@@ -4,6 +4,8 @@ import { readFileSync, existsSync, appendFileSync, readdirSync, statSync } from 
 import { loadEnv } from "./lib/env.mjs"
 import { embed } from "./lib/embed.mjs"
 import { streamJsonl } from "./lib/jsonl.mjs"
+import { isSecretRow } from "./lib/secret.mjs" // 🔒 lo que entra al índice sale en respuestas de IA: los canales secretos no entran
+import { computeThread } from "./lib/thread.mjs" // el jsonl NO trae `thread` (lo calcula la ingesta) y sin él no se puede decidir si es secreto
 
 loadEnv()
 
@@ -11,12 +13,14 @@ const OUT = "./data/rag.jsonl"
 const have = new Set()
 if (existsSync(OUT)) for (const l of readFileSync(OUT, "utf8").split("\n")) { if (!l) continue; try { have.add(JSON.parse(l).id) } catch {} }
 
-let added = 0
-async function add(id, kind, ref, text, ts) {
+let added = 0, saltados = 0
+// `thread` va en la línea a propósito: sin él, quien consulta el índice no puede decidir si el mensaje es de un canal
+// secreto y el filtro de ask() quedaba ciego. Las notas del vault no tienen hilo y no lo necesitan.
+async function add(id, kind, ref, text, ts, thread) {
   if (have.has(id) || !text || text.trim().length < 4) return
   const v = await embed(text)
   if (!v) return
-  appendFileSync(OUT, JSON.stringify({ id, kind, ref, text: text.slice(0, 500), ts: ts || 0, vec: v }) + "\n")
+  appendFileSync(OUT, JSON.stringify({ id, kind, ref, text: text.slice(0, 500), ts: ts || 0, ...(thread ? { thread } : {}), vec: v }) + "\n")
   have.add(id); added++
   if (added % 200 === 0) console.log(`  … +${added} indexados`)
 }
@@ -24,8 +28,14 @@ async function add(id, kind, ref, text, ts) {
 // 1) mensajes — streaming línea por línea (el jsonl pesa >1GB: readFileSync utf8 rompía con ERR_STRING_TOO_LONG)
 await streamJsonl("./data/messages.jsonl", async (r) => {
   if (!r.text || r.text.length < 4 || /^\[(imagen|video|audio|sticker|otro)\]$/.test(r.text)) return
-  const id = "msg:" + (r.id || `${r.ts}:${r.channel}`)
-  await add(id, "msg", `${r.channel}/${r.group || r.name || ""}`, `${r.name || ""}${r.group ? " en " + r.group : ""}: ${r.text}`, r.ts)
+  // el hilo se calcula acá igual que en la ingesta: el jsonl no lo trae, y sin hilo `isSecretRow` no ve el caso del import
+  // viejo (el número secreto vive SOLO en la clave del hilo, sin jid) — se colaba al índice.
+  const thread = r.thread || computeThread(r)
+  if (isSecretRow({ ...r, thread })) { saltados++; return } // 🔒 número/cuenta secreta: no se vectoriza (si la desmarcás, la próxima corrida la indexa)
+  // MISMA fórmula de id que la ingesta (src/lib/ingest-repo.mjs normalizeRec): si no coincide, el ítem no se puede
+  // resolver contra la DB y ask() lo descarta por las dudas → perdés recall en silencio.
+  const id = "msg:" + (r.id || `${r.channel}:${r.ts}:${(r.name || "").slice(0, 12)}`)
+  await add(id, "msg", `${r.channel}/${r.group || r.name || ""}`, `${r.name || ""}${r.group ? " en " + r.group : ""}: ${r.text}`, r.ts, thread)
 })
 
 // 1.5) items de redes sociales (IG/FB/LinkedIn) → el ask() global conoce lo que pasó en tus feeds
@@ -49,4 +59,4 @@ for (const path of walk("./vault")) {
   for (let i = 0; i < cs.length; i++) await add(`note:${rel}#${i}`, "note", rel.replace(/\.md$/, ""), cs[i], mt)
 }
 
-console.log(`✅ RAG index: +${added} nuevos · total ${have.size} vectores`)
+console.log(`✅ RAG index: +${added} nuevos · total ${have.size} vectores${saltados ? ` · ${saltados} omitidos por secretos 🔒` : ""}`)

@@ -115,3 +115,102 @@ test("searchThreadKeys: tolera sintaxis de FTS5 sin explotar", () => {
     assert.ok(Array.isArray(tr.searchThreadKeys(q, { limit: 5 })), `no debe tirar con: ${q}`)
   }
 })
+
+// ── LECTORES POR-ID ── La bandeja y el visor filtran POR HILO, pero pedir un id suelto los saltea: con el id en la mano
+// se leía el cuerpo del correo, se reenviaba el mensaje o se mandaba a transcribir. El id no es adivinable, pero aparece
+// en exports, backups y capturas viejas — no es un secreto. Sin 2º PIN, esa fila no existe.
+const idDe = (texto) => dbc.handle().prepare("SELECT id FROM messages WHERE text=?").get(texto)?.id
+
+test("messageById: niega la fila secreta y devuelve la normal", () => {
+  const secreto = idDe("MENSAJE_SECRETO_MILI"), normal = idDe("MENSAJE_NORMAL_MILI")
+  assert.ok(secreto && normal, "el seed tiene que traer ids")
+  assert.equal(tr.messageById(secreto), undefined, "sin 2º PIN no se entrega")
+  assert.equal(tr.messageById(normal)?.text, "MENSAJE_NORMAL_MILI", "el normal sí")
+  assert.equal(tr.messageById(secreto, { secretOn: true })?.text, "MENSAJE_SECRETO_MILI", "con 2º PIN sí")
+})
+
+test("getBody (visor de correo): el cuerpo de una fila secreta no sale por id", () => {
+  const id = idDe("MENSAJE_SECRETO_MILI")
+  dbc.handle().prepare("UPDATE messages SET body=? WHERE id=?").run("<p>CUERPO_SECRETO</p>", id)
+  assert.equal(tr.getBody(id), null, "sin 2º PIN, sin cuerpo")
+  assert.equal(tr.getBody(id, { secretOn: true }), "<p>CUERPO_SECRETO</p>", "con 2º PIN sí")
+})
+
+test("forwardMessages: no reenvía un mensaje secreto sin 2º PIN", async () => {
+  const { forwardMessages } = await import("../src/lib/brain/reply.mjs")
+  const r = await forwardMessages([idDe("MENSAJE_SECRETO_MILI")], "mili")
+  // el error EXACTO importa: prueba que se negó al LEERLO, no que falló al mandarlo (eso pasaría igual sin el candado)
+  assert.equal(r?.error, "No encontré los mensajes a reenviar.", "tiene que negarse antes de intentar mandarlo")
+})
+
+test("summarizeMedia: no transcribe/describe un adjunto de fuente secreta sin 2º PIN", async () => {
+  const { summarizeMedia } = await import("../src/lib/brain/media-ai.mjs")
+  const r = await summarizeMedia(idDe("MENSAJE_SECRETO_MILI"))
+  assert.equal(r?.error, "mensaje no encontrado")
+})
+
+test("allForRag (corpus del índice semántico): no entrega mensajes de canal secreto", async () => {
+  const sr = await import("../src/lib/search-repo.mjs")
+  const textos = sr.allForRag({ since: 0 }).map((r) => r.text)
+  assert.ok(textos.includes("MENSAJE_NORMAL_MILI"), "lo normal sí entra al índice")
+  for (const t of ["MENSAJE_SECRETO_MILI", "MENSAJE_DE_SOLO", "NOTA_SECRETA_XYZ", "IMPORT_VIEJO_SECRETO"])
+    assert.ok(!textos.includes(t), `${t} NO puede vectorizarse`)
+})
+
+// ── ÍNDICE SEMÁNTICO (RAG) ── El agujero más grande: rag.jsonl no guardaba el hilo, así que el filtro de ask() (`it.thread
+// && …`) era falso SIEMPRE y los mensajes de canales secretos entraban al contexto que ve la IA. Se resuelve por id.
+test("ragItemVisible: la línea vieja del índice (sin hilo) se resuelve por id y la secreta queda fuera", async () => {
+  const { ragItemVisible } = await import("../src/lib/brain/ask.mjs")
+  const visible = ragItemVisible({ secretKeys: secret.secretThreadKeys(), isSecret: secret.isSecretMsg })
+  const idSec = idDe("MENSAJE_SECRETO_MILI"), idNor = idDe("MENSAJE_NORMAL_MILI")
+  // líneas VIEJAS (sin thread): antes pasaban las dos
+  assert.equal(visible({ id: "msg:" + idSec, kind: "msg", text: "x" }), false, "la secreta NO entra al contexto")
+  assert.equal(visible({ id: "msg:" + idNor, kind: "msg", text: "x" }), true, "la normal sí")
+  // línea NUEVA (con thread) del hilo 100%-secreto
+  assert.equal(visible({ id: "msg:z", kind: "msg", thread: "solo", text: "x" }), false)
+  // notas del vault y items sociales no son mensajes de canal: no se descartan
+  assert.equal(visible({ id: "note:People/Ana#0", kind: "note", text: "x" }), true)
+  // id que ya no existe en la DB → se descarta (fallar cerrado)
+  assert.equal(visible({ id: "msg:no-existe-999", kind: "msg", text: "x" }), false)
+})
+
+// ── CONTADORES Y AGREGADOS ── Que un contador suba de más, o que el contacto salga en un "top", ya delata que la
+// conversación existe. El review semanal (coach) los exponía con nombre y todo.
+test("coach semanal: los contadores y el top de contactos no incluyen lo secreto", () => {
+  const tops = tr.topThreadsSince(0, { limit: 20 }).map((t) => t.thread)
+  assert.ok(!tops.includes("solo"), "el hilo 100%-secreto no puede salir en el top")
+  assert.ok(!tops.includes("whatsapp:51999000001@s.whatsapp.net"), "el import viejo tampoco")
+  const antes = tr.sentCountSince(0) + tr.recvCountSince(0)
+  secret.setSecretNumber("51999000001", false)
+  const conTodo = tr.sentCountSince(0) + tr.recvCountSince(0)
+  secret.setSecretNumber("51999000001", true)
+  assert.ok(conTodo > antes, "al desmarcarla el conteo tiene que SUBIR: si no, es que nunca se estaba restando")
+})
+
+test("estilo/few-shot: los salientes de la línea secreta no se usan como ejemplo para escribirle a otro", () => {
+  const textos = tr.sentMessages().map((m) => m.text)
+  assert.ok(textos.includes("hola desde la normal"), "los salientes normales sí")
+  assert.ok(!textos.includes("hola desde la secreta"), "el saliente de la línea secreta NO puede ir al LLM")
+  assert.ok(!textos.includes("hola solo"))
+})
+
+test("ficha de contacto: pedirla por NOMBRE no revela la clave del hilo ni el teléfono", async () => {
+  const { personCard } = await import("../src/lib/brain/people.mjs")
+  const card = await personCard("Solo")
+  assert.ok(!card?.contacts, "no puede devolver teléfonos/correos de un contacto secreto")
+  assert.ok(!card?.key || !secret.secretThreadKeys().has(card.key), "ni la clave del hilo")
+  // y tiene que ser INDISTINGUIBLE de un nombre que no existe: un "secret:true" sería un oráculo por sí mismo
+  const inventado = await personCard("Zzz Noexiste")
+  assert.deepEqual(Object.keys(card).sort(), Object.keys(inventado).sort(), "misma forma que un nombre inventado")
+  assert.equal(card.canon, null, "sin canon: si lo devolviera, ya confirma que la persona existe")
+  assert.equal(card.secret, undefined, "y sin bandera que lo delate")
+})
+
+test("archivos del CAS: se niegan por RUTA si el mensaje que los trae es secreto", () => {
+  const h = dbc.handle()
+  h.prepare("UPDATE messages SET media=? WHERE text=?").run("/cas/aa11.jpg", "MENSAJE_SECRETO_MILI")
+  h.prepare("UPDATE messages SET media=? WHERE text=?").run("/cas/bb22.jpg", "MENSAJE_NORMAL_MILI")
+  assert.equal(tr.casSecreto("/cas/aa11.jpg"), true, "la foto del canal secreto no se entrega")
+  assert.equal(tr.casSecreto("/cas/bb22.jpg"), false, "la normal sí")
+  assert.equal(tr.casSecreto("/cas/aa11.jpg", { secretOn: true }), false, "con 2º PIN sí")
+})

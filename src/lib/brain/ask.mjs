@@ -2,7 +2,7 @@
 import { existsSync, statSync, readFileSync } from "fs"
 import { embed, topK } from "../embed.mjs"
 import { route as routeFacets, activate as activateGraph } from "../router.mjs"
-import { search as dbSearch, searchBody as dbSearchBody, conversationsByThreads as dbConvsByThreads, filesByTerms as dbFilesByTerms, mediaInThreads as dbMediaInThreads, bodyMatchInThreads as dbBodyMatch, recentInThread as dbRecentInThread } from "../db.mjs"
+import { search as dbSearch, searchBody as dbSearchBody, conversationsByThreads as dbConvsByThreads, filesByTerms as dbFilesByTerms, mediaInThreads as dbMediaInThreads, bodyMatchInThreads as dbBodyMatch, recentInThread as dbRecentInThread, messageById as dbMessageById } from "../db.mjs"
 import { llm } from "../llm.mjs"
 import { UNTRUSTED_NOTE } from "../safety.mjs"
 import { ownerFirst } from "../hub.mjs"
@@ -35,6 +35,24 @@ function ragIndex() {
   return _rag
 }
 
+// 🔒 ¿puede este ítem del índice semántico entrar al contexto que ve la IA?
+// El índice (data/rag.jsonl) NO guardaba el hilo, así que el filtro por hilo se saltaba ENTERO — `it.thread && …` es falso
+// cuando no hay hilo, y el mensaje de una cuenta secreta entraba tal cual en la respuesta. El indexador ya guarda el hilo,
+// pero las líneas viejas siguen sin él: para ésas se resuelve el mensaje por id contra la DB, cuyo lector niega las filas
+// secretas. Si no se puede resolver (borrado, id de formato viejo), se descarta: preferimos perder un fragmento a filtrarlo.
+// Exportada aparte para poder probarla sin levantar el modelo de embeddings.
+export function ragItemVisible({ secretKeys = new Set(), isSecret = () => false, lookup = dbMessageById } = {}) {
+  return (it) => {
+    const raw = String(it.id || "")
+    if (!raw.startsWith("msg:")) return true // nota del vault / item social: no es un mensaje de un canal
+    // La fila de la DB manda SIEMPRE. El ítem del índice guarda `thread` pero no `channel`/`account`/`jid`, así que
+    // preguntarle a él si es secreto no puede ver el caso "contacto con una cuenta de CORREO secreta en un hilo mixto":
+    // el hilo no está en `hide` (es parcial) y sin `account` la comprobación de correo nunca dispara → se colaba.
+    if (!lookup(raw.slice(4))) return false  // no resuelve: secreta, borrada, o id de formato viejo → afuera
+    return !(it.thread && (secretKeys.has(it.thread) || isSecret(it))) // cinturón además del tirante
+  }
+}
+
 // RETRIEVAL CRUDO (sin la síntesis LLM): trae los fragmentos más relevantes de TODA la data del owner — RAG semántico (mensajes +
 // notas del vault Obsidian) + FTS sobre los 2M msgs + cuerpos de email. Reusable por el piloto (cruce con el cerebro) sin gastar un LLM.
 export async function retrieveContext(question, { limit = 14, semantic: useSemantic = true } = {}) {
@@ -44,7 +62,8 @@ export async function retrieveContext(question, { limit = 14, semantic: useSeman
   const ctxItems = [], seen = new Set()
   // 🔒 el RAG NUNCA ve mensajes de fuente secreta (ni 100%-secretos ni el canal secreto de un contacto parcial) → no se filtran en respuestas de IA
   let secretKeys = new Set(), isSecret = () => false; try { const S = await import("../secret.mjs"); secretKeys = S.secretThreadKeys(); isSecret = S.isSecretMsg } catch {}
-  for (const it of semantic) { if (seen.has(it.id) || (it.thread && (secretKeys.has(it.thread) || isSecret(it)))) continue; seen.add(it.id); ctxItems.push({ ts: it.ts, label: it.kind === "note" ? "🧠 " + it.ref : it.ref, text: it.text }) }
+  const visibleSem = ragItemVisible({ secretKeys, isSecret })
+  for (const it of semantic) { if (seen.has(it.id) || !visibleSem(it)) continue; seen.add(it.id); ctxItems.push({ ts: it.ts, label: it.kind === "note" ? "🧠 " + it.ref : it.ref, text: it.text }) }
   try { for (const r of dbSearch(question, { limit: 22, byRank: true })) { const k = "fts:" + r.id; if (seen.has(k) || secretKeys.has(r.thread) || isSecret(r)) continue; seen.add(k); ctxItems.push({ ts: r.ts, label: `${r.channel} ${stripWA(r.grp || r.name || "")}`, text: cleanMsg(r.text) }) } } catch {}
   try { for (const r of dbSearchBody(question, { limit: 8 })) { const k = "body:" + r.thread + ":" + r.ts; if (seen.has(k) || secretKeys.has(r.thread) || isSecret({ ...r, channel: "email" })) continue; seen.add(k); ctxItems.push({ ts: r.ts, label: `email ${stripWA(r.name || "")}`, text: cleanMsg(String(r.snip || "").replace(/<[^>]+>/g, " ")) }) } } catch {}
   ctxItems.sort((a, b) => (a.ts || 0) - (b.ts || 0))

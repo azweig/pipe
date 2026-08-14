@@ -173,6 +173,9 @@ let _lastGood = null
 // y un Set vacío les decía "no ocultes nada" — exactamente lo contrario de fallar cerrado. Este Set contesta que SÍ a
 // cualquier hilo. Sigue siendo un Set de verdad (vacío al recorrerlo) para no romper a quien lo itere, y `size` es
 // positivo porque hay quien lo usa como "¿hay algo que ocultar?".
+// ⚠️ TRAMPA: `has()` miente pero RECORRERLO no devuelve nada (es un Set vacío de verdad). Todo el que arme SQL a partir de
+// este set —`[...hide]`, `Array.from(hide)`— tiene que preguntar por `blockAll` ANTES, o le sale una cláusula vacía justo
+// cuando había que ocultar todo. Lo mismo copiarlo: `new Set([...hide])` pierde el "sí a todo".
 class TodoEsSecreto extends Set {
   has() { return true }
   get size() { return Number.MAX_SAFE_INTEGER }
@@ -257,6 +260,7 @@ export function isSecretSelfNote(r) {
 // fragmento SQL "ESTE row (alias.jid / alias.channel+account) es de canal secreto", para excluir self-notes secretas en agregados
 // (categorías, conteos) sin traer columnas extra a JS. Devuelve {clause,params} o {clause:null} si no hay nada marcado.
 export function secretSelfClause(alias = "m") {
+  if (secretGate().blockAll) return { clause: "1=1", params: [] } // 🔒 sin poder calcular qué es secreto, TODA fila lo es
   const jids = [...secretGate().secretJids]
   const emails = listSecretAccounts().filter((a) => a.channel === "email" && a.account && a.account !== "*").map((a) => String(a.account).toLowerCase())
   const parts = [], params = []
@@ -267,6 +271,7 @@ export function secretSelfClause(alias = "m") {
 // fragmento SQL para EXCLUIR mensajes secretos en agregados cross-hilo (espacios): jid de número secreto, email de cuenta secreta,
 // o hilo 100%-secreto. Sin la rama import/waSecretThreads (evita sub-contar mensajes NO-secretos de un hilo parcial). {clause,params} o null.
 export function secretMsgExcludeSql() {
+  if (secretGate().blockAll) return { clause: "1=1", params: [] } // 🔒 ídem: se excluye todo, no nada
   const jids = [...secretGate().secretJids], hide = [...secretThreadKeys()]
   const emails = listSecretAccounts().filter((a) => a.channel === "email" && a.account && a.account !== "*").map((a) => String(a.account).toLowerCase())
   const parts = [], params = []

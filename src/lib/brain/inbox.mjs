@@ -142,8 +142,8 @@ export function listThreads({ limit = 200, q = "" } = {}, { cache = true } = {})
 // Cuerpo del email listo para mostrar: las imágenes INLINE (src="cid:xxx") se reemplazan por data: URIs leídas del CAS.
 // Por qué data: y no /cas/… → el visor es un iframe SANDBOXEADO (origin null, sin cookies): una URL del hub daría 401. Y el
 // CSP del visor sólo permite img-src data:, que es justo lo que bloquea los pixeles de tracking remotos. Las dos cosas conviven.
-export function emailBody(id) {
-  const body = dbGetBody(id)
+export function emailBody(id, { secretOn = false } = {}) {
+  const body = dbGetBody(id, { secretOn }) // 🔒 sin 2º PIN, el cuerpo de un correo de cuenta secreta no se entrega ni con el id en la mano
   if (!body || !/\bcid:/i.test(body)) return body
   let atts = []; try { atts = JSON.parse(dbGetAttachments(id) || "[]") || [] } catch {}
   return inlineCidImages(body, atts, casReadBuffer)

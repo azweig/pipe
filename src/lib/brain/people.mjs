@@ -208,6 +208,14 @@ function ownGroupMembers(card) {
 function enrichCard(card) {
   if (card) { // OJO: los grupos tienen canon=null → NO gatear por canon (si no, no se enriquecen)
     const ck = card.key || card.canon // la KEY real del hilo (whatsapp:NUM@… / email:…) tiene el dato de contacto; el canon puede ser solo un nombre
+    // 🔒 el gate HTTP compara contra la CLAVE del hilo, así que pedir la ficha por NOMBRE ("Laura Fields") lo esquivaba:
+    // el contenido salía vacío, pero la ficha devolvía igual la clave y el teléfono/correo. Que exista ya es el secreto.
+    // La respuesta tiene que ser IGUAL a la de un nombre inventado: un "secret:true" sería un oráculo — preguntás un
+    // nombre y el propio error te confirma que esa persona existe y está oculta.
+    if (ck && secretThreadKeys().has(ck)) {
+      return { canon: null, name: card.name || "", role: "", tags: "", orgs: "", bio: "", topics: [],
+        shared: { groups: [], people: [] }, stats: { messages: 0, respMin: null, firstTs: 0, lastTs: 0 }, channels: [], timeline: [] }
+    }
     if (ck) card.contacts = contactData(ck)
     withGroupMembers(card.shared)
     const gm = ownGroupMembers(card); if (gm) card.groupMembers = gm
@@ -229,7 +237,10 @@ export async function personCard(nameOrKey, { force = false } = {}) {
   }
   // hilo por nombre canónico exacto → generá + cacheá
   const want = canon ? norm(canon) : norm(eff)
-  const threads = listThreads({ limit: 600 })
+  // 🔒 el hilo secreto ni entra en la búsqueda: si entrara, se generaría (y cachearía en personcard:*) una ficha con su
+  // bio, sus temas y su timeline, que después sale por otras vistas. listThreads no filtra solo — eso vive en la ruta HTTP.
+  const _hideP = secretThreadKeys()
+  const threads = listThreads({ limit: 600 }).filter((x) => !_hideP.has(x.key))
   // match por CANON, y si no, por NOMBRE display o por KEY exacta: los contactos de WhatsApp tienen canon=número/jid pero se abren
   // por nombre ("Uzimock") o por número crudo desde el chat → sin esto el grafify nunca corría para ellos (quedaba "Generando…").
   let t = threads.find((x) => x.canon && (norm(x.canon) === want || norm(x.canon) === norm(eff)))
@@ -319,7 +330,10 @@ DATA:\n${blob}`
 // sugerencias de fusión PARA UN hilo dado: otros hilos con nombre igual/parecido (candidatos a "es la misma persona")
 export async function mergeSuggestions(ws, forKey = "") {
   const { listThreads } = await import("./inbox.mjs") // inbox ya es su propio módulo (M4b); people→inbox no tiene ciclo
-  const threads = listThreads({ limit: 600 }).filter((t) => !t.group && !t.self && !isOwnerName(t.name))
+  // 🔒 listThreads NO filtra por sí solo (el gate de la bandeja vive en la ruta HTTP), así que acá había que filtrar a mano:
+  // las sugerencias devuelven nombre + los primeros 60 caracteres del último mensaje de cada candidato.
+  const _hideS = secretThreadKeys()
+  const threads = listThreads({ limit: 600 }).filter((t) => !t.group && !t.self && !isOwnerName(t.name) && !_hideS.has(t.key))
   const CH = { whatsapp: "WhatsApp", email: "Email", teams: "Teams", telegram: "Telegram" }
   const nk = (s) => norm(s || "")
   const target = forKey ? threads.find((t) => t.key === forKey) : null

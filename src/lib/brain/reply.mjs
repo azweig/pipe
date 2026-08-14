@@ -220,8 +220,10 @@ export async function sendReplySticker(key, buffer, { channel, target, mime = "i
 // ── REENVIAR mensajes (preservando el MEDIA) ── Antes se mandaba solo el texto → reenviar un audio mandaba el placeholder "audio".
 // Ahora: si el mensaje tiene media, se lee del CAS y se reenvía como audio/imagen/archivo; si no, como texto.
 const EXT_MIME = { ogg: "audio/ogg", oga: "audio/ogg", opus: "audio/ogg", m4a: "audio/mp4", mp4a: "audio/mp4", mp3: "audio/mpeg", aac: "audio/aac", wav: "audio/wav", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", heic: "image/heic", mp4: "video/mp4", mov: "video/quicktime", webm: "video/webm", "3gp": "video/3gpp", pdf: "application/pdf" }
-export async function forwardMessages(ids, key) {
-  const rows = (Array.isArray(ids) ? ids : [ids]).map(messageById).filter(Boolean).sort((a, b) => (a.ts || 0) - (b.ts || 0))
+export async function forwardMessages(ids, key, { secretOn = false } = {}) {
+  // 🔒 reenviar es SACAR el mensaje del hub: sin 2º PIN, uno de fuente secreta ni se lee (messageById lo niega y cae acá).
+  const pedidos = (Array.isArray(ids) ? ids : [ids])
+  const rows = pedidos.map((id) => messageById(id, { secretOn })).filter(Boolean).sort((a, b) => (a.ts || 0) - (b.ts || 0))
   if (!rows.length) return { error: "No encontré los mensajes a reenviar." }
   let sent = 0, lastErr = null
   for (const m of rows) {
