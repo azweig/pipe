@@ -2,13 +2,13 @@
 // resuelve identidades (un solo "Juan" entre canales) → upsert de nodos en el vault Obsidian (People/Companies/Projects).
 // Uso:  node src/graphify.mjs           (procesa lo nuevo)
 //       node src/graphify.mjs --all     (reprocesa TODO desde cero)
-import { loadNewEvents, resetOffsets } from "./lib/store.mjs"
+import { loadNewEvents } from "./lib/store.mjs"
 import { isSecretJsonl, secretGate, secretJsonlIndeciso } from "./lib/secret.mjs" // 🔒 el grafo/vault no puede aprender de canales secretos (se sincroniza afuera)
 import { upsertNode, loadIdentity, saveIdentity } from "./lib/vault.mjs"
 import { llm, smartChain } from "./lib/llm.mjs"
 import { harden, fence } from "./lib/safety.mjs"
 import { anchored, gstrip } from "./lib/grounding.mjs"
-import { mkdirSync, appendFileSync, readFileSync, writeFileSync, existsSync } from "fs"
+import { mkdirSync, appendFileSync, readFileSync, writeFileSync, renameSync, rmSync, statSync, existsSync } from "fs"
 
 mkdirSync("./vault/Daily", { recursive: true })
 const BATCH = 30
@@ -61,9 +61,58 @@ function leerTraba() { try { return JSON.parse(readFileSync(TRABA, "utf8")) || {
 function escribirTraba(o) { try { writeFileSync(TRABA, JSON.stringify(o)) } catch (e) { console.error("[graphify] no pude guardar el estado de traba:", e?.message || e) } }
 function limpiarTraba() { const t = leerTraba(); if (t.n) escribirTraba({ n: 0, ts: Date.now() }) }
 
+// UN SOLO graphify a la vez. El daemon se cuida con una bandera en memoria, pero eso no ve un `node src/graphify.mjs`
+// lanzado a mano — y dos corridas leen el MISMO offset: procesan los mismos eventos y pagan el LLM dos veces.
+//
+// El candado es un DIRECTORIO, no un archivo: mkdir es atómico en POSIX (falla si ya existe), mientras que "leo, veo que
+// está vencido, borro y creo" no lo es — dos procesos hacen los tres pasos a la vez y los dos creen haber ganado.
+//
+// Y la señal de "está muerto" es el PID, no la antigüedad: una corrida real puede durar más de media hora (27 lotes por
+// un modelo local lento son horas), y romperle el candado por vieja es exactamente el caso que esto viene a evitar.
+// La antigüedad sólo se usa cuando no hay pid legible, que es la ventana de un candado recién creado.
+const CANDADO = "./data/.graphify.lock"
+const PIDFILE = `${CANDADO}/pid`
+const vivo = (pid) => { try { process.kill(pid, 0); return true } catch (e) { return e.code === "EPERM" } } // EPERM = existe, de otro usuario
+function tomarCandado() {
+  for (let intento = 0; intento < 2; intento++) {
+    try { mkdirSync(CANDADO); writeFileSync(PIDFILE, String(process.pid)); return true }
+    catch (e) {
+      if (e.code !== "EEXIST") { // permisos, data/ inexistente, el candado convertido en archivo… NO es "hay otra corrida"
+        console.error(`[graphify] no pude tomar el candado (${e.code || e.message}) → salgo con error para que se note`)
+        process.exitCode = 1
+        return "error"
+      }
+    }
+    let pid = 0; try { pid = parseInt(readFileSync(PIDFILE, "utf8"), 10) || 0 } catch {}
+    if (pid && vivo(pid)) return false                       // hay otra corrida de verdad
+    if (!pid) {                                              // recién creado por otro: el pid todavía no está escrito
+      let edad = 0; try { edad = Date.now() - statSync(CANDADO).mtimeMs } catch {}
+      if (edad < 60000) return false
+    }
+    // Romper el candado muerto: el rename es atómico, así que de dos procesos que lleguen acá, UNO SOLO lo consigue.
+    // El que pierde ve que ya no está y reintenta el mkdir; si otro fue más rápido, se va sin correr.
+    const apartado = `${CANDADO}.muerto.${process.pid}`
+    try { renameSync(CANDADO, apartado); rmSync(apartado, { recursive: true, force: true }) } catch { return false }
+    console.error(`[graphify] candado de un proceso que ya no está (pid ${pid || "?"}) → lo rompo y sigo`)
+  }
+  return false
+}
+const soltarCandado = () => { try { if (parseInt(readFileSync(PIDFILE, "utf8"), 10) === process.pid) rmSync(CANDADO, { recursive: true, force: true }) } catch {} }
+
 async function main() {
-  if (process.argv.includes("--all")) { resetOffsets(); console.log("↻ reprocesando TODO desde cero") }
-  const { events: allEvents, commit, endByte: bytesFin } = await loadNewEvents() // streaming por bytes (no crashea con el jsonl de >2GB)
+  const r = tomarCandado()
+  if (r === "error") return // ya avisó y dejó el código de salida en 1: no repetir un mensaje que diría otra cosa
+  if (!r) { console.log("[graphify] ya hay otra corrida en curso → salgo (no reproceso lo mismo ni gasto LLM de más)"); return }
+  try { await correr() } finally { soltarCandado() }
+}
+
+async function correr() {
+  const todo = process.argv.includes("--all")
+  if (todo) console.log("↻ reprocesando TODO desde cero")
+  // OJO: --all NO escribe el offset en 0 de entrada. Hacerlo era perder la transaccionalidad justo en la corrida más
+  // cara: si fallaba a mitad, el offset quedaba en 0 y el cron siguiente reprocesaba el jsonl entero, de a 800 eventos
+  // por vuelta, pagando LLM por cosas que ya estaban en el grafo.
+  const { events: allEvents, commit, endByte: bytesFin } = await loadNewEvents({ desdeCero: todo }) // streaming por bytes (no crashea con el jsonl de >2GB)
   // 🔒 graphify escribe vault/People/*.md con canales, menciones y timeline por mensaje, y eso se sincroniza a otro server.
   // Lee el jsonl crudo (por offset de bytes), así que no pasa por ningún filtro de la DB: se gatea acá, en la entrada.
   const events = allEvents.filter((e) => e.dir !== "out" && !isSecretJsonl(e)) // los salientes no crean entidades, solo sirven al coach/who

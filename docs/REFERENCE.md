@@ -2,7 +2,7 @@
 
 > Generado por `node scripts/gen-docs.mjs`. **No editar a mano** — se regenera. Última corrida: (stamp al commitear).
 
-## 🌐 API — 199 endpoints
+## 🌐 API — 202 endpoints
 
 | Método | Endpoint |
 |---|---|
@@ -70,6 +70,8 @@
 | POST | `/api/contact/spam` |
 | GET | `/api/contact/suggestions` |
 | POST | `/api/contact/unmerge` |
+| GET | `/api/conversation/channels` |
+| POST | `/api/conversation/new` |
 | POST | `/api/covert/config` |
 | GET | `/api/covert/config` |
 | POST | `/api/covert/preview` |
@@ -142,6 +144,7 @@
 | GET | `/api/objetivos` |
 | GET | `/api/objetivos/suggest` |
 | POST | `/api/ocr` |
+| GET | `/api/onboarding` |
 | GET | `/api/person` |
 | GET | `/api/person` |
 | GET | `/api/person/full` |
@@ -271,7 +274,7 @@
 - runMsgPush — cada 2 * 60000
 - runSocialDaily — cada 2 * 3600000
 
-## 📦 Módulos (141) y sus exports
+## 📦 Módulos (146) y sus exports
 
 ### `src/audio-summarize.mjs`
 - **mimeFor** *(fn)* — mime real según la extensión del archivo en CAS (no todos los audios son .ogg: iOS/adjuntos vienen .m4a, etc). Sin esto, mandar un .m4a etiquetado como audio/ogg hace que OpenAI Wh
@@ -309,6 +312,9 @@
 - **setPin** *(fn)* — setear/cambiar el PIN (6-12 dígitos). scrypt es lento a propósito → frena fuerza bruta offline si roban el archivo. Mínimo 6 (no 4): en un endpoint expuesto a internet, 10⁴ es brut
 - **changePin** *(fn)* — cambiar el PIN desde adentro (ya autenticado): exige el PIN actual → nadie con una sesión robada lo cambia sin saberlo.
 - **verifyPin** *(fn)*
+- **rateLimitedScoped** *(const)* — Mismo limitador, contadores SEPARADOS por ámbito: lo usa el 2º PIN (secret.mjs), que no tenía ninguno — con la sesión principal en mano, 6 dígitos sin freno se rompen a fuerza brut
+- **recordFailScoped** *(const)*
+- **clearFailsScoped** *(const)*
 - **__resetLimits** *(fn)* — para los tests: limpiar TODO el estado de rate-limit en memoria (per-IP + global) entre casos
 - **login** *(fn)*
 - **validSession** *(fn)*
@@ -364,6 +370,8 @@
 - **bridgeNets** *(const)* — nets que el bot mautrix del server puede vincular por QR/código (connect.method === "matrix-bridge"). El endpoint /api/matrix-link valida contra esto → no se spawnea un login para 
 - **tokenNets** *(const)*
 - **isSimpleSender** *(const)* — ids de los canales con envío SIMPLE (slack/signal/telegram/…) — reply.sendReply valida contra esto antes de despachar por SIMPLE_SENDERS.
+- **sendableDirectChannels** *(const)* — los mismos, como lista: threadTargets los usa para ofrecer destino en hilos que no son WhatsApp ni email.
+- **channelLabel** *(const)*
 - **channelCatalog** *(fn)* — catálogo público (sin fns ni rutas de módulo) para que los clientes deriven labels/iconos/flujos de conexión de UN solo lugar.
 
 ### `src/lib/covertext.mjs`
@@ -496,7 +504,7 @@
 - **llmConfigMasked** *(fn)* — ── CONFIG BYOK expuesta a la app (Configuración → Motor de IA) ──
 - **testKey** *(async)* — PROBAR una key puntual: ping mínimo → si responde, anda. Incluye ollama (usa el host).
 - **providerKey** *(fn)*
-- **sttMode** *(fn)*
+- **sttMode** *(fn)* — Transcripción de audio: "local" (whisper en tu máquina) por DEFECTO. Antes era "openai", así que en un hub con key de OpenAI CADA nota de voz recibida se subía a la nube automática
 - **setLlmConfig** *(fn)*
 - **cloudOverCap** *(fn)*
 - **trackDaily** *(fn)*
@@ -538,6 +546,10 @@
 - **threadMediaMode** *(fn)* — modo efectivo de un chat ("store"|"skip"), considerando override del chat → default de la cuenta.
 - **shouldStoreMedia** *(fn)* — ¿bajar/guardar la media de este mensaje? El audio/llamada nunca se descarta. El resto sigue la política del chat.
 
+### `src/lib/media-trust.mjs`
+- **destinoConfiable** *(fn)*
+- **MOTIVO_NO_CONFIABLE** *(const)* — mensaje único para explicar por qué no se procesó (se muestra tal cual en la app)
+
 ### `src/lib/meetings.mjs`
 - **isSensitiveMeeting** *(fn)*
 - **matchCalendarEvent** *(fn)*
@@ -567,7 +579,11 @@
 
 ### `src/lib/ocr.mjs`
 - **ocrEnabled** *(fn)*
+- **ocrUrlActual** *(const)*
 - **ocrCas** *(async)* — OCR de un archivo del CAS (/cas/xx/hash.ext) → texto plano. "" si está deshabilitado, no existe, o falla.
+
+### `src/lib/onboarding.mjs`
+- **calcularOnboarding** *(fn)* — Checklist de primer arranque: conectá WhatsApp · agregá tu correo · elegí tu IA.  Vivía SÓLO en el cliente web, con 4 llamadas y las reglas de "está conectado" escritas ahí. El esc
 
 ### `src/lib/phash.mjs`
 - **dhashFromGray9x8** *(fn)* — dhash a partir del raw gris de 9x8 (72 bytes) que escupe ffmpeg. PURA: sin ffmpeg ni disco, testeable.
@@ -627,16 +643,25 @@
 - **searchBody** *(fn)* — busca en el CUERPO de los emails (donde viven montos/fechas). Devuelve mensajes con un snippet del match.
 - **bodyMatchInThreads** *(fn)* — cuerpos de email (donde viven montos/fechas, fuera del FTS) en los hilos ruteados que contengan alguno de los términos. terms se expanden con la co-ocurrencia del grafo (juan→deuda
 - **filesByTerms** *(fn)* — archivos/media que están en los hilos ruteados O cuyo nombre/texto contiene alguno de los términos (para "docs de globex" en toda la DB).
-- **search** *(fn)*
-- **allForRag** *(fn)*
+- **search** *(fn)* — OJO: filtra lo secreto. Era el ÚNICO lector de corpus sin filtro (threads-repo y meta-repo sí lo hacen), y el conector MCP lo usa para search_inbox: un cliente MCP preguntando cual
+- **allForRag** *(fn)* — corpus completo para reindexar. 🔒 Filtra los canales secretos en el ORIGEN: lo que entre acá termina vectorizado y saliendo en respuestas de IA, donde ya no hay forma de distingui
 - **rebuildMessagesFts** *(fn)* — reconstruye el índice FTS de asuntos/nombres (external-content: el trigger solo cubre INSERT, no UPDATE). (era meetings.updateMeeting) Wave 3.
 
+### `src/lib/secret-vault.mjs`
+- **objetivosSecretos** *(fn)* — A quién hay que tapar: los NOMBRES de los hilos secretos (así se llaman las notas) + los identificadores crudos. El identity-map (canal → nombre canónico, el que usa graphify para 
+- **esNotaSecreta** *(fn)* — ¿esta nota es de una cuenta secreta? La nota TRATA de esa persona (su título es su nombre) o contiene su identificador.  Lo que NO se hace: buscar el nombre como substring del cuer
+- **cuarentenaVault** *(fn)* — mueve a cuarentena toda nota del vault que mencione una cuenta secreta. Devuelve las rutas relativas movidas.
+- **restaurarVault** *(fn)* — devuelve al vault lo que ya NO menciona ninguna cuenta secreta (desmarcaste el número/la cuenta).
+- **purgarRagDeNotas** *(fn)* — saca del índice semántico las líneas de las notas que se fueron a cuarentena. El índice guarda `ref` = ruta de la nota sin el .md. No hace falta tocar las líneas de MENSAJES: ésas 
+- **estadoCuarentena** *(fn)* — tamaño de la cuarentena, para poder decirlo en la UI/logs sin revelar QUÉ hay adentro
+
 ### `src/lib/secret.mjs`
+- **secretMarksBroken** *(fn)*
 - **secretPinSet** *(fn)* — ── 2º PIN ──
-- **setSecretPin** *(fn)* — setear/cambiar el 2º PIN. Exige 6-12 dígitos (igual que el principal) y que sea DISTINTO del PIN de entrada (si no, no aísla nada).
+- **setSecretPin** *(fn)* — setear/cambiar el 2º PIN. Exige 6-12 dígitos (igual que el principal) y que sea DISTINTO del PIN de entrada (si no, no aísla nada). `oldPin` es OBLIGATORIO si ya hay un PIN puesto.
 - **verifySecretPin** *(fn)*
 - **clearSecretPin** *(fn)* — borrar el 2º PIN (lo usa el flujo de reset y al desactivar la función). También cierra TODAS las sesiones secretas.
-- **unlockSecret** *(fn)*
+- **unlockSecret** *(fn)* — `ip` para el rate-limit. No tenía NINGUNO: con la sesión principal ya abierta (que es justo el escenario que esta función existe para cubrir), 6 dígitos sin freno se rompen a fuerz
 - **validSecretSession** *(fn)*
 - **lockSecret** *(fn)*
 - **lockAllSecret** *(fn)*
@@ -655,6 +680,8 @@
 - **isSecretSelfNote** *(fn)* — ESTRICTO para "Mis Notas" (thread='self', hilo mezcla de todos tus números): oculta una nota SOLO si ESE mensaje vino de un canal secreto (jid de número secreto o email de cuenta s
 - **secretSelfClause** *(fn)* — fragmento SQL "ESTE row (alias.jid / alias.channel+account) es de canal secreto", para excluir self-notes secretas en agregados (categorías, conteos) sin traer columnas extra a JS.
 - **secretMsgExcludeSql** *(fn)* — fragmento SQL para EXCLUIR mensajes secretos en agregados cross-hilo (espacios): jid de número secreto, email de cuenta secreta, o hilo 100%-secreto. Sin la rama import/waSecretThr
+- **secretJsonlIndeciso** *(fn)* — ¿alguna vez, en este proceso, NO se pudo decidir? Ojo: no alcanza con mirar secretGate(), porque computeThread lee sus propios mapas de contactos y un JSON roto ahí tira una excepc
+- **isSecretJsonl** *(fn)*
 - **secretUnread** *(fn)* — no-leídos de hilos 100% secretos (para restar del contador). Los parciales no se restan (over-count menor, no filtra contenido).
 
 ### `src/lib/secrets.mjs`
@@ -704,7 +731,7 @@
 - **threadIsSpam** *(fn)* — spam DEFINITIVO para un hilo = NO si el usuario lo des-marcó; si no, estructural O veredicto LLM cacheado.
 
 ### `src/lib/store.mjs`
-- **loadNewEvents** *(async)*
+- **loadNewEvents** *(async)* — `desdeCero`: releer el jsonl entero SIN tocar el archivo de offsets todavía. Es lo que necesita `--all`: antes escribía 0 ANTES de procesar, así que si la corrida fallaba el offset
 - **resetOffsets** *(fn)* — resetea offsets (reprocesar TODO desde el principio — caro por LLM, solo con --all)
 - **loadSnapshot** *(fn)* — snapshots (calendario/archivos/notion) — se leen enteros
 
@@ -715,6 +742,10 @@
 - **outboundMessages** *(fn)*
 - **buildStyleProfile** *(async)*
 - **styleExamples** *(fn)* — ejemplos reales de mensajes de ${ownerFirst()} para few-shot: prioriza MISMO CONTACTO (mismo thread), luego mismo canal. Antes matcheaba por jid que outboundMessages() NO traía → l
+
+### `src/lib/teams-send.mjs`
+- **teamsConfigured** *(const)*
+- **teamsSend** *(async)* — chatId de Teams: viene como "19:....@thread.v2" (o el id de un chat 1:1). El key del hilo es "teams:<chatId>".
 
 ### `src/lib/telegram-login.mjs`
 - **telegramConnected** *(fn)*
@@ -741,7 +772,8 @@
 
 ### `src/lib/threads-repo.mjs`
 - **recentInThread** *(fn)*
-- **getBody** *(fn)*
+- **getBody** *(fn)* — 🔒 LECTORES POR-ID: la bandeja y el visor ya filtran por hilo, pero pedir un id suelto los saltea — con el id de un correo de una cuenta secreta se leía el cuerpo entero sin 2º PIN
+- **casSecreto** *(fn)* — 🔒 ¿este archivo del CAS es de fuente secreta? El CAS se sirve por RUTA (/cas/<sha>.jpg), que no pasa por el gate por-hilo: con la ruta en la mano se bajaba la foto o se la mandaba
 - **getAttachments** *(fn)*
 - **setAttachments** *(fn)*
 - **emailsMissingInline** *(fn)* — emails cuyo cuerpo referencia imágenes inline (cid:) pero que NO tienen esas imágenes guardadas → candidatos al backfill
@@ -752,7 +784,7 @@
 - **threadMessagesTail** *(fn)*
 - **threadPage** *(fn)* — página de historial: los `limit` mensajes anteriores a `before` (0 = los más recientes). Para paginar hacia atrás.
 - **threadCount** *(fn)*
-- **threadSince** *(fn)* — mensajes ENTRANTES (no míos) posteriores a una marca de "visto" — para el resumen de "lo que me perdí"
+- **threadSince** *(fn)* — mensajes ENTRANTES (no míos) posteriores a una marca de "visto" — para el resumen de "lo que me perdí" 🔒 por defecto filtra, igual que su gemela threadMessagesSinceAll. El único l
 - **threadUnreadCount** *(fn)*
 - **threadDelta** *(fn)* — SYNC edit-aware: filas del hilo con rev > sinceRev (NUEVAS o editadas), en orden de revisión. El cliente hace upsert por id.
 - **threadMaxRev** *(fn)* — rev máxima actual del hilo (para que el cliente sepa hasta dónde llegó, aunque el delta venga vacío/paginado)
@@ -776,7 +808,7 @@
 - **inbound1to1Since** *(fn)* — mensajes ENTRANTES nuevos de conversaciones 1:1 (excluye grupos/canales/spam) desde una marca. (era msg-push)
 - **totalUnread** *(fn)* — total de no-leídos (para el badge del ícono). (era msg-push)
 - **audioToSummarize** *(fn)* — audios nuevos sin resumen (recibidos + notas de voz propias) desde una marca. (era audio-summarize)
-- **messageById** *(fn)* — un mensaje por id (o undefined). (era meetings.reprocessMeeting)
+- **messageById** *(fn)* — un mensaje por id (o undefined). (era meetings.reprocessMeeting) 🔒 mismo criterio que getBody: sin 2º PIN, un mensaje de fuente secreta no se entrega por id (reenviarlo, transcrib
 - **recentOutbound** *(fn)* — ── absorbidas en Wave 4 (signals — señales para coach/home) ── mensajes salientes recientes (para detectar promesas cumplidas/pendientes). (era signals.promises)
 - **lastInboundQuestions** *(fn)* — hilos cuyo ÚLTIMO mensaje es entrante y tiene "?" (preguntas sin responder, sin grupos). (era signals.unansweredQuestions)
 - **lastOutboundPerThread** *(fn)* — hilos cuyo ÚLTIMO mensaje es TUYO (saliente) — bola en su cancha. (era signals.waitingOnThem)
@@ -800,7 +832,7 @@
 - **topInboundNames** *(fn)* — nombres entrantes más frecuentes de un hilo (fallback de avatar). (era brain._photoFor)
 - **repliedThreads** *(fn)* — hilos donde YA respondí (correspondencia real) — ALIMENTA listThreads (la bandeja). (era brain.listThreads)
 - **latestThreadLike** *(fn)* — hilo más reciente que matchea un patrón LIKE (resolver número→hilo). (era brain.coachData)
-- **sentCountSince** *(fn)* — conteo de enviados desde una marca. (era brain.weeklyReview)
+- **sentCountSince** *(fn)* — conteo de enviados desde una marca. (era brain.weeklyReview) 🔒 los tres agregados del review semanal (coach) excluyen lo secreto: no solo por el contenido — un contador que sube d
 - **recvCountSince** *(fn)* — conteo de recibidos reales (no self/spam/broadcast) desde una marca. (era brain.weeklyReview)
 - **topThreadsSince** *(fn)* — hilos con más ida y vuelta desde una marca (para el review semanal). (era brain.weeklyReview)
 - **threadMessagesSinceAll** *(fn)* — todos los mensajes de un hilo (cualquier dir) desde una marca. (era brain.summarizeChat)
@@ -814,6 +846,7 @@
 - **whatsappRoomsOf** *(fn)* — ── send-path: resolución de destino de un hilo (Wave 5c) ── salas portal de WhatsApp (bridge) de un hilo, por jid, la más reciente primero. (era brain.threadTargets)
 - **roomInboundSenders** *(fn)* — remitentes entrantes de una sala portal concreta. (era brain.threadTargets)
 - **emailAddressesOf** *(fn)* — direcciones de email de un hilo, la más reciente primero. (era brain.threadTargets)
+- **directPeersOf** *(fn)* — DESTINOS de los canales de mensajería DIRECTA (telegram/slack/signal/teams/…): un destino por (canal, jid) visto en el hilo. Sin esto threadTargets() solo sabía de WhatsApp y email
 - **lastInboundJid** *(fn)* — jid del último mensaje ENTRANTE de un hilo (destino default). (era brain.threadTargets)
 - **lastEmailByAddress** *(fn)* — último email (cuenta+texto) por dirección exacta. (era brain.sendReply)
 - **lastEmailInThread** *(fn)* — último email (cuenta+texto) de un hilo. (era brain.sendReply)

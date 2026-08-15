@@ -26,6 +26,7 @@
   window.setLang = function (l) { try { localStorage.setItem("lang", l) } catch (e) {} location.reload() }
 
   try { document.documentElement.lang = LANG } catch (e) {}
+  window.trUna = function (es) { return es } // el español es la fuente; se pisa abajo si hay diccionario
   if (LANG === "es") return // español = fuente, no hay nada que traducir
 
   var MAP = {}, RULES = []
@@ -53,6 +54,9 @@
   }
 
   function run(root) { try { walk(root || document.body) } catch (e) {} }
+  // Traducir UNA cadena suelta. Hace falta para el texto que NO pasa por el DOM como nodo nuevo: un placeholder asignado
+  // por JS sobre un input que ya existe no dispara ninguna mutación, así que el observador no lo ve y se queda en español.
+  window.trUna = function (es) { try { var t = trStr(String(es || "")); return t == null ? es : t } catch (e) { return es } }
   // observar TODO cambio del DOM (render() central + innerHTML sueltos)
   function observe() {
     try {

@@ -3671,19 +3671,32 @@ newMsgCheck() // baseline inicial (no suena la primera vez)
 //
 // Va en una hoja de la app y NO en prompt(): el texto de un prompt del navegador no está en el DOM, así que el traductor
 // (que trabaja observando el DOM) no lo alcanza y se quedaría en español en las otras lenguas.
-window.nuevaConversacion = () => {
+window.nuevaConversacion = async () => {
+  // el selector sólo aparece si hay algo más que elegir: el server ofrece únicamente los canales CONECTADOS, así que
+  // proponer Telegram sin Telegram conectado sería un callejón sin salida.
+  const cs = (await api("/api/conversation/channels").catch(() => null))?.channels || [{ id: "", label: "Teléfono o correo", hint: "+51 999 111 222  ·  alguien@empresa.com" }]
+  const sel = cs.length > 1
+    ? `<select class="inp" id="nc-ch" style="box-sizing:border-box;margin-bottom:8px" onchange="ncHint()">${cs.map((c) => `<option value="${esc(c.id)}">${esc(c.label)}</option>`).join("")}</select>`
+    : ""
+  window._ncCanales = cs
   openSheet(`<h2 style="margin:0 0 4px">✎ Nueva conversación</h2>
     <div class="sub" style="margin:0 0 14px">Un teléfono con código de país (+51 999 111 222) o un correo. Si ya hablaste con esa persona, se abre la conversación que ya existe.</div>
-    <input class="inp" id="nc-dest" placeholder="+51 999 111 222  ·  alguien@empresa.com" autocomplete="off" style="box-sizing:border-box" onkeydown="if(event.key==='Enter')abrirNuevaConversacion()">
+    ${sel}
+    <input class="inp" id="nc-dest" placeholder="${esc(cs[0].hint)}" autocomplete="off" style="box-sizing:border-box" onkeydown="if(event.key==='Enter')abrirNuevaConversacion()">
     <div id="nc-err" class="tiny" style="color:#e5484d;min-height:16px;margin-top:6px"></div>
     <button class="btn" style="width:100%;margin-top:8px" onclick="abrirNuevaConversacion()">Abrir conversación</button>`)
   setTimeout(() => { const i = document.getElementById("nc-dest"); if (i) i.focus() }, 60)
+}
+window.ncHint = () => {
+  const id = document.getElementById("nc-ch")?.value || ""
+  const c = (window._ncCanales || []).find((x) => x.id === id)
+  const i = document.getElementById("nc-dest"); if (i && c) i.placeholder = (window.trUna ? window.trUna(c.hint) : c.hint)
 }
 window.abrirNuevaConversacion = async () => {
   const destino = (document.getElementById("nc-dest")?.value || "").trim()
   const err = document.getElementById("nc-err")
   if (!destino) { if (err) err.textContent = "Escribí un teléfono, un correo o un usuario."; return }
-  const r = await post("/api/conversation/new", { destino })
+  const r = await post("/api/conversation/new", { destino, channel: document.getElementById("nc-ch")?.value || "" })
   if (!r || r.error) { if (err) err.textContent = (r && r.error) || "No pude resolver ese destino."; return }
   closeSheet()
   // el nombre resuelto se deja a mano para que la cabecera muestre "Laura Fields" (o "+51 999…") mientras carga el hilo,

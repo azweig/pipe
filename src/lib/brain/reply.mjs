@@ -378,16 +378,21 @@ export function resolverDestino(destino, canal = "") {
   if (/[\r\n\t]/.test(raw)) return { error: "No reconozco ese destino." } // corta inyección por salto de línea
   const ch = String(canal || "").trim().toLowerCase()
 
+  // ORDEN: el canal ELEGIDO manda sobre cualquier heurística. Al revés, elegías Telegram, escribías algo con arroba y
+  // se abría un correo: creías estar mandando por un canal y salía por otro. La heurística sólo decide cuando no elegiste.
+  // 0) CANAL EXPLÍCITO de mensajería simple (telegram/slack/signal/teams): el identificador va tal cual, pero validado.
+  if (ch && ch !== "email" && ch !== "whatsapp" && isSimpleSender(ch)) {
+    const id = raw.replace(/\s+/g, "")
+    if (!id || id.length > 120) return { error: "Ese identificador no parece válido." }
+    if (/[\u0000-\u001f]/.test(id)) return { error: "Ese identificador no parece válido." }
+    return { key: computeThread({ channel: ch, jid: id, name: id }), channel: ch, target: id, name: id }
+  }
   // 1) CORREO — explícito por canal, o porque tiene forma de dirección
   if (ch === "email" || (raw.includes("@") && !raw.startsWith("@"))) {
     if (!MAIL_OK.test(raw)) return { error: "Esa dirección de correo no parece válida." }
     const addr = raw.toLowerCase().normalize("NFKC")
     if (MY_EMAILS.has(addr)) return { error: "Esa es tu propia dirección: escribile a Mis Notas." }
     return { key: computeThread({ channel: "email", jid: addr, name: addr }), channel: "email", target: addr, name: addr }
-  }
-  // 2) CANAL EXPLÍCITO de mensajería simple (telegram/slack/signal/teams): el identificador va tal cual
-  if (ch && ch !== "whatsapp" && isSimpleSender(ch)) {
-    return { key: computeThread({ channel: ch, jid: raw, name: raw }), channel: ch, target: raw, name: raw }
   }
   // 3) TELÉFONO (WhatsApp). Se exige código de país: sin él el mensaje se va a otro país o a nadie, y el error es
   //    silencioso y caro. Un móvil local ya tiene 9 dígitos, así que el viejo mínimo de 8 no filtraba nada.

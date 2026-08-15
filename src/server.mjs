@@ -30,7 +30,7 @@ import { casSecreto, searchThreadKeys } from "./lib/db.mjs" // 🔒 gateo de arc
 import { calcularOnboarding } from "./lib/onboarding.mjs" // checklist de primer arranque (una sola fuente de verdad para las 3 apps)
 import { cuarentenaVault, restaurarVault, purgarRagDeNotas } from "./lib/secret-vault.mjs" // 🔒 notas del vault ya escritas
 import { clipFlag, getMeta, delMeta, delMetaLike, rebuildStats, freeThreadMedia, restoreMedia, listNotes, noteCategories, noteJunkCount, noteAction, totalUnread } from "./lib/db.mjs"
-import { channelCatalog, bridgeNets, tokenNets } from "./lib/channels.mjs" // registro de canales (única fuente de verdad de qué canales hay + cómo se vinculan)
+import { channelCatalog, bridgeNets, tokenNets, sendableDirectChannels, channelLabel } from "./lib/channels.mjs" // registro de canales (única fuente de verdad de qué canales hay + cómo se vinculan)
 import { getMediaPolicy, setMediaDefault, setThreadMediaPolicy } from "./lib/media-policy.mjs"
 import { casStats, casTrashList } from "./lib/cas.mjs"
 import { storageStatus } from "./lib/quota.mjs"
@@ -640,6 +640,20 @@ const server = createServer(async (req, res) => {
       if (path === "/api/thread/targets") return json(res, 200, brain.threadTargets(q.key || ""))
       // EMPEZAR UNA CONVERSACIÓN NUEVA: resuelve lo que el usuario escribió (teléfono / correo / usuario) a la clave de
       // hilo de siempre. NO manda nada ni crea nada: la app abre esa conversación y el envío sigue el camino habitual.
+      // qué canales se pueden estrenar desde la app. La rama de canal explícito de resolverDestino existía pero era código
+      // muerto: sin esta lista, ninguna de las tres apps sabía qué ofrecer, y el mensaje de error hablaba de "elegí el
+      // canal" sin que ese control existiera en ningún lado.
+      if (path === "/api/conversation/channels") {
+        // "conectado" = ese canal tuvo tráfico real. listAccounts().messaging no sirve acá: usa `network` (no `channel`)
+        // y además está fijo en WhatsApp, así que nunca habría ofrecido Telegram ni Slack.
+        const activos = new Set(((brain.channelHealth() || {}).channels || [])
+          .filter((c) => (c.n30 || 0) > 0 || (c.n7 || 0) > 0).map((c) => String(c.channel || "").toLowerCase()))
+        const simples = sendableDirectChannels().filter((c) => activos.has(c))
+        return json(res, 200, { channels: [
+          { id: "", label: "Teléfono o correo", hint: "+51 999 111 222 · alguien@empresa.com" },
+          ...simples.map((c) => ({ id: c, label: channelLabel(c), hint: `Usuario o id de ${channelLabel(c)}` })),
+        ] })
+      }
       if (path === "/api/conversation/new" && req.method === "POST") {
         const b = await body(req)
         const r = brain.resolverDestino(b.destino, b.channel)

@@ -11,22 +11,31 @@ case "$cmd" in
   list|status)
     printf "%-14s %-30s %-6s %-9s %-9s\n" TENANT SUBDOMINIO PORT ESTADO LAG
     printf '%.0s─' $(seq 1 74); echo
-    for t in $(list_ids); do
+    # `for t in $(list_ids)` partía un id con espacios en dos y además lo pasaba por expansión de comodines: un
+    # directorio raro dejaba la fila mezclada o, peor, hacía que se operara sobre otro tenant.
+    while IFS= read -r t; do [ -n "$t" ] || continue
       base="$ROOT/$t"; [ -f "$base/docker-compose.yml" ] || continue
-      port=$(grep -oE '127.0.0.1:[0-9]+:3000' "$base/docker-compose.yml" | grep -oE ':[0-9]+:' | tr -d ':' | head -1)
-      sub=$(grep -hoE '^[A-Za-z0-9.-]+' "$CADDY_D/$t.caddy" 2>/dev/null | head -1)
-      up=$(cd "$base" && docker compose ps --status running -q 2>/dev/null | wc -l | tr -d ' ')
-      tot=$(cd "$base" && docker compose ps -q 2>/dev/null | wc -l | tr -d ' ')
+      # `|| true` en cada uno: con `set -euo pipefail`, un grep sin coincidencias sale ≠0 y MATABA el panel entero.
+      # Un tenant sin archivo de Caddy (o sin puerto publicado) hacía desaparecer también a todos los que venían después.
+      port=$(grep -oE '127.0.0.1:[0-9]+:3000' "$base/docker-compose.yml" 2>/dev/null | grep -oE ':[0-9]+:' | tr -d ':' | head -1 || true)
+      sub=$(grep -hoE '^[A-Za-z0-9.-]+' "$CADDY_D/$t.caddy" 2>/dev/null | head -1 || true)
+      # también con `|| echo ?`: si docker no está, o el compose de UN tenant está roto, `set -euo pipefail` mataba el
+      # panel y los tenants siguientes desaparecían de la lista sin decir nada.
+      # Si docker no está, o el compose de UN tenant está roto, `set -euo pipefail` mataba el panel entero y los
+      # tenants siguientes desaparecían de la lista sin decir una palabra. Se aísla en un subshell que no puede fallar
+      # y el valor vacío se muestra como "?" — mejor un dato desconocido que una lista incompleta que parece completa.
+      up=$( { cd "$base" && docker compose ps --status running -q 2>/dev/null | wc -l; } 2>/dev/null | tr -d ' \n' || true ); up=${up:-?}
+      tot=$( { cd "$base" && docker compose ps -q 2>/dev/null | wc -l; } 2>/dev/null | tr -d ' \n' || true ); tot=${tot:-?}
       lag=$(curl -s -m 3 "http://127.0.0.1:${port:-0}/api/health" 2>/dev/null | grep -oE '"ingestLagMin":[0-9]+' | grep -oE '[0-9]+' || echo '-')
       printf "%-14s %-30s %-6s %-9s %-9s\n" "$t" "${sub:-—}" "${port:-—}" "$up/$tot up" "${lag}m"
-    done
+    done < <(list_ids)
     ;;
   logs)     t="${2:?falta <id>}"; cd "$ROOT/$t" && docker compose logs -f --tail 120 app ;;
   restart)  t="${2:?falta <id>}"; cd "$ROOT/$t" && docker compose restart app && echo "↻ $t reiniciado" ;;
   update-all)   # tras rebuild de pipe:latest → aplicar a toda la flota (rolling)
-    for t in $(list_ids); do [ -f "$ROOT/$t/docker-compose.yml" ] || continue
+    while IFS= read -r t; do [ -n "$t" ] || continue; [ -f "$ROOT/$t/docker-compose.yml" ] || continue
       (cd "$ROOT/$t" && docker compose up -d app >/dev/null 2>&1) && echo "↻ $t actualizado a la imagen nueva"
-    done ;;
+    done < <(list_ids) ;;
   backup-all)
     # los backups van CIFRADOS: llevan mensajes, tokens de las cuentas conectadas, el hash del 2º PIN y las notas
     # apartadas por ser de una cuenta secreta — y de varios clientes a la vez, en una caja compartida.

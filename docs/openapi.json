@@ -945,6 +945,26 @@
         }
       }
     },
+    "/api/conversation/channels": {
+      "get": {
+        "summary": "channels",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/conversation/new": {
+      "post": {
+        "summary": "new",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/covert/config": {
       "post": {
         "summary": "config",
@@ -1872,6 +1892,16 @@
     "/api/ocr": {
       "post": {
         "summary": "ocr",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/onboarding": {
+      "get": {
+        "summary": "onboarding",
         "responses": {
           "200": {
             "description": "OK"

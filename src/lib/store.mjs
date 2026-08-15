@@ -8,13 +8,18 @@ import { createInterface } from "readline"
 const OFFSETS = "./data/.graphify-offsets.json"
 const JSONL = "./data/messages.jsonl"
 
-export async function loadNewEvents({ limit = 800 } = {}) {
-  const off = existsSync(OFFSETS) ? JSON.parse(readFileSync(OFFSETS, "utf8")) : {}
+// `desdeCero`: releer el jsonl entero SIN tocar el archivo de offsets todavía. Es lo que necesita `--all`: antes escribía
+// 0 ANTES de procesar, así que si la corrida fallaba el offset quedaba en 0 y el cron siguiente empezaba a reprocesar
+// 2GB de a 800 eventos por vuelta, gastando LLM en cosas que ya estaban en el grafo. Con esto el avance sigue siendo
+// transaccional: sólo se persiste al llamar commit().
+export async function loadNewEvents({ limit = 800, desdeCero = false } = {}) {
+  const off = desdeCero ? {} : (existsSync(OFFSETS) ? JSON.parse(readFileSync(OFFSETS, "utf8")) : {})
   const size = existsSync(JSONL) ? statSync(JSONL).size : 0
   let bytes = off["messages.jsonl"]
   // migración del formato viejo (offset por LÍNEA) / primera vez: arrancar desde el FINAL. No reprocesamos 2.4GB de backlog
   // por LLM (el grafo ya tiene lo histórico + la semilla). Cortamos el crash y aprendemos de acá en adelante.
-  if (off._fmt !== "bytes" || typeof bytes !== "number" || bytes > size) bytes = size
+  if (desdeCero) bytes = 0
+  else if (off._fmt !== "bytes" || typeof bytes !== "number" || bytes > size) bytes = size
   const events = []
   let endByte = bytes
   if (bytes < size) {

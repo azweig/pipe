@@ -4,6 +4,13 @@
 // - RULES: para texto con números/fechas interpolados.
 export default {
   MAP: {
+    "Teléfono o correo": "Telefone ou e-mail",
+    "Usuario o id de Telegram": "Usuário ou id do Telegram", "Usuario o id de Slack": "Usuário ou id do Slack",
+    "Usuario o id de Signal": "Usuário ou id do Signal", "Usuario o id de Teams": "Usuário ou id do Teams",
+    "Ese identificador no parece válido.": "Esse identificador não parece válido.",
+    "Esa dirección de correo no parece válida.": "Esse endereço de e-mail não parece válido.",
+    "Ese número no parece real.": "Esse número não parece real.",
+    "Ese número parece incompleto: poné el código de país (ej: +51 999 111 222).": "Esse número parece incompleto — coloque o código do país (ex: +55 11 99999 9999).",
     // ── empezar una conversación (bloque de paridad de las 3 apps) ──
     "✎ Nuevo": "✎ Novo", "Escribirle a alguien que todavía no te escribió": "Escreva para alguém que ainda não te escreveu",
     "¿A quién le escribís?\n\nUn teléfono con código de país (+51 999 111 222) o un correo.": "Para quem você está escrevendo?\n\nUm telefone com código do país (+55 11 99999 9999) ou um e-mail.",
