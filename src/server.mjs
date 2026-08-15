@@ -27,6 +27,7 @@ import * as mailArchive from "./lib/mail-archive.mjs"
 import { ocrCas, ocrEnabled, ocrUrlActual } from "./lib/ocr.mjs"
 import { destinoConfiable } from "./lib/media-trust.mjs" // 🔒 el OCR configurado puede ser un host en internet
 import { casSecreto, searchThreadKeys } from "./lib/db.mjs" // 🔒 gateo de archivos del CAS por ruta (OCR, papelera, /cas/)
+import { calcularOnboarding } from "./lib/onboarding.mjs" // checklist de primer arranque (una sola fuente de verdad para las 3 apps)
 import { cuarentenaVault, restaurarVault, purgarRagDeNotas } from "./lib/secret-vault.mjs" // 🔒 notas del vault ya escritas
 import { clipFlag, getMeta, delMeta, delMetaLike, rebuildStats, freeThreadMedia, restoreMedia, listNotes, noteCategories, noteJunkCount, noteAction, totalUnread } from "./lib/db.mjs"
 import { channelCatalog, bridgeNets, tokenNets } from "./lib/channels.mjs" // registro de canales (única fuente de verdad de qué canales hay + cómo se vinculan)
@@ -597,6 +598,14 @@ const server = createServer(async (req, res) => {
       // desconectar una integración que se removía por archivo (Telegram). El resto se desconecta desde la guía.
       if (path === "/api/integration/remove" && req.method === "POST") { const b = await body(req); const map = { telegram: ["auth/telegram.session", "/tmp/tg_code", "/tmp/tg_pass"] }; const files = map[b.key]; if (!files) return json(res, 400, { error: "Esta integración se desconecta desde la guía." }); let n = 0; for (const f of files) { try { unlinkSync(f); n++ } catch {} } try { spawn("pkill", ["-f", b.key + ".mjs"]) } catch {}; return json(res, 200, { ok: true, removed: n }) }
       // MOTOR DE IA (BYOK): elegir proveedor(es) + pegar tus tokens. Las keys nunca se devuelven (solo hint enmascarado).
+      // ONBOARDING: el checklist de primer arranque. La lógica vivía SÓLO en el cliente web (4 llamadas y las reglas de
+      // "está conectado" repetidas ahí), así que el escritorio y el móvil no tenían forma de mostrarlo sin recalcular todo
+      // por su cuenta y quedar desincronizados. Acá hay una sola fuente de verdad para las tres.
+      if (path === "/api/onboarding") {
+        const st = integrationsStatus(), acc = accounts.listAccounts(), llm = llmConfigMasked()
+        const chans = (brain.channelHealth() || {}).channels || []
+        return json(res, 200, calcularOnboarding({ st, acc, llm, chans, secretOn, esNumeroSecreto: secret.isSecretNumber, esCuentaSecreta: secret.isSecretAccount, numerosSecretos: secret.listSecretNumbers() }))
+      }
       if (path === "/api/llm-config") return json(res, 200, llmConfigMasked())
       if (path === "/api/llm-config/save" && req.method === "POST") { const b = await body(req); return json(res, 200, setLlmConfig(b)) }
       if (path === "/api/llm-config/test" && req.method === "POST") { const b = await body(req); return json(res, 200, await testKey(b)) } // probar una key (ping mínimo): {keyId} o {provider,token}

@@ -252,32 +252,22 @@ function paintHome(d) {
     </div>`, "home")
   renderOnboarding()
 }
-// Checklist de primer arranque: aparece hasta que el hub tiene WhatsApp + correo + IA. Desaparece solo cuando está todo (no molesta a un hub ya configurado).
+// Checklist de primer arranque: aparece hasta que el hub tiene WhatsApp + correo + IA. Desaparece solo cuando está todo.
+// El CÁLCULO vive en el server (/api/onboarding): antes estaba acá, con 4 llamadas y las reglas de "está conectado"
+// escritas en este archivo — el escritorio y el móvil no podían mostrarlo sin reimplementarlo y quedar desincronizados.
+const ONB_CTA = { whatsapp: "addConnectionSheet('telefonia')", email: "addConnectionSheet('correo')", ia: "aiEngineSheet()" }
+const ONB_BTN = { whatsapp: "Conectar", email: "Agregar", ia: "Elegir" }
 async function renderOnboarding() {
   const el = document.getElementById("onboard"); if (!el) return
-  const [acc, st, llm, ch] = await Promise.all([api("/api/accounts").catch(() => null), api("/api/status").catch(() => null), api("/api/llm-config").catch(() => null), api("/api/channels").catch(() => null)])
-  if (!acc && !st && !llm) return // sin datos (offline) → no pintar nada
-  // WhatsApp conectado = hay un login en el bridge, O ya entraron mensajes de WhatsApp (el listado de logins del bridge a veces
-  // devuelve vacío aunque esté logueado; los mensajes son la señal a prueba de balas de que anda).
-  const waMsgs = !!(ch && (ch.channels || []).some((c) => c.channel === "whatsapp" && ((c.n30 || 0) > 0 || (c.n7 || 0) > 0)))
-  const waOK = !!(st && st.whatsapp && (((st.whatsapp.bridge || []).length) || ((st.whatsapp.baileys || []).length))) || waMsgs
-  const mailOK = !!(acc && (acc.email || []).length)
-  // IA "lista" = hay una key de NUBE (openai/anthropic/gemini), o el usuario eligió ollama como primario (self-host local deliberado).
-  // Ollama-en-la-cadena-por-default NO cuenta: en un tenant no hay ollama corriendo → la IA no funcionaría y hay que pedir la key.
-  const aiOK = !!(llm && ((llm.providers || []).some((p) => p.hasKey && p.id !== "ollama") || (Array.isArray(llm.chain) && llm.chain[0] === "ollama")))
-  const steps = [
-    { ok: waOK, ic: "📱", t: "Conectá WhatsApp", s: "Escaneá un QR desde tu teléfono", cta: "addConnectionSheet('telefonia')", btn: "Conectar" },
-    { ok: mailOK, ic: "📧", t: "Agregá tu correo", s: "Gmail/Outlook con contraseña de aplicación", cta: "addConnectionSheet('correo')", btn: "Agregar" },
-    { ok: aiOK, ic: "🤖", t: "Elegí tu IA", s: "Tu motor y token (o usá el nuestro)", cta: "aiEngineSheet()", btn: "Elegir" },
-  ]
-  const done = steps.filter((s) => s.ok).length
-  if (done === steps.length) { el.innerHTML = ""; return } // todo conectado → fuera
+  const o = await api("/api/onboarding").catch(() => null)
+  if (!o || !o.steps) return               // sin datos (offline) → no pintar nada
+  if (o.listo) { el.innerHTML = ""; return } // todo conectado → fuera
   el.innerHTML = `<div class="onb">
-    <div class="onb-head"><b>Configurá tu hub</b><span>${done}/${steps.length}</span></div>
-    ${steps.map((s) => `<div class="onb-row${s.ok ? " done" : ""}">
-      <span class="onb-ic">${s.ok ? "✓" : s.ic}</span>
-      <div class="onb-main"><div class="onb-t">${s.t}</div><div class="onb-s">${s.s}</div></div>
-      ${s.ok ? '<span class="onb-ok">Listo</span>' : `<button class="onb-btn" onclick="${s.cta}">${s.btn}</button>`}
+    <div class="onb-head"><b>Configurá tu hub</b><span>${o.done}/${o.total}</span></div>
+    ${o.steps.map((s) => `<div class="onb-row${s.ok ? " done" : ""}">
+      <span class="onb-ic">${s.ok ? "✓" : s.icon}</span>
+      <div class="onb-main"><div class="onb-t">${esc(s.title)}</div><div class="onb-s">${esc(s.sub)}</div></div>
+      ${s.ok ? '<span class="onb-ok">Listo</span>' : (ONB_CTA[s.id] ? `<button class="onb-btn" onclick="${ONB_CTA[s.id]}">${ONB_BTN[s.id] || "Configurar"}</button>` : "")}
     </div>`).join("")}
   </div>`
 }
