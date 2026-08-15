@@ -5,7 +5,13 @@
 set -euo pipefail
 
 TENANT="${1:?falta tenant-id (a-z0-9-)}"; SUBDOMAIN="${2:?falta subdominio}"; OWNER="${3:-$TENANT}"; EMAIL="${4:-}"
-[[ "$TENANT" =~ ^[a-z0-9-]+$ ]] || { echo "tenant-id inválido (solo a-z0-9-)"; exit 1; }
+# MISMA regla que deprovision.sh: si acá se pudiera crear un id que allá se rechaza, ese cliente no se podría dar de
+# baja nunca. Se listan los caracteres uno por uno en vez de un rango [a-z], que según el locale acepta mayúsculas y
+# acentos. Sin guion inicial (se confunde con una opción) ni punto inicial (oculto / relativo).
+case "$TENANT" in
+  ""|-*|.*) echo "tenant-id inválido: no puede estar vacío ni empezar con '-' o '.'"; exit 1 ;;
+  *[!abcdefghijklmnopqrstuvwxyz0123456789_-]*) echo "tenant-id inválido: sólo minúsculas a-z, dígitos, '-' y '_'"; exit 1 ;;
+esac
 
 DEPLOY="$(cd "$(dirname "$0")" && pwd)"
 TENANTS_ROOT="${TENANTS_ROOT:-/opt/tenants}"
@@ -15,6 +21,14 @@ CADDY_D="${CADDY_D:-/etc/caddy/tenants}"
 
 echo "▶ Provisionando tenant '$TENANT' → https://$SUBDOMAIN"
 mkdir -p "$BASE"/{data,auth,vault,synapse,postgres,bridges/whatsapp}
+# En esta caja conviven los datos de VARIOS clientes: el árbol de un tenant (mensajes, tokens, claves de cifrado) no
+# puede quedar legible por cualquier usuario del host, y se creaba con la máscara por defecto (todo 755/644).
+#
+# Se cierra el DIRECTORIO PADRE y nada más. Es lo que hay que hacer, no un atajo: adentro, Synapse y los bridges corren
+# como usuarios NO-root dentro de sus contenedores y necesitan leer sus propias carpetas — cerrarlas rompe el arranque.
+# Como los bind-mounts los resuelve el demonio de Docker (que es root), los contenedores siguen viendo lo suyo; el que
+# queda afuera es el usuario del host que quiera pasearse por /opt/tenants.
+chmod 700 "$BASE"
 
 # ── puerto libre para la app (127.0.0.1) ──
 used=" $(ss -tlnH 2>/dev/null | awk '{print $4}' | sed 's/.*://' | tr '\n' ' ') "
@@ -48,6 +62,8 @@ export TENANT SUBDOMAIN APP_PORT SECRETS_KEY PG_PASS
 export MANAGED_OPENAI_KEY="${MANAGED_OPENAI_KEY:-}"
 envsubst '${TENANT} ${SUBDOMAIN} ${APP_PORT} ${SECRETS_KEY} ${PG_PASS} ${MANAGED_OPENAI_KEY}' \
   < "$DEPLOY/docker-compose.tenant.yml.tpl" > "$BASE/docker-compose.yml"
+# el compose renderizado lleva la clave de cifrado del tenant, la de Postgres y la de IA EN CLARO
+chmod 600 "$BASE/docker-compose.yml"
 cd "$BASE"
 
 # ── Synapse: generar homeserver.yaml y apuntarlo a Postgres + registro por secret ──

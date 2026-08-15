@@ -28,25 +28,40 @@ case "$cmd" in
       (cd "$ROOT/$t" && docker compose up -d app >/dev/null 2>&1) && echo "↻ $t actualizado a la imagen nueva"
     done ;;
   backup-all)
-    ts=$(date +%Y%m%d-%H%M%S); out="/opt/tenant-backups"; keep="${TENANT_BACKUP_KEEP:-5}"; mkdir -p "$out"
+    # los backups van CIFRADOS: llevan mensajes, tokens de las cuentas conectadas, el hash del 2º PIN y las notas
+    # apartadas por ser de una cuenta secreta — y de varios clientes a la vez, en una caja compartida.
+    . "$(dirname "$0")/lib-cifrar.sh"
+    ts=$(date +%Y%m%d-%H%M%S); out="$DIR_BACKUPS"; keep="${TENANT_BACKUP_KEEP:-5}"; mkdir -p "$out"
+    PASS="$(pass_backups "$out")" || exit 1
+    limpiar_partials "$out"
     # data/cas (la media, 64GB+) se respalda APARTE con rclone (content-addressed); NO en este tar diario o llena el disco (dispara #6).
-    for t in $(list_ids); do d="$ROOT/$t"; [ -d "$d/data" ] || continue
-      stg=$(mktemp -d); f="$out/$t-$ts.tar.gz"
+    while IFS= read -r t; do [ -n "$t" ] || continue; d="$ROOT/$t"; [ -d "$d/data" ] || continue
+      stg=$(mktemp -d); f="$out/$t-$ts.tar.gz.enc"
       if [ -f "$d/data/messages.db" ]; then
         # DB CONSISTENTE con sqlite3 .backup. Si falla (sin sqlite3 o lock >30s) SALTAMOS y GRITAMOS — NUNCA degradar a tar sobre WAL vivo (backup torcido).
         if ! sqlite3 "$d/data/messages.db" ".timeout 30000" ".backup '$stg/messages.db'" 2>/dev/null; then
           echo "❌ $t: sqlite3 .backup falló — NO hago tar sobre WAL vivo. Tenant SALTADO." >&2; rm -rf "$stg"; continue
         fi
         # --exclude saca la DB viva + el CAS; --transform mete la snapshot ('messages.db' → 'data/messages.db', no colisiona con el exclude).
-        tar -czf "$f" \
+        if cifrar_tar "$f" "$PASS" -- \
           --exclude='data/cas' --exclude='data/messages.db' --exclude='data/messages.db-wal' --exclude='data/messages.db-shm' \
           --transform='flags=r;s|^messages.db$|data/messages.db|' \
-          -C "$d" data auth vault -C "$stg" messages.db 2>/dev/null && echo "✓ $t → $f (DB consistente, sin CAS)"
+          -C "$d" data auth vault -C "$stg" messages.db
+        then echo "✓ $t → $f (DB consistente, sin CAS, cifrado)"
+        else echo "❌ $t: no se pudo respaldar — SIGO con los demás" >&2; fi
       else
-        tar -czf "$f" --exclude='data/cas' -C "$d" data auth vault 2>/dev/null && echo "✓ $t → $f (sin DB, sin CAS)"
+        if cifrar_tar "$f" "$PASS" -- --exclude='data/cas' -C "$d" data auth vault
+        then echo "✓ $t → $f (sin DB, sin CAS, cifrado)"
+        else echo "❌ $t: no se pudo respaldar — SIGO con los demás" >&2; fi
       fi
       rm -rf "$stg"
-      ls -1t "$out/$t-"*.tar.gz 2>/dev/null | tail -n +$((keep + 1)) | while read -r old; do rm -f "$old"; done  # rotación: conservar los últimos $keep por tenant
-    done ;;
+      # rotación: conservar los últimos $keep POR TENANT. El glob lleva [0-9] para no comerse los de otro tenant cuyo id
+      # empiece igual (con "$t-"* , rotar "acme" borraba también los de "acme-2"). Se incluyen los .tar.gz en claro de
+      # antes de que esto se cifrara, para que no queden ahí para siempre.
+      # el `|| true` NO es decorativo: con `set -euo pipefail`, un `ls` sobre un glob sin coincidencias sale ≠0 y, al ser
+      # el último comando del cuerpo del for, MATABA el script entero. O sea: un tenant sin backups previos (o uno que
+      # acababa de fallar) cortaba la corrida y los tenants siguientes no se respaldaban nunca, sin decir una palabra.
+      { ls -1t "$out/$t-"[0-9]*.tar.gz.enc "$out/$t-"[0-9]*.tar.gz 2>/dev/null | tail -n +$((keep + 1)) | while read -r old; do rm -f "$old"; done; } || true
+    done < <(list_ids) ;;
   *) echo "uso: tenants.sh list | logs <id> | restart <id> | update-all | backup-all"; exit 1 ;;
 esac

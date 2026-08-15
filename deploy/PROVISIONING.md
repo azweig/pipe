@@ -38,7 +38,7 @@ sudo -E deploy/provision.sh acme acme.hub.tudominio.com "Juan Pérez" juan@acme.
 sudo deploy/tenants.sh              # tabla: tenant · subdominio · puerto · estado · lag de ingesta
 sudo deploy/tenants.sh logs acme    # logs en vivo de un tenant
 sudo deploy/tenants.sh restart acme
-sudo deploy/tenants.sh backup-all   # tar de data/auth/vault de todos → /opt/tenant-backups
+sudo deploy/tenants.sh backup-all   # data/auth/vault de todos, CIFRADO → /opt/tenant-backups/*.tar.gz.enc
 
 # monitoreo externo: GET https://<subdominio>/api/health  → {"ok":true,"ingestLagMin":N,"uptimeMin":N} (público, sin PIN)
 
@@ -54,6 +54,23 @@ sudo deploy/tenants.sh backup-all   # tar de data/auth/vault de todos → /opt/t
 # baja de cliente (con backup opcional)
 sudo deploy/deprovision.sh acme --backup
 ```
+
+### 🔑 La llave de los backups
+
+Los backups van cifrados (AES-256, misma receta que el backup del hub). La passphrase se genera sola la primera vez en
+`/opt/tenant-backups/.pass`, con permisos 600.
+
+**Copiala a otro lado el día uno.** Sin ese archivo no se puede restaurar ningún backup de ningún cliente, y a propósito
+no viaja dentro de los backups: guardar la llave adentro del cofre no protege de nada.
+
+```bash
+# restaurar un tenant
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass file:/opt/tenant-backups/.pass \
+  -in /opt/tenant-backups/acme-20260814-120000.tar.gz.enc | tar -xzf - -C /opt/tenants/acme
+```
+
+Antes estos backups eran un `.tar.gz` en claro: adentro van los mensajes, los tokens de las cuentas conectadas, el hash
+del 2º PIN y las notas apartadas por ser de una cuenta secreta — de varios clientes, en una caja compartida.
 
 ## Qué está aislado
 - **DB** (SQLite por tenant), **media/CAS**, **vault**, **secretos** (clave AES propia), **Matrix+bridges** (WhatsApp de cada uno), **puerto**, **subdominio/TLS**.
