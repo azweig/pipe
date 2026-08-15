@@ -4,6 +4,17 @@
 // - RULES: para texto con números/fechas interpolados.
 export default {
   MAP: {
+    // ── empezar una conversación (bloque de paridad de las 3 apps) ──
+    "✎ Nuevo": "✎ Novo", "Escribirle a alguien que todavía no te escribió": "Escreva para alguém que ainda não te escreveu",
+    "¿A quién le escribís?\n\nUn teléfono con código de país (+51 999 111 222) o un correo.": "Para quem você está escrevendo?\n\nUm telefone com código do país (+55 11 99999 9999) ou um e-mail.",
+    "No pude resolver ese destino.": "Não consegui resolver esse destino.",
+    "✎ Nueva conversación": "✎ Nova conversa",
+    "Un teléfono con código de país (+51 999 111 222) o un correo. Si ya hablaste con esa persona, se abre la conversación que ya existe.": "Um telefone com código do país (+55 11 99999 9999) ou um e-mail. Se você já falou com essa pessoa, abre a conversa que já existe.",
+    "Abrir conversación": "Abrir conversa",
+    "Escribí un teléfono, un correo o un usuario.": "Escreva um telefone, um e-mail ou um usuário.",
+    "Ese número parece incompleto (falta el código de país).": "Esse número parece incompleto (falta o código do país).",
+    "Ese es tu propio número: escribile a Mis Notas.": "Esse é o seu próprio número: escreva nas Minhas Notas.",
+    "No reconozco ese destino. Poné un teléfono con código de país, un correo, o elegí el canal.": "Não reconheço esse destino. Use um telefone com código do país, um e-mail, ou escolha o canal.",
     // vistas Jarvis / Notas / adjuntos
     "‹ Inicio": "‹ Início", "Regenerar resumen": "Gerar resumo de novo", "Chat crudo": "Chat bruto", "Adjuntos": "Anexos",
     // bandeja, filtros y espacios por defecto — lo primero que se ve

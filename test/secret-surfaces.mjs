@@ -348,3 +348,27 @@ test("smartChain: `secreto` gana sobre cualquier preferencia de nube", async () 
   // sin la marca, el comportamiento de siempre
   assert.ok(smartChain({ vision: true }).startsWith("gemini"))
 })
+
+// EMPEZAR UNA CONVERSACIÓN NUEVA: resuelve un destino escrito a mano a la clave de hilo de siempre.
+test("resolverDestino: teléfono, correo y basura", async () => {
+  const { resolverDestino } = await import("../src/lib/brain/reply.mjs")
+  assert.equal(resolverDestino("+51 999 111 222").key, "whatsapp:51999111222@s.whatsapp.net", "el formato de clave es el mismo que calcula la ingesta")
+  assert.equal(resolverDestino("(51) 999-111-222").key, "whatsapp:51999111222@s.whatsapp.net", "tolera paréntesis y guiones")
+  assert.equal(resolverDestino("Alguien@Empresa.Com").key, "email:alguien@empresa.com", "el correo se normaliza a minúsculas")
+  assert.ok(resolverDestino("999").error, "un número sin código de país no alcanza")
+  assert.ok(resolverDestino("").error)
+  assert.ok(resolverDestino("juan").error, "un nombre suelto no es un destino")
+  assert.equal(resolverDestino("C12345", "slack").key, "slack:C12345", "con canal explícito")
+  // tu propio número son las Notas, no un chat con vos mismo (el test viejo era una tautología: `error || key` siempre pasa)
+  assert.ok(/tu propio número/.test(resolverDestino("51999000001").error || ""), "tu propio número se rechaza con su motivo")
+  // un número LOCAL (sin código de país) no puede pasar: el mensaje se iría a otro país o a nadie, en silencio
+  assert.ok(/código de país/.test(resolverDestino("999111222").error || ""), "sin código de país se rechaza")
+  assert.ok(/no parece real/.test(resolverDestino("00000000000").error || ""), "un número de un solo dígito repetido no")
+  // inyección por salto de línea en el correo
+  assert.ok(resolverDestino("ana\r\nbcc: victima@evil.tld@x.io").error, "sin CRLF en la dirección")
+  // LA CLAVE tiene que ser la MISMA que calcula la ingesta, o se crea un hilo duplicado con la misma persona
+  const { computeThread } = await import("../src/lib/thread.mjs")
+  for (const num of ["15550000009", "51988777666"])
+    assert.equal(resolverDestino("+" + num).key, computeThread({ channel: "whatsapp", jid: num + "@s.whatsapp.net", name: "" }), `misma clave que la ingesta para ${num}`)
+  assert.equal(resolverDestino("nuevo@x.example").key, computeThread({ channel: "email", jid: "nuevo@x.example", name: "" }), "y para correo")
+})

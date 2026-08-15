@@ -1550,7 +1550,7 @@ function paintMensajes(rows) {
     <div style="flex:1;text-align:center;font-weight:700;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${mergeSel.size < 2 ? "Elegí 2 o más para unir" : `Se conserva <b>${esc(mergeTgt)}</b>`}</div>
     <button class="pill on" style="flex-shrink:0;padding:9px 16px${mergeSel.size >= 2 ? "" : ";opacity:.5"}" ${mergeSel.size >= 2 ? 'onclick="doMergeSelected()"' : "disabled"}>🔗 Unir (${mergeSel.size})</button></div>` : ""
   render(`<div class="screen inbox"${mergeSel ? ' style="padding-bottom:96px"' : ""}>
-    <div class="ibx-head"><h1>Bandeja</h1><div class="row" style="gap:6px;padding:0;background:none;box-shadow:none">${window._secretBtn()}<button class="esp-btn" onclick="mergeMode()" title="Unir contactos duplicados (la misma persona en varios hilos)">${mergeSel ? "✕ Unir" : "🔗 Unir"}</button><button class="esp-btn" onclick="groupsSheet()">🗂 Grupos</button></div></div>
+    <div class="ibx-head"><h1>Bandeja</h1><div class="row" style="gap:6px;padding:0;background:none;box-shadow:none">${window._secretBtn()}<button class="esp-btn" onclick="mergeMode()" title="Unir contactos duplicados (la misma persona en varios hilos)">${mergeSel ? "✕ Unir" : "🔗 Unir"}</button><button class="esp-btn" onclick="nuevaConversacion()" title="Escribirle a alguien que todavía no te escribió">✎ Nuevo</button><button class="esp-btn" onclick="groupsSheet()">🗂 Grupos</button></div></div>
     <div class="ibx-search${q ? " has-q" : ""}${_aiSearch ? " ai" : ""}">
       <span class="ibx-si">${SVG.search}</span>
       <input id="ibxq" value="${esc(q)}" placeholder="${_aiSearch ? "Preguntá con IA: “¿qué acordé con Juan?”" : "Buscar por nombre, teléfono o email…"}" autocomplete="off" autocapitalize="off" spellcheck="false" oninput="onInboxSearch(this.value)" onkeydown="onSearchKey(event)">
@@ -2542,7 +2542,10 @@ async function viewConv(key) {
     idbSave(key, d.items || [], { maxRev, targets })
   } else {
     // FULL (primer open): guardo items + metadata del hilo para las próximas veces
-    convState = { key, items: d.items || [], name: d.name, photo: d.photo, email: d.email, account: d.account, channels: d.channels || [], total: d.total || (d.items || []).length, hasMore: d.hasMore, oldestTs: d.oldestTs, targets, target, unread: d.unread || 0, lastSeen: d.lastSeen || 0, maxRev: d.maxRev || 0, covert: d.covert || null }
+    // conversación recién estrenada: no hay mensajes de los que sacar el nombre, así que se usa el que resolvió el
+    // server al abrirla. Sin esto la cabecera mostraba la clave cruda ("whatsapp:51999…@s.whatsapp.net").
+    const nom = (d.name && d.name !== key) ? d.name : ((window._nombreNuevo && window._nombreNuevo.key === key) ? window._nombreNuevo.name : d.name)
+    convState = { key, items: d.items || [], name: nom, photo: d.photo, email: d.email, account: d.account, channels: d.channels || [], total: d.total || (d.items || []).length, hasMore: d.hasMore, oldestTs: d.oldestTs, targets, target, unread: d.unread || 0, lastSeen: d.lastSeen || 0, maxRev: d.maxRev || 0, covert: d.covert || null }
     idbSave(key, d.items || [], { maxRev: d.maxRev || 0, name: d.name, photo: d.photo, email: d.email, account: d.account, channels: d.channels || [], total: d.total, hasMore: d.hasMore, oldestTs: d.oldestTs, targets, covert: d.covert || null })
   }
   renderConv()
@@ -3671,3 +3674,30 @@ async function newMsgCheck() {
 setInterval(newMsgCheck, 12000)
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { _skipPingOnce = true; newMsgCheck() } }) // al volver, sincroniza el baseline SIN sonar (el push ya avisó)
 newMsgCheck() // baseline inicial (no suena la primera vez)
+
+// EMPEZAR UNA CONVERSACIÓN NUEVA. Hasta ahora sólo se podía responderle a alguien que ya te había escrito: para
+// estrenar un chat había que salir a WhatsApp, escribir desde ahí y esperar a que el mensaje volviera por el bridge.
+// El server resuelve el destino a la clave de hilo de siempre, así que el envío después es el camino normal.
+//
+// Va en una hoja de la app y NO en prompt(): el texto de un prompt del navegador no está en el DOM, así que el traductor
+// (que trabaja observando el DOM) no lo alcanza y se quedaría en español en las otras lenguas.
+window.nuevaConversacion = () => {
+  openSheet(`<h2 style="margin:0 0 4px">✎ Nueva conversación</h2>
+    <div class="sub" style="margin:0 0 14px">Un teléfono con código de país (+51 999 111 222) o un correo. Si ya hablaste con esa persona, se abre la conversación que ya existe.</div>
+    <input class="inp" id="nc-dest" placeholder="+51 999 111 222  ·  alguien@empresa.com" autocomplete="off" style="box-sizing:border-box" onkeydown="if(event.key==='Enter')abrirNuevaConversacion()">
+    <div id="nc-err" class="tiny" style="color:#e5484d;min-height:16px;margin-top:6px"></div>
+    <button class="btn" style="width:100%;margin-top:8px" onclick="abrirNuevaConversacion()">Abrir conversación</button>`)
+  setTimeout(() => { const i = document.getElementById("nc-dest"); if (i) i.focus() }, 60)
+}
+window.abrirNuevaConversacion = async () => {
+  const destino = (document.getElementById("nc-dest")?.value || "").trim()
+  const err = document.getElementById("nc-err")
+  if (!destino) { if (err) err.textContent = "Escribí un teléfono, un correo o un usuario."; return }
+  const r = await post("/api/conversation/new", { destino })
+  if (!r || r.error) { if (err) err.textContent = (r && r.error) || "No pude resolver ese destino."; return }
+  closeSheet()
+  // el nombre resuelto se deja a mano para que la cabecera muestre "Laura Fields" (o "+51 999…") mientras carga el hilo,
+  // en vez de la clave cruda "whatsapp:51999…@s.whatsapp.net"
+  try { window._nombreNuevo = { key: r.key, name: r.name } } catch (e) {}
+  go("#conv/" + enck(r.key))
+}

@@ -6,7 +6,7 @@ import { readFileSync } from "fs"
 import { join } from "path"
 import { getSlackToken, getSignal } from "../integrations.mjs" // config Slack/Signal conectada desde la Consola (cifrada) — para que los senders la vean, no solo el .env
 import { isSimpleSender, sendableDirectChannels, channelLabel } from "../channels.mjs" // registro de canales: qué canales tienen envío SIMPLE (target+texto) → dispatch genérico
-import { phoneOf, MY_NUMBERS } from "../thread.mjs"
+import { phoneOf, MY_NUMBERS, MY_EMAILS, computeThread, isContainerJid } from "../thread.mjs"
 import { sendMatrix, sendMatrixAudio, sendMatrixMedia, sendMatrixSticker, startWhatsAppChat, roomLogin } from "../../matrix.mjs"
 import { unipileConfigured, unipileSend } from "../unipile-api.mjs"
 import { teamsSend } from "../teams-send.mjs" // Graph: responder en un chat de Teams (permiso de envío aparte del lector)
@@ -137,7 +137,17 @@ export async function sendReply(key, text, { channel, target } = {}) {
   }
   // contacto HISTÓRICO (jid crudo <num>@s.whatsapp.net, sin sala del bridge) → iniciar chat nuevo por número
   const histJid = lastHistoricJid(key)?.jid
-  const histNum = histJid && phoneOf(histJid)
+  // El número puede venir del historial O de la propia CLAVE del hilo. Lo segundo es lo que habilita empezar una
+  // conversación NUEVA: con un contacto que nunca te escribió no hay jid histórico del que sacarlo, y todo esto moría
+  // con "no encuentro por qué canal responder" — por eso no se podía iniciar un chat desde ninguna de las tres apps.
+  // El número puede salir del historial O de la propia CLAVE del hilo (eso último habilita estrenar conversación con
+  // alguien que nunca te escribió). PERO sólo si la clave es un 1:1 de WhatsApp: sin esta guarda, el id de un GRUPO
+  // (120363…@g.us), una sala del bridge (!AbCd1234567890:dominio) o un id de Instagram se leían como "teléfono" y se
+  // abría un DM de WhatsApp a un número real ajeno. Es el mensaje-al-destinatario-equivocado que este archivo declara
+  // como su peor falla, y antes no ocurría porque lastHistoricJid ya filtraba por @s.whatsapp.net.
+  const claveEsDmWa = /^whatsapp:/.test(String(key)) && !isContainerJid(String(key).replace(/^whatsapp:/, ""))
+  const numDeClave = claveEsDmWa ? phoneOf(String(key).replace(/^whatsapp:/, "")) : null
+  const histNum = (histJid && phoneOf(histJid)) || numDeClave
   if (histNum && !MY_NUMBERS.has(histNum)) {
     const mxid = await startWhatsAppChat(histNum)
     if (mxid) { const r = await sendMatrix(mxid, text); return r.ok ? { ok: true, channel: "whatsapp", ...dbInsertSent(key, "whatsapp", text) } : { error: "no se pudo enviar por WhatsApp (bridge)" } }
@@ -349,4 +359,45 @@ export async function suggestReply(key, { localOnly = false } = {}) {
   const draft = await llm(`Conversación con ${who}:\n${lines.join("\n").slice(0, 4000)}\n\nMi respuesta:`, { system: sys, chain: localOnly ? smartChain({ sensitive: true, secreto: true, feature: "draft" }) : (process.env.LLM_CHAIN_CATCHUP || "gemini,ollama"), temperature: 0.5, bypassCap: true })
     .then((s) => (s || "").trim().replace(/^["'`]|["'`]$/g, "")).catch(() => "")
   return { draft }
+}
+
+// ── EMPEZAR UNA CONVERSACIÓN NUEVA ──
+// Faltaba en las TRES apps: sólo se podía responder a alguien que ya te había escrito. Se resuelve un destino escrito a
+// mano (un teléfono, un correo, un usuario) a la CLAVE de hilo que usa todo el resto del sistema; el envío después pasa
+// por el mismo camino de siempre, así que no hay una segunda forma de mandar mensajes que mantener.
+//
+// La clave la calcula computeThread, la MISMA función que usa la ingesta. No se puede reimplementar: para un contacto
+// que está en tu agenda o que tiene identidad manual, la ingesta keyea por su NOMBRE canónico, no por el número. Armar
+// `whatsapp:<num>@s.whatsapp.net` a mano creaba un hilo NUEVO al lado del que ya existía, con la misma persona en los
+// dos y los mensajes repartidos entre ambos.
+const SOLO_DIGITOS = /^[+]?[\d\s()./-]{6,24}$/
+const MAIL_OK = /^[^\s@<>,;"'\\]+@[^\s@<>,;"'\\]+\.[a-z]{2,}$/i
+export function resolverDestino(destino, canal = "") {
+  const raw = String(destino || "").trim().replace(/[\u200B-\u200D\uFEFF]/g, "") // sin invisibles
+  if (!raw) return { error: "Escribí un teléfono, un correo o un usuario." }
+  if (/[\r\n\t]/.test(raw)) return { error: "No reconozco ese destino." } // corta inyección por salto de línea
+  const ch = String(canal || "").trim().toLowerCase()
+
+  // 1) CORREO — explícito por canal, o porque tiene forma de dirección
+  if (ch === "email" || (raw.includes("@") && !raw.startsWith("@"))) {
+    if (!MAIL_OK.test(raw)) return { error: "Esa dirección de correo no parece válida." }
+    const addr = raw.toLowerCase().normalize("NFKC")
+    if (MY_EMAILS.has(addr)) return { error: "Esa es tu propia dirección: escribile a Mis Notas." }
+    return { key: computeThread({ channel: "email", jid: addr, name: addr }), channel: "email", target: addr, name: addr }
+  }
+  // 2) CANAL EXPLÍCITO de mensajería simple (telegram/slack/signal/teams): el identificador va tal cual
+  if (ch && ch !== "whatsapp" && isSimpleSender(ch)) {
+    return { key: computeThread({ channel: ch, jid: raw, name: raw }), channel: ch, target: raw, name: raw }
+  }
+  // 3) TELÉFONO (WhatsApp). Se exige código de país: sin él el mensaje se va a otro país o a nadie, y el error es
+  //    silencioso y caro. Un móvil local ya tiene 9 dígitos, así que el viejo mínimo de 8 no filtraba nada.
+  if (SOLO_DIGITOS.test(raw)) {
+    const num = raw.replace(/\D/g, "")
+    if (num.length < 10 && !raw.trim().startsWith("+")) return { error: "Ese número parece incompleto: poné el código de país (ej: +51 999 111 222)." }
+    if (num.length < 8) return { error: "Ese número parece incompleto: poné el código de país (ej: +51 999 111 222)." }
+    if (/^(\d)\1+$/.test(num)) return { error: "Ese número no parece real." }
+    if (MY_NUMBERS.has(num)) return { error: "Ese es tu propio número: escribile a Mis Notas." }
+    return { key: computeThread({ channel: "whatsapp", jid: `${num}@s.whatsapp.net`, name: "" }), channel: "whatsapp", target: null, name: `+${num}` }
+  }
+  return { error: "No reconozco ese destino. Poné un teléfono con código de país o un correo." }
 }

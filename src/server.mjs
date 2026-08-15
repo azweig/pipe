@@ -629,6 +629,19 @@ const server = createServer(async (req, res) => {
       if (path === "/api/thread/media") return json(res, 200, brain.threadMedia(q.key || ""))
       if (path === "/api/contact/profile") return json(res, 200, brain.contactProfile(q.key || ""))
       if (path === "/api/thread/targets") return json(res, 200, brain.threadTargets(q.key || ""))
+      // EMPEZAR UNA CONVERSACIÓN NUEVA: resuelve lo que el usuario escribió (teléfono / correo / usuario) a la clave de
+      // hilo de siempre. NO manda nada ni crea nada: la app abre esa conversación y el envío sigue el camino habitual.
+      if (path === "/api/conversation/new" && req.method === "POST") {
+        const b = await body(req)
+        const r = brain.resolverDestino(b.destino, b.channel)
+        if (r.error) return json(res, 400, r)
+        // si ya existe conversación con ese destino, se devuelve tal cual (nombre real incluido) en vez de una "nueva"
+        const previo = brain.listThreads({ limit: 400 }).find((t) => t.key === r.key)
+        // Un hilo secreto tiene que responder IGUAL que uno que no existe. La versión anterior omitía `existe`, y esa
+        // diferencia bastaba para enumerar los contactos ocultos escribiendo números en la hoja, con el 1er PIN nomás.
+        if (!secretOn && secretoPorNombre(r.key)) return json(res, 200, { ...r, existe: false })
+        return json(res, 200, { ...r, name: previo?.name || r.name, existe: !!previo })
+      }
       if (path === "/api/send" && req.method === "POST") { const b = await body(req); let text = b.text; if (b.covert) { try { text = brain.encodeCovertFor(b.key, b.text) } catch (e) { return json(res, 400, { error: e.message }) } } const r = await brain.sendReply(b.key, text, { channel: b.channel, target: b.target }); if (r && !r.error) brain.invalidateThreads(); return json(res, r && r.error ? 400 : 200, b.covert && !(r && r.error) ? { ...r, cover: text } : r) } // covert: cifra→texto tapadera antes de mandar; devuelve el poema para "ver original". invalidateThreads → la bandeja refleja tu envío YA (antes tardaba hasta el TTL del cache)
       // ── modo encubierto ("El Santo"): config por-contacto + preview en vivo ──
       if (path === "/api/covert/config" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setCovert(b.key, b.pass, b.style)) }
