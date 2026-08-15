@@ -190,7 +190,10 @@ export function secretGate() {
   try {
     const secNums = new Set(listSecretNumbers()), secEmailLabels = listSecretAccounts().filter((a) => a.channel === "email" && a.account && a.account !== "*").map((a) => String(a.account).toLowerCase())
     if (_marcasIlegibles) throw new Error(`marcas ilegibles: ${_marcasIlegibles}`) // no sabemos qué ocultar → ocultamos todo
-    if (!secNums.size && !secEmailLabels.length) { _g = { ts: now, val: EMPTY_GATE() }; return _g.val }
+    // las REDES marcadas enteras ("<canal>:*") cuentan como "hay algo que ocultar": sin esto el gate salía por acá y
+    // marcar telegram:* se guardaba, se veía marcado… y no ocultaba nada.
+    const redesSecretas = listSecretAccounts().filter((a) => String(a.account) === "*" && a.channel).map((a) => String(a.channel).toLowerCase())
+    if (!secNums.size && !secEmailLabels.length && !redesSecretas.length) { _g = { ts: now, val: EMPTY_GATE() }; return _g.val }
     const jo = jidOwnerMapOrThrow()
   const secretJids = [], nonSecretJids = []
   for (const [jid, owner] of jo) (secNums.has(owner) ? secretJids : nonSecretJids).push(jid)
@@ -201,21 +204,39 @@ export function secretGate() {
     const sParts = [], sParams = []
     if (secretJids.length) { sParts.push(`jid IN (${IN(secretJids)})`); sParams.push(...secretJids) }
     if (secEmailLabels.length) { sParts.push(`(channel='email' AND lower(account) IN (${IN(secEmailLabels)}))`); sParams.push(...secEmailLabels) }
+    // REDES marcadas enteras ("<canal>:*"): sin esto el filtro por-mensaje vaciaba las conversaciones pero los hilos
+    // seguían apareciendo en la bandeja, vacíos — peor que no ocultarlos: se ve el nombre y que hubo actividad.
+    if (redesSecretas.length) { sParts.push(`channel IN (${IN(redesSecretas)})`); sParams.push(...redesSecretas) }
     if (sParts.length) {
       const secretThreads = new Set(db.prepare(`SELECT DISTINCT thread FROM messages WHERE ${sParts.join(" OR ")}`).all(...sParams).map((r) => r.thread))
       if (secretJids.length) for (const r of db.prepare(`SELECT DISTINCT thread FROM messages WHERE jid IN (${IN(secretJids)})`).all(...secretJids)) waSecretThreads.add(r.thread)
       if (secretThreads.size) {
         // condición NO-SECRETO (canal conocido no marcado): whatsapp de sala no-secreta, o email de cuenta NO secreta
         const nParts = [], nParams = []
-        if (nonSecretJids.length) { nParts.push(`jid IN (${IN(nonSecretJids)})`); nParams.push(...nonSecretJids) }
-        nParts.push(secEmailLabels.length ? `(channel='email' AND lower(account) NOT IN (${IN(secEmailLabels)}))` : `channel='email'`)
-        if (secEmailLabels.length) nParams.push(...secEmailLabels)
+        // Si una RED está marcada entera, NINGÚN mensaje suyo es "no secreto": sin esta exclusión, marcar email:* dejaba
+        // el hilo como PARCIAL — no se ocultaba Y encima se servía su último mensaje como preview en la bandeja, que es
+        // exactamente el contenido que había que tapar.
+        //
+        // EFECTO A TENER EN CUENTA: la evidencia de "no secreto" son sólo los canales conocidos (WhatsApp y correo). Si
+        // marcás email:* entera, un hilo que mezcla correo con, digamos, Telegram se oculta COMPLETO en vez de quedar
+        // parcial. Es de más, pero para el lado seguro: preferimos esconder un mensaje que no hacía falta antes que
+        // mostrar uno que sí. Ampliar la evidencia a los demás canales haría VISIBLES hilos que hoy están ocultos, y eso
+        // no se cambia de callado.
+        const redeSecreta = (c) => redesSecretas.includes(c)
+        if (nonSecretJids.length && !redeSecreta("whatsapp")) { nParts.push(`jid IN (${IN(nonSecretJids)})`); nParams.push(...nonSecretJids) }
+        if (!redeSecreta("email")) {
+          nParts.push(secEmailLabels.length ? `(channel='email' AND lower(account) NOT IN (${IN(secEmailLabels)}))` : `channel='email'`)
+          if (secEmailLabels.length) nParams.push(...secEmailLabels)
+        }
         const st = [...secretThreads]
-        const withNS = new Set(db.prepare(`SELECT DISTINCT thread FROM messages WHERE thread IN (${IN(st)}) AND (${nParts.join(" OR ")})`).all(...st, ...nParams).map((r) => r.thread))
-        const lastNS = db.prepare(`SELECT text, ts, channel, media, mediaType FROM messages WHERE thread=? AND (${nParts.join(" OR ")}) ORDER BY ts DESC LIMIT 1`)
+        // sin ninguna condición de "no secreto" no hay nada que rescatar: todos esos hilos son 100% secretos.
+        const withNS = nParts.length
+          ? new Set(db.prepare(`SELECT DISTINCT thread FROM messages WHERE thread IN (${IN(st)}) AND (${nParts.join(" OR ")})`).all(...st, ...nParams).map((r) => r.thread))
+          : new Set()
+        const lastNS = nParts.length ? db.prepare(`SELECT text, ts, channel, media, mediaType FROM messages WHERE thread=? AND (${nParts.join(" OR ")}) ORDER BY ts DESC LIMIT 1`) : null
         for (const t of secretThreads) {
           if (!withNS.has(t)) { hide.add(t); continue }                    // sin ningún canal no-secreto → 100% secreto → ocultar entero
-          try { const m = lastNS.get(t, ...nParams); if (m) preview.set(t, m) } catch {} // parcial → preview del último NO-secreto
+          try { const m = lastNS && lastNS.get(t, ...nParams); if (m) preview.set(t, m) } catch {} // parcial → preview del último NO-secreto
         }
       }
     }
@@ -241,7 +262,12 @@ export function isSecretMsg(m) {
   if (!m) return false
   if (secretGate().blockAll) return true // no sabemos qué es secreto → todo lo es (fail-closed)
   if (secretNumberInDMKey(String(m.thread || ""))) return true // DM 1:1 con un número secreto (incluye imports viejos con jid="")
-  if (String(m.channel) === "email") return isSecretAccount("email", m.account)
+  // Marca de CUENTA por canal. Antes sólo se consultaba para correo, así que marcar "telegram:*" (o slack, teams,
+  // signal) se guardaba, se veía marcado en la config… y no ocultaba absolutamente nada. Peor que no tener la función:
+  // creías que ese canal estaba tapado. Ahora vale para cualquiera; el comodín "<canal>:*" tapa el canal entero.
+  const canal = String(m.channel || "").toLowerCase()
+  if (canal && isSecretAccount(canal, m.account)) return true // incluye el comodín "<canal>:*" (la RED entera, WhatsApp incluido)
+  if (canal === "email") return isSecretAccount("email", m.account)
   const g = secretGate(); const jid = String(m.jid || "")
   if (g.secretJids.has(jid)) return true
   if (!jidOwnerMap().has(jid)) return g.waSecretThreads.has(String(m.thread || "")) // import sin atribuir

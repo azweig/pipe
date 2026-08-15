@@ -40,12 +40,12 @@ test("markDone: marca done=1 en la tabla correcta por allowlist", () => {
 test("whatsappRoomsOf + roomInboundSenders: salas portal y sus remitentes", () => {
   resetDb(":memory:")
   seed([
-    { thread: "ana", jid: ROOM, dir: "in", sender: "@whatsapp_51999188771", text: "hola", ts: NOW },
-    { thread: "ana", jid: ROOM, dir: "in", sender: "@whatsapp_51999188771", text: "?", ts: NOW + 1 },
+    { thread: "ana", jid: ROOM, dir: "in", sender: "@whatsapp_51999000771", text: "hola", ts: NOW },
+    { thread: "ana", jid: ROOM, dir: "in", sender: "@whatsapp_51999000771", text: "?", ts: NOW + 1 },
     { thread: "ana", jid: "otro@s.whatsapp.net", dir: "in", text: "x", ts: NOW + 2 }, // no es sala portal
   ])
   assert.deepEqual(whatsappRoomsOf("ana").map((r) => r.jid), [ROOM])
-  assert.deepEqual(roomInboundSenders("ana", ROOM).map((r) => r.sender), ["@whatsapp_51999188771"])
+  assert.deepEqual(roomInboundSenders("ana", ROOM).map((r) => r.sender), ["@whatsapp_51999000771"])
 })
 
 test("emailAddressesOf + lastEmailByAddress + lastEmailInThread", () => {

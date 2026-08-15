@@ -732,7 +732,6 @@
 
 ### `src/lib/store.mjs`
 - **loadNewEvents** *(async)* — `desdeCero`: releer el jsonl entero SIN tocar el archivo de offsets todavía. Es lo que necesita `--all`: antes escribía 0 ANTES de procesar, así que si la corrida fallaba el offset
-- **resetOffsets** *(fn)* — resetea offsets (reprocesar TODO desde el principio — caro por LLM, solo con --all)
 - **loadSnapshot** *(fn)* — snapshots (calendario/archivos/notion) — se leen enteros
 
 ### `src/lib/style.mjs`

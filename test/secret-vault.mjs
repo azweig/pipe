@@ -26,10 +26,10 @@ before(() => {
   dbc.resetDb(":memory:")
   dbc.seed([
     // los SALIENTES son los que atan cada sala a una línea MÍA (sender = mi id) — sin ellos no hay dueño que marcar
-    { thread: "mili", channel: "whatsapp", dir: "out", name: "yo", sender: "@whatsapp_51999000001:x", jid: SJID, text: "desde la secreta", ts: 10 },
-    { thread: "mili", channel: "whatsapp", dir: "in", name: "Mili", sender: "@whatsapp_5111:x", jid: SJID, text: "secreto", ts: 11 },
-    { thread: "mili", channel: "whatsapp", dir: "out", name: "yo", sender: "@whatsapp_51999000002:x", jid: NJID, text: "desde la normal", ts: 12 },
-    { thread: "mili", channel: "whatsapp", dir: "in", name: "Mili", sender: "@whatsapp_5111:x", jid: NJID, text: "normal", ts: 13 },
+    { thread: "ana", channel: "whatsapp", dir: "out", name: "yo", sender: "@whatsapp_51999000001:x", jid: SJID, text: "desde la secreta", ts: 10 },
+    { thread: "ana", channel: "whatsapp", dir: "in", name: "Ana Vega", sender: "@whatsapp_5111:x", jid: SJID, text: "secreto", ts: 11 },
+    { thread: "ana", channel: "whatsapp", dir: "out", name: "yo", sender: "@whatsapp_51999000002:x", jid: NJID, text: "desde la normal", ts: 12 },
+    { thread: "ana", channel: "whatsapp", dir: "in", name: "Ana Vega", sender: "@whatsapp_5111:x", jid: NJID, text: "normal", ts: 13 },
     // contacto 100% SECRETO: solo existe en la línea secreta → su hilo se oculta entero, y su nota no debe salir del disco
     { thread: "solo", channel: "whatsapp", dir: "out", name: "yo", sender: "@whatsapp_51999000001:x", jid: SJID, text: "hola", ts: 20 },
     { thread: "solo", channel: "whatsapp", dir: "in", name: "Rita Solo", sender: "@whatsapp_5122:x", jid: SJID, text: "buenas", ts: 21 },
@@ -47,24 +47,24 @@ test("isSecretJsonl: detecta una línea cruda del jsonl, incluso sin campo threa
   const importViejo = { channel: "whatsapp", dir: "in", jid: "", sender: "51999000377", name: "", text: "hola", ts: 40 }
   assert.equal(secret.isSecretRow(importViejo), false, "sin calcular el hilo no se detecta — por eso existe isSecretJsonl")
   assert.equal(secret.isSecretJsonl(importViejo), true, "calculando el hilo como la ingesta, sí")
-  assert.equal(secret.isSecretJsonl({ channel: "whatsapp", jid: SJID, name: "Mili", text: "x", ts: 1 }), true, "por jid de la línea secreta")
-  assert.equal(secret.isSecretJsonl({ channel: "whatsapp", jid: NJID, name: "Mili", text: "x", ts: 1 }), false, "la línea normal sí se aprende")
+  assert.equal(secret.isSecretJsonl({ channel: "whatsapp", jid: SJID, name: "Ana Vega", text: "x", ts: 1 }), true, "por jid de la línea secreta")
+  assert.equal(secret.isSecretJsonl({ channel: "whatsapp", jid: NJID, name: "Ana Vega", text: "x", ts: 1 }), false, "la línea normal sí se aprende")
   assert.equal(secret.isSecretJsonl(null), false)
   secret.setSecretNumber("51999000377", false) // dejar el estado como estaba para el resto del archivo
 })
 
 // ── 2) qué pasa con lo YA escrito ──
 test("cuarentena: la nota que menciona la cuenta secreta sale del vault (y no se borra)", () => {
-  const nota = join(dir, "vault", "People", "Mili.md")
+  const nota = join(dir, "vault", "People", "Ana Vega.md")
   const otra = join(dir, "vault", "People", "Pedro.md")
-  writeFileSync(nota, "---\nchannels: [whatsapp:+51 999 000 001]\n---\n# Mili\n\n- 2026-08-01 [whatsapp] habló de algo privado\n")
+  writeFileSync(nota, "---\nchannels: [whatsapp:+51 999 000 001]\n---\n# Ana Vega\n\n- 2026-08-01 [whatsapp] habló de algo privado\n")
   writeFileSync(otra, "---\nchannels: [whatsapp:51999000002]\n---\n# Pedro\n")
   const movidas = sv.cuarentenaVault()
-  assert.deepEqual(movidas, ["People/Mili.md"], "solo la nota de la cuenta secreta")
+  assert.deepEqual(movidas, ["People/Ana Vega.md"], "solo la nota de la cuenta secreta")
   assert.equal(existsSync(nota), false, "ya no está en el vault (que es lo que se sincroniza afuera)")
   assert.equal(existsSync(otra), true, "la otra nota no se toca")
   // NO se borró: sigue existiendo, fuera del vault
-  const guardada = join(dir, "data", "secret-vault", "People", "Mili.md")
+  const guardada = join(dir, "data", "secret-vault", "People", "Ana Vega.md")
   assert.equal(existsSync(guardada), true, "se movió, no se destruyó")
   assert.ok(readFileSync(guardada, "utf8").includes("habló de algo privado"), "con su contenido intacto")
 })
@@ -89,8 +89,8 @@ test("criterio por NOMBRE: la nota de un contacto del bridge no lleva su teléfo
 test("desmarcar la cuenta devuelve las notas a su lugar", () => {
   secret.setSecretNumber("51999000001", false)
   const vueltas = sv.restaurarVault()
-  assert.deepEqual(vueltas, ["People/Mili.md"])
-  assert.equal(existsSync(join(dir, "vault", "People", "Mili.md")), true, "la nota volvió sola")
+  assert.deepEqual(vueltas, ["People/Ana Vega.md"])
+  assert.equal(existsSync(join(dir, "vault", "People", "Ana Vega.md")), true, "la nota volvió sola")
   assert.equal(sv.estadoCuarentena().notas, 0, "la cuarentena queda vacía")
   secret.setSecretNumber("51999000001", true) // restaurar el estado para el resto
 })
@@ -98,12 +98,12 @@ test("desmarcar la cuenta devuelve las notas a su lugar", () => {
 test("purgarRagDeNotas: los vectores de la nota en cuarentena salen del índice semántico", () => {
   const rag = join(dir, "data", "rag.jsonl")
   writeFileSync(rag, [
-    JSON.stringify({ id: "note:People/Mili#0", kind: "note", ref: "People/Mili", text: "algo privado", vec: [0.1] }),
-    JSON.stringify({ id: "note:People/Mili#1", kind: "note", ref: "People/Mili", text: "más privado", vec: [0.2] }),
+    JSON.stringify({ id: "note:People/Ana Vega#0", kind: "note", ref: "People/Ana Vega", text: "algo privado", vec: [0.1] }),
+    JSON.stringify({ id: "note:People/Ana Vega#1", kind: "note", ref: "People/Ana Vega", text: "más privado", vec: [0.2] }),
     JSON.stringify({ id: "note:People/Pedro#0", kind: "note", ref: "People/Pedro", text: "público", vec: [0.3] }),
     JSON.stringify({ id: "msg:abc", kind: "msg", ref: "whatsapp/x", text: "un mensaje", vec: [0.4] }),
   ].join("\n") + "\n")
-  const quitadas = sv.purgarRagDeNotas(["People/Mili.md"])
+  const quitadas = sv.purgarRagDeNotas(["People/Ana Vega.md"])
   assert.equal(quitadas, 2, "las dos líneas de esa nota")
   const quedan = readFileSync(rag, "utf8").trim().split("\n").map((l) => JSON.parse(l).id)
   assert.deepEqual(quedan, ["note:People/Pedro#0", "msg:abc"], "lo demás intacto")
@@ -116,12 +116,12 @@ test("sin cuentas secretas marcadas no se mueve nada (no molesta a quien no usa 
 })
 
 test("mover NO pisa: si mientras tanto se escribió una nota nueva con el mismo nombre, se guardan las dos", () => {
-  const nota = join(dir, "vault", "People", "Mili.md")
-  writeFileSync(nota, "---\nchannels: [whatsapp:51999000001]\n---\n# Mili\nVIEJA\n")
-  assert.deepEqual(sv.cuarentenaVault().filter((r) => r.startsWith("People/")), ["People/Mili.md"])
-  writeFileSync(nota, "---\nchannels: [whatsapp:51999000001]\n---\n# Mili\nNUEVA\n") // graphify la reescribe
+  const nota = join(dir, "vault", "People", "Ana Vega.md")
+  writeFileSync(nota, "---\nchannels: [whatsapp:51999000001]\n---\n# Ana Vega\nVIEJA\n")
+  assert.deepEqual(sv.cuarentenaVault().filter((r) => r.startsWith("People/")), ["People/Ana Vega.md"])
+  writeFileSync(nota, "---\nchannels: [whatsapp:51999000001]\n---\n# Ana Vega\nNUEVA\n") // graphify la reescribe
   sv.cuarentenaVault()
-  const guardadas = ["Mili.md", "Mili.1.md"].map((f) => join(dir, "data", "secret-vault", "People", f))
+  const guardadas = ["Ana Vega.md", "Ana Vega.1.md"].map((f) => join(dir, "data", "secret-vault", "People", f))
   assert.ok(existsSync(guardadas[0]) && existsSync(guardadas[1]), "las dos versiones sobreviven")
   const textos = guardadas.map((f) => readFileSync(f, "utf8"))
   assert.ok(textos.some((t) => t.includes("VIEJA")) && textos.some((t) => t.includes("NUEVA")), "ninguna se perdió")
@@ -131,7 +131,7 @@ test("mover NO pisa: si mientras tanto se escribió una nota nueva con el mismo 
 test("el self-model (_Brain) también se aparta: se resume solo y learn lo reescribe para siempre", () => {
   mkdirSync(join(dir, "vault", "_Brain"), { recursive: true })
   writeFileSync(join(dir, "vault", "_Brain", "self-model.md"), "# modelo\nsin ningun identificador adentro\n")
-  writeFileSync(join(dir, "vault", "People", "Mili.md"), "---\nchannels: [whatsapp:51999000001]\n---\n# Mili\n")
+  writeFileSync(join(dir, "vault", "People", "Ana Vega.md"), "---\nchannels: [whatsapp:51999000001]\n---\n# Ana Vega\n")
   // solo al MARCAR la cuenta (incluirBrain), no en cada sincronización: si no, learn regenera y la cuarentena vuelve a
   // apartarlo en un bucle sin fin — el modelo nunca sobrevive y el log histórico termina partido en .1/.2/.3
   assert.ok(!sv.cuarentenaVault().includes("_Brain/self-model.md"), "en el barrido de rutina NO se toca")
@@ -144,7 +144,7 @@ test("el self-model (_Brain) también se aparta: se resume solo y learn lo reesc
 // proyectos y de terceros que solo tenían la mala suerte de contener esas letras.
 test("el nombre NO se busca como substring del cuerpo (borraba notas ajenas)", () => {
   const objs = { nums: [], mails: [], nombres: new Set(["rita", "solo", "mario"]), claves: [] }
-  assert.equal(sv.esNotaSecreta("vault/Projects/Gravity.md", "# Gravity\nLa propuesta fue escrita por el equipo\n", objs), false, "'escrita' contiene 'rita'")
+  assert.equal(sv.esNotaSecreta("vault/Projects/Proyecto.md", "# Proyecto\nLa propuesta fue escrita por el equipo\n", objs), false, "'escrita' contiene 'rita'")
   assert.equal(sv.esNotaSecreta("vault/People/Pedro.md", "# Pedro\nTrabajamos solo con proveedores locales\n", objs), false, "'solo' como adverbio")
   assert.equal(sv.esNotaSecreta("vault/Topics/Colegio.md", "# Colegio\nEs el nivel primario\n", objs), false, "'primario' contiene 'mario'")
   // lo que SÍ cuenta: el título de la nota, y el nombre en el frontmatter (ahí lo escribió graphify, no es prosa)

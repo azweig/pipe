@@ -450,7 +450,7 @@ function renderCfgSection(id) {
       + (sOn ? "" : `<button class="btn ghost" onclick="secretUnlockConfig()">PIN</button>`)
       + `<button class="btn" onclick="addConnectionSheet('correo')">➕ Agregar cuenta de correo</button>
       <div class="cfg-note">${IC_INFO}<div>El hub trae solo lo reciente. ¿Falta un correo viejo (un cliente, una deuda)? Traelo del archivo por nombre, dominio o palabra.</div></div>
-      <div class="cfg-card" style="padding:13px 15px"><div style="display:flex;gap:8px;align-items:center"><input id="bf-q" class="inp" placeholder="ej: soltrak, @viacorreo.com.ar" style="flex:1;margin:0" onkeydown="if(event.key==='Enter')runBackfill()"><button class="btn" style="width:auto;flex:none;padding:11px 18px" onclick="runBackfill()">Traer</button></div><div id="bf-status" class="tiny muted" style="margin-top:9px;line-height:1.4"></div></div>
+      <div class="cfg-card" style="padding:13px 15px"><div style="display:flex;gap:8px;align-items:center"><input id="bf-q" class="inp" placeholder="ej: acme, @proveedor.com" style="flex:1;margin:0" onkeydown="if(event.key==='Enter')runBackfill()"><button class="btn" style="width:auto;flex:none;padding:11px 18px" onclick="runBackfill()">Traer</button></div><div id="bf-status" class="tiny muted" style="margin-top:9px;line-height:1.4"></div></div>
       <div class="cfg-note">${IC_INFO}<div>Un correo se responde con firma. Elegí la cuenta y escribí la tuya — si dejás la de “Todas”, se usa esa.</div></div>
       <div id="sigBox" class="cfg-card" style="padding:13px 15px">Cargando…</div>`
   } else if (id === "msg") {

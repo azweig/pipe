@@ -19,9 +19,9 @@ test("claves de hilo: jidOfKey / canonOfKey", () => {
 })
 
 test("numOf / digitsOf / channelId", () => {
-  assert.equal(numOf("51999188771@s.whatsapp.net"), "51999188771")
+  assert.equal(numOf("51999000771@s.whatsapp.net"), "51999000771")
   assert.equal(numOf("!room:pipe.local"), "!room") // no es número, pero determinista
-  assert.equal(digitsOf("+51 999-188-771"), "51999188771")
+  assert.equal(digitsOf("+51 999-000-771"), "51999000771")
   assert.equal(channelId({ channel: "email", jid: "a@b.com" }), "email:a@b.com")
   assert.equal(channelId({ channel: "whatsapp", account: "wa1" }), "whatsapp:wa1")
 })

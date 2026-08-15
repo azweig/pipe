@@ -13,7 +13,15 @@ const JSONL = "./data/messages.jsonl"
 // 2GB de a 800 eventos por vuelta, gastando LLM en cosas que ya estaban en el grafo. Con esto el avance sigue siendo
 // transaccional: sólo se persiste al llamar commit().
 export async function loadNewEvents({ limit = 800, desdeCero = false } = {}) {
-  const off = desdeCero ? {} : (existsSync(OFFSETS) ? JSON.parse(readFileSync(OFFSETS, "utf8")) : {})
+  // Un offsets corrupto (escritura a medias, disco lleno) reventaba la corrida con una excepción que subía hasta el
+  // catch de main → mensaje de una línea y CÓDIGO DE SALIDA 0. El cron lo leía como éxito y graphify dejaba de aprender
+  // sin que nadie se enterara. Se trata como "no sé por dónde iba": se arranca desde el final, igual que la primera vez,
+  // pero avisando fuerte. Perder el punto exacto es molesto; quedarse mudo es peor.
+  let off = {}
+  if (!desdeCero && existsSync(OFFSETS)) {
+    try { off = JSON.parse(readFileSync(OFFSETS, "utf8")) || {} }
+    catch (e) { console.error(`[store] ${OFFSETS} ilegible (${e?.message || e}) → arranco desde el final del jsonl. Si querés reprocesar lo viejo: node src/graphify.mjs --all`) }
+  }
   const size = existsSync(JSONL) ? statSync(JSONL).size : 0
   let bytes = off["messages.jsonl"]
   // migración del formato viejo (offset por LÍNEA) / primera vez: arrancar desde el FINAL. No reprocesamos 2.4GB de backlog
@@ -40,7 +48,7 @@ export async function loadNewEvents({ limit = 800, desdeCero = false } = {}) {
 }
 
 // resetea offsets (reprocesar TODO desde el principio — caro por LLM, solo con --all)
-export function resetOffsets() { writeFileSync(OFFSETS, JSON.stringify({ "messages.jsonl": 0, _fmt: "bytes" })) }
+// (resetOffsets se eliminó: --all ahora relee desde 0 SIN tocar el archivo, que es lo que lo hacía transaccional)
 
 // snapshots (calendario/archivos/notion) — se leen enteros
 export function loadSnapshot(file) {

@@ -359,7 +359,7 @@ test("audioExt: mime → extensión canónica que Whisper acepta por nombre de a
     assert.ok(no("pendiente: revisar el contrato"))
   })
   test("SÍ contesta preguntas de verdad", () => {
-    assert.ok(si("¿cuánto me debe Soltrak?"))
+    assert.ok(si("¿cuánto me debe el proveedor?"))
     assert.ok(si("cuando sale el vuelo a lima?"))
     assert.ok(si("qué reunión tengo mañana"))
     assert.ok(si("buscá el precio del dólar hoy"))

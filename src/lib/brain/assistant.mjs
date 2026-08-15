@@ -6,7 +6,7 @@
 // Por eso vive aparte: distinto prompt, distinto destinatario, distinto criterio para abrir la boca.
 //
 // El caso real: le mandás notas a tu propio WhatsApp todo el día. Eso NO se toca. Pero si escribís
-// "¿cuánto me debe Soltrak?" o "buscá el horario del vuelo", te responde.
+// "¿cuánto me debe el proveedor?" o "buscá el horario del vuelo", te responde.
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs"
 import { llm, smartChain } from "../llm.mjs"
 import { hasWebSearch, webSearch } from "../research.mjs"
@@ -153,7 +153,7 @@ RESPUESTA:`
   const call = (pr, sy) => llm(pr, { system: sy + "\n" + UNTRUSTED_NOTE, feature: "ask", temperature: 0.3, task: "assistant", bypassCap: true, ...(localOnly ? { chain: smartChain({ sensitive: true, secreto: true, feature: "ask" }) } : {}) }).then((s) => (s || "").trim()).catch(() => "")
   let out = await call(prompt, sys)
   // A veces el modelo se aferra a "tu historial no lo menciona" aunque la pregunta sea de conocimiento general
-  // (pasó con "¿cuánta gente vive en Arequipa?"). Un reintento explícito, sin el contexto personal que lo distrae.
+  // (pasó con "¿cuánta gente vive en esta ciudad?"). Un reintento explícito, sin el contexto personal que lo distrae.
   if (looksEmptyAnswer(out) && !PERSONAL.test(question)) {
     const retry = `PREGUNTA: ${question}\n\n${curCtx ? `NOTICIAS:\n${curCtx}\n\n` : ""}${webCtx ? `RESULTADOS WEB:\n${webCtx}\n\n` : ""}RESPUESTA:`
     const sys2 = harden(`Sos el asistente personal de ${ownerFirst()}. Es una pregunta de CONOCIMIENTO GENERAL: respondé con lo que sabés${webCtx ? " y con los resultados web" : ""}, en 1 a 3 frases, en español. No digas que te faltan datos de su historial: la pregunta no es sobre él.`)

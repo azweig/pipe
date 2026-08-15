@@ -25,11 +25,11 @@ const NJID = "whatsapp:!roomNormal:x"    // sala de la línea NORMAL  (owner 519
 before(() => {
   dbc.resetDb(":memory:")
   dbc.seed([
-    // — contacto PARCIAL "Mili": misma persona en dos salas (una secreta, una normal) —
-    { thread: "mili", channel: "whatsapp", dir: "out", name: "yo", sender: "@whatsapp_51999000001:x", jid: SJID, text: "hola desde la secreta", ts: 10 },
-    { thread: "mili", channel: "whatsapp", dir: "in", name: "Mili", sender: "@whatsapp_5111:x", jid: SJID, text: "MENSAJE_SECRETO_MILI", ts: 11 },
-    { thread: "mili", channel: "whatsapp", dir: "out", name: "yo", sender: "@whatsapp_51999000002:x", jid: NJID, text: "hola desde la normal", ts: 12 },
-    { thread: "mili", channel: "whatsapp", dir: "in", name: "Mili", sender: "@whatsapp_5111:x", jid: NJID, text: "MENSAJE_NORMAL_MILI", ts: 13 },
+    // — contacto PARCIAL "Ana Vega": misma persona en dos salas (una secreta, una normal) —
+    { thread: "ana", channel: "whatsapp", dir: "out", name: "yo", sender: "@whatsapp_51999000001:x", jid: SJID, text: "hola desde la secreta", ts: 10 },
+    { thread: "ana", channel: "whatsapp", dir: "in", name: "Ana Vega", sender: "@whatsapp_5111:x", jid: SJID, text: "MENSAJE_SECRETO_ANA", ts: 11 },
+    { thread: "ana", channel: "whatsapp", dir: "out", name: "yo", sender: "@whatsapp_51999000002:x", jid: NJID, text: "hola desde la normal", ts: 12 },
+    { thread: "ana", channel: "whatsapp", dir: "in", name: "Ana Vega", sender: "@whatsapp_5111:x", jid: NJID, text: "MENSAJE_NORMAL_ANA", ts: 13 },
     // — contacto 100% SECRETO "Solo" (solo en la línea secreta) —
     { thread: "solo", channel: "whatsapp", dir: "out", name: "yo", sender: "@whatsapp_51999000001:x", jid: SJID, text: "hola solo", ts: 20 },
     { thread: "solo", channel: "whatsapp", dir: "in", name: "Solo", sender: "@whatsapp_5122:x", jid: SJID, text: "MENSAJE_DE_SOLO", ts: 21 },
@@ -46,14 +46,14 @@ before(() => {
 after(() => { process.chdir(orig); rmSync(dir, { recursive: true, force: true }) })
 
 test("isSecretMsg: mensaje de la sala secreta sí, de la normal no", () => {
-  assert.equal(secret.isSecretMsg({ channel: "whatsapp", jid: SJID, thread: "mili" }), true)
-  assert.equal(secret.isSecretMsg({ channel: "whatsapp", jid: NJID, thread: "mili" }), false)
+  assert.equal(secret.isSecretMsg({ channel: "whatsapp", jid: SJID, thread: "ana" }), true)
+  assert.equal(secret.isSecretMsg({ channel: "whatsapp", jid: NJID, thread: "ana" }), false)
 })
 
-test("secretGate: 'solo' se oculta entero (100% secreto); 'mili' NO (parcial, sigue visible)", () => {
+test("secretGate: 'solo' se oculta entero (100% secreto); 'ana' NO (parcial, sigue visible)", () => {
   const g = secret.secretGate()
   assert.equal(g.hide.has("solo"), true, "solo debe estar en hide")
-  assert.equal(g.hide.has("mili"), false, "mili es parcial → NO se oculta entero")
+  assert.equal(g.hide.has("ana"), false, "ana es parcial → NO se oculta entero")
 })
 
 test("selfNotesSince (Notas/digest): excluye la nota de la línea secreta", () => {
@@ -67,11 +67,11 @@ test("recentCalls (Home/radar): no muestra la llamada de la línea secreta (hilo
   assert.equal(calls.length, 0, "la llamada de 'solo' (secreto) no debe listarse")
 })
 
-test("espacioMessages (Espacios): un espacio por nombre 'Mili' muestra SOLO lo no-secreto", () => {
-  const r = esp.espacioMessages([{ type: "name", value: "Mili" }], { limit: 50 })
+test("espacioMessages (Espacios): un espacio por nombre 'Ana Vega' muestra SOLO lo no-secreto", () => {
+  const r = esp.espacioMessages([{ type: "name", value: "Ana Vega" }], { limit: 50 })
   const texts = r.recent.map((m) => m.text)
-  assert.ok(texts.includes("MENSAJE_NORMAL_MILI"), "el mensaje normal debe estar")
-  assert.ok(!texts.includes("MENSAJE_SECRETO_MILI"), "el mensaje SECRETO NO debe aparecer")
+  assert.ok(texts.includes("MENSAJE_NORMAL_ANA"), "el mensaje normal debe estar")
+  assert.ok(!texts.includes("MENSAJE_SECRETO_ANA"), "el mensaje SECRETO NO debe aparecer")
 })
 
 test("import viejo con jid='': DM cuya clave es el número secreto queda oculto entero", () => {
@@ -102,7 +102,7 @@ test("searchThreadKeys encuentra el hilo secreto, pero el gate lo tapa antes de 
   const hide = secret.secretThreadKeys()
   assert.equal(hide.has("solo"), true, "un hilo 100% secreto NO puede salir en resultados de búsqueda")
   // el parcial sí puede aparecer: se muestra filtrado por-mensaje, no oculto
-  assert.equal(hide.has("mili"), false)
+  assert.equal(hide.has("ana"), false)
 })
 
 test("searchThreadKeys: sin query o con 1 letra no devuelve nada (no barre la base entera)", () => {
@@ -111,7 +111,7 @@ test("searchThreadKeys: sin query o con 1 letra no devuelve nada (no barre la ba
 })
 
 test("searchThreadKeys: tolera sintaxis de FTS5 sin explotar", () => {
-  for (const q of ['"', 'a OR b', 'x NEAR(y)', "mili*", "((("]) {
+  for (const q of ['"', 'a OR b', 'x NEAR(y)', "ana*", "((("]) {
     assert.ok(Array.isArray(tr.searchThreadKeys(q, { limit: 5 })), `no debe tirar con: ${q}`)
   }
 })
@@ -122,15 +122,15 @@ test("searchThreadKeys: tolera sintaxis de FTS5 sin explotar", () => {
 const idDe = (texto) => dbc.handle().prepare("SELECT id FROM messages WHERE text=?").get(texto)?.id
 
 test("messageById: niega la fila secreta y devuelve la normal", () => {
-  const secreto = idDe("MENSAJE_SECRETO_MILI"), normal = idDe("MENSAJE_NORMAL_MILI")
+  const secreto = idDe("MENSAJE_SECRETO_ANA"), normal = idDe("MENSAJE_NORMAL_ANA")
   assert.ok(secreto && normal, "el seed tiene que traer ids")
   assert.equal(tr.messageById(secreto), undefined, "sin 2º PIN no se entrega")
-  assert.equal(tr.messageById(normal)?.text, "MENSAJE_NORMAL_MILI", "el normal sí")
-  assert.equal(tr.messageById(secreto, { secretOn: true })?.text, "MENSAJE_SECRETO_MILI", "con 2º PIN sí")
+  assert.equal(tr.messageById(normal)?.text, "MENSAJE_NORMAL_ANA", "el normal sí")
+  assert.equal(tr.messageById(secreto, { secretOn: true })?.text, "MENSAJE_SECRETO_ANA", "con 2º PIN sí")
 })
 
 test("getBody (visor de correo): el cuerpo de una fila secreta no sale por id", () => {
-  const id = idDe("MENSAJE_SECRETO_MILI")
+  const id = idDe("MENSAJE_SECRETO_ANA")
   dbc.handle().prepare("UPDATE messages SET body=? WHERE id=?").run("<p>CUERPO_SECRETO</p>", id)
   assert.equal(tr.getBody(id), null, "sin 2º PIN, sin cuerpo")
   assert.equal(tr.getBody(id, { secretOn: true }), "<p>CUERPO_SECRETO</p>", "con 2º PIN sí")
@@ -138,22 +138,22 @@ test("getBody (visor de correo): el cuerpo de una fila secreta no sale por id", 
 
 test("forwardMessages: no reenvía un mensaje secreto sin 2º PIN", async () => {
   const { forwardMessages } = await import("../src/lib/brain/reply.mjs")
-  const r = await forwardMessages([idDe("MENSAJE_SECRETO_MILI")], "mili")
+  const r = await forwardMessages([idDe("MENSAJE_SECRETO_ANA")], "ana")
   // el error EXACTO importa: prueba que se negó al LEERLO, no que falló al mandarlo (eso pasaría igual sin el candado)
   assert.equal(r?.error, "No encontré los mensajes a reenviar.", "tiene que negarse antes de intentar mandarlo")
 })
 
 test("summarizeMedia: no transcribe/describe un adjunto de fuente secreta sin 2º PIN", async () => {
   const { summarizeMedia } = await import("../src/lib/brain/media-ai.mjs")
-  const r = await summarizeMedia(idDe("MENSAJE_SECRETO_MILI"))
+  const r = await summarizeMedia(idDe("MENSAJE_SECRETO_ANA"))
   assert.equal(r?.error, "mensaje no encontrado")
 })
 
 test("allForRag (corpus del índice semántico): no entrega mensajes de canal secreto", async () => {
   const sr = await import("../src/lib/search-repo.mjs")
   const textos = sr.allForRag({ since: 0 }).map((r) => r.text)
-  assert.ok(textos.includes("MENSAJE_NORMAL_MILI"), "lo normal sí entra al índice")
-  for (const t of ["MENSAJE_SECRETO_MILI", "MENSAJE_DE_SOLO", "NOTA_SECRETA_XYZ", "IMPORT_VIEJO_SECRETO"])
+  assert.ok(textos.includes("MENSAJE_NORMAL_ANA"), "lo normal sí entra al índice")
+  for (const t of ["MENSAJE_SECRETO_ANA", "MENSAJE_DE_SOLO", "NOTA_SECRETA_XYZ", "IMPORT_VIEJO_SECRETO"])
     assert.ok(!textos.includes(t), `${t} NO puede vectorizarse`)
 })
 
@@ -162,7 +162,7 @@ test("allForRag (corpus del índice semántico): no entrega mensajes de canal se
 test("ragItemVisible: la línea vieja del índice (sin hilo) se resuelve por id y la secreta queda fuera", async () => {
   const { ragItemVisible } = await import("../src/lib/brain/ask.mjs")
   const visible = ragItemVisible({ secretKeys: secret.secretThreadKeys(), isSecret: secret.isSecretMsg })
-  const idSec = idDe("MENSAJE_SECRETO_MILI"), idNor = idDe("MENSAJE_NORMAL_MILI")
+  const idSec = idDe("MENSAJE_SECRETO_ANA"), idNor = idDe("MENSAJE_NORMAL_ANA")
   // líneas VIEJAS (sin thread): antes pasaban las dos
   assert.equal(visible({ id: "msg:" + idSec, kind: "msg", text: "x" }), false, "la secreta NO entra al contexto")
   assert.equal(visible({ id: "msg:" + idNor, kind: "msg", text: "x" }), true, "la normal sí")
@@ -208,8 +208,8 @@ test("ficha de contacto: pedirla por NOMBRE no revela la clave del hilo ni el te
 
 test("archivos del CAS: se niegan por RUTA si el mensaje que los trae es secreto", () => {
   const h = dbc.handle()
-  h.prepare("UPDATE messages SET media=? WHERE text=?").run("/cas/aa11.jpg", "MENSAJE_SECRETO_MILI")
-  h.prepare("UPDATE messages SET media=? WHERE text=?").run("/cas/bb22.jpg", "MENSAJE_NORMAL_MILI")
+  h.prepare("UPDATE messages SET media=? WHERE text=?").run("/cas/aa11.jpg", "MENSAJE_SECRETO_ANA")
+  h.prepare("UPDATE messages SET media=? WHERE text=?").run("/cas/bb22.jpg", "MENSAJE_NORMAL_ANA")
   assert.equal(tr.casSecreto("/cas/aa11.jpg"), true, "la foto del canal secreto no se entrega")
   assert.equal(tr.casSecreto("/cas/bb22.jpg"), false, "la normal sí")
   assert.equal(tr.casSecreto("/cas/aa11.jpg", { secretOn: true }), false, "con 2º PIN sí")
@@ -220,8 +220,8 @@ test("archivos del CAS: se niegan por RUTA si el mensaje que los trae es secreto
 // Instagram/TikTok con una URL que solo existe en un chat secreto). Ninguno filtraba.
 test("selectores de egreso: audio, correos y links de una fuente secreta no salen", () => {
   const h = dbc.handle()
-  h.prepare("UPDATE messages SET mediaType='audio', media='/cas/aa.ogg' WHERE text=?").run("MENSAJE_SECRETO_MILI")
-  h.prepare("UPDATE messages SET mediaType='audio', media='/cas/bb.ogg' WHERE text=?").run("MENSAJE_NORMAL_MILI")
+  h.prepare("UPDATE messages SET mediaType='audio', media='/cas/aa.ogg' WHERE text=?").run("MENSAJE_SECRETO_ANA")
+  h.prepare("UPDATE messages SET mediaType='audio', media='/cas/bb.ogg' WHERE text=?").run("MENSAJE_NORMAL_ANA")
   const audios = tr.audioToSummarize(0, { limit: 50 }).map((r) => r.media)
   assert.ok(audios.includes("/cas/bb.ogg"), "el audio normal sí se transcribe")
   assert.ok(!audios.includes("/cas/aa.ogg"), "el audio de la línea secreta NO se manda a transcribir")
@@ -288,11 +288,11 @@ test("catchup: un hilo secreto no sube sus adjuntos ni resume con la nube", asyn
 })
 
 test("threadSince filtra por defecto, como su gemela", () => {
-  const conSecretos = tr.threadSince("mili", 0, { limit: 50, incluirSecretos: true }).map((m) => m.text)
-  const filtrado = tr.threadSince("mili", 0, { limit: 50 }).map((m) => m.text)
-  assert.ok(conSecretos.includes("MENSAJE_SECRETO_MILI"), "pidiéndolo explícito, viene todo")
-  assert.ok(!filtrado.includes("MENSAJE_SECRETO_MILI"), "por defecto, no")
-  assert.ok(filtrado.includes("MENSAJE_NORMAL_MILI"), "lo normal sigue")
+  const conSecretos = tr.threadSince("ana", 0, { limit: 50, incluirSecretos: true }).map((m) => m.text)
+  const filtrado = tr.threadSince("ana", 0, { limit: 50 }).map((m) => m.text)
+  assert.ok(conSecretos.includes("MENSAJE_SECRETO_ANA"), "pidiéndolo explícito, viene todo")
+  assert.ok(!filtrado.includes("MENSAJE_SECRETO_ANA"), "por defecto, no")
+  assert.ok(filtrado.includes("MENSAJE_NORMAL_ANA"), "lo normal sigue")
 })
 
 test("summarizeMedia: con 2º PIN puesto, un adjunto secreto no se manda a la nube", async () => {
@@ -330,11 +330,11 @@ test("isSecretSelfRow falla CERRADO (fallaba abierto justo cuando todo lo demás
 // usuario sobre un mensaje que está mirando); sin él, no. Este test fija ese contrato para que no cambie sin querer.
 test("forward: sin 2º PIN se niega, con 2º PIN se permite (excepción consciente)", async () => {
   const { forwardMessages } = await import("../src/lib/brain/reply.mjs")
-  const id = dbc.handle().prepare("SELECT id FROM messages WHERE text='MENSAJE_SECRETO_MILI'").get()?.id
+  const id = dbc.handle().prepare("SELECT id FROM messages WHERE text='MENSAJE_SECRETO_ANA'").get()?.id
   assert.ok(id, "el seed tiene el mensaje")
-  const sin = await forwardMessages([id], "mili")
+  const sin = await forwardMessages([id], "ana")
   assert.equal(sin?.error, "No encontré los mensajes a reenviar.", "sin 2º PIN ni se lee")
-  const con = await forwardMessages([id], "mili", { secretOn: true })
+  const con = await forwardMessages([id], "ana", { secretOn: true })
   assert.notEqual(con?.error, "No encontré los mensajes a reenviar.", "con 2º PIN sí lo lee (falla más adelante, al enviar)")
 })
 
@@ -371,4 +371,21 @@ test("resolverDestino: teléfono, correo y basura", async () => {
   for (const num of ["15550000009", "51988777666"])
     assert.equal(resolverDestino("+" + num).key, computeThread({ channel: "whatsapp", jid: num + "@s.whatsapp.net", name: "" }), `misma clave que la ingesta para ${num}`)
   assert.equal(resolverDestino("nuevo@x.example").key, computeThread({ channel: "email", jid: "nuevo@x.example", name: "" }), "y para correo")
+})
+
+// Marcar una RED entera ("<canal>:*") es parte del modelo documentado en el encabezado de secret.mjs, pero sólo el correo
+// consultaba la marca: marcabas telegram:*, quedaba guardado, se veía marcado en la config… y no ocultaba NADA.
+// Peor que no tener la función: creías que ese canal estaba tapado.
+test("marcar una red entera (canal:*) oculta sus mensajes Y sus hilos", () => {
+  const h = dbc.handle()
+  h.prepare("INSERT INTO messages (id,thread,channel,account,dir,name,text,ts) VALUES (?,?,?,?,?,?,?,?)")
+    .run("tg1", "telegram:900000123", "telegram", "bot", "in", "Alguien", "MENSAJE_DE_TELEGRAM", 70)
+  secret.setSecretAccount("telegram", "*", true)
+  assert.equal(secret.isSecretMsg({ channel: "telegram", account: "bot", thread: "telegram:900000123" }), true, "por-mensaje")
+  assert.equal(secret.secretThreadKeys().has("telegram:900000123"), true, "y el hilo entero, para que no quede vacío en la bandeja")
+  // el resto de los canales sigue visible
+  assert.equal(secret.isSecretMsg({ channel: "whatsapp", jid: NJID, thread: "ana" }), false)
+  secret.setSecretAccount("telegram", "*", false)
+  assert.equal(secret.secretThreadKeys().has("telegram:900000123"), false, "al desmarcar, vuelve")
+  h.prepare("DELETE FROM messages WHERE id='tg1'").run()
 })

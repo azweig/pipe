@@ -9,7 +9,7 @@ const TMP = join(tmpdir(), "autopilot-cfg-" + process.pid + ".json")
 process.env.AUTOPILOT_CFG = TMP // los getters de path son lazy → leen esto en cada llamada
 
 const { getAutopilot, setAutopilot, listAutopilot } = await import("../src/lib/brain/autopilot.mjs")
-const KEY = "whatsapp:51999188771@s.whatsapp.net"
+const KEY = "whatsapp:51999000771@s.whatsapp.net"
 
 test.after(() => { try { rmSync(TMP) } catch {} })
 

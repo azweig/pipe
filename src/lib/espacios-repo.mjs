@@ -12,7 +12,7 @@ export function espacioMessages(rules = [], { limit = 20, exclude = [], sinceTs 
     for (const r of rs || []) {
       const v = String(r?.value || "").trim().toLowerCase(); if (!v) continue
       if (r.type === "email") { clauses.push("(channel='email' AND lower(jid)=?)"); args.push(v) }
-      else if (r.type === "domain") { const d = v.replace(/^@/, ""); clauses.push("(channel='email' AND (lower(jid) LIKE ? OR lower(jid) LIKE ?))"); args.push("%@" + d, "%." + d) } // dominio + SUBdominios (edocs.banbif.com.pe entra por 'banbif.com.pe')
+      else if (r.type === "domain") { const d = v.replace(/^@/, ""); clauses.push("(channel='email' AND (lower(jid) LIKE ? OR lower(jid) LIKE ?))"); args.push("%@" + d, "%." + d) } // dominio + SUBdominios (facturas.proveedor.com entra por 'proveedor.com')
       else if (r.type === "phone") { const n = v.replace(/\D/g, ""); if (n.length < 6) continue; clauses.push("(replace(lower(thread),' ','') LIKE ? OR lower(jid) LIKE ? OR lower(sender) LIKE ?)"); args.push("%" + n + "%", "%" + n + "%", "%" + n + "%") }
       else if (r.type === "name") { clauses.push("(lower(name)=? OR lower(thread)=?)"); args.push(v, v) }
     }

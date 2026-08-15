@@ -18,16 +18,16 @@ test("threadTargets: self → sin selector (solo notas locales)", () => {
 
 test("threadTargets: dedup por NÚMERO real — una entrada por número, la sala más reciente", () => {
   resetDb(":memory:")
-  // dos salas portal del MISMO número (51999188771): debe quedar UNA sola entrada, la de ts más nuevo (ROOM_B)
+  // dos salas portal del MISMO número (51999000771): debe quedar UNA sola entrada, la de ts más nuevo (ROOM_B)
   seed([
-    { thread: "ana", jid: ROOM_A, dir: "in", sender: "@whatsapp_51999188771", text: "vieja", ts: NOW },
-    { thread: "ana", jid: ROOM_B, dir: "in", sender: "@whatsapp_51999188771", text: "nueva", ts: NOW + 100 },
+    { thread: "ana", jid: ROOM_A, dir: "in", sender: "@whatsapp_51999000771", text: "vieja", ts: NOW },
+    { thread: "ana", jid: ROOM_B, dir: "in", sender: "@whatsapp_51999000771", text: "nueva", ts: NOW + 100 },
   ])
   const { targets } = threadTargets("ana")
   const wa = targets.filter((t) => t.channel === "whatsapp")
   assert.equal(wa.length, 1)          // dedup por número
   assert.equal(wa[0].target, ROOM_B)  // la sala MÁS reciente de ese número
-  assert.equal(wa[0].label, "+51999188771")
+  assert.equal(wa[0].label, "+51999000771")
 })
 
 test("threadTargets: default = target del último mensaje ENTRANTE (no el más reciente por otra vía)", () => {
@@ -70,11 +70,11 @@ test("threadTargets: contacto sin salas ni emails → sin destinos", () => {
 // en 2300 recibidos, y 0 por Teams. Estas pruebas fallan con el código anterior.
 test("threadTargets: un hilo de Telegram ofrece su chat como destino", () => {
   resetDb(":memory:")
-  seed([{ thread: "telegram:7372284891", channel: "telegram", jid: "7372284891", dir: "in", text: "hola", ts: NOW }])
-  const { targets } = threadTargets("telegram:7372284891")
+  seed([{ thread: "telegram:900000001", channel: "telegram", jid: "900000001", dir: "in", text: "hola", ts: NOW }])
+  const { targets } = threadTargets("telegram:900000001")
   const tg = targets.filter((t) => t.channel === "telegram")
   assert.equal(tg.length, 1, "sin destino no se puede responder por Telegram")
-  assert.equal(tg[0].target, "7372284891")
+  assert.equal(tg[0].target, "900000001")
 })
 
 test("threadTargets: un hilo de Teams ofrece su chat como destino", () => {

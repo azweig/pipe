@@ -44,3 +44,13 @@ test("upsertNode es IDEMPOTENTE: reprocesar un lote no infla el contador de menc
   vault.upsertNode("person", "Ana Prueba", {}, [...tl, { date: "2026-08-03", line: "[whatsapp] algo nuevo" }])
   assert.equal(readFileSync(ruta, "utf8").match(/mentions: (\d+)/)?.[1], "3")
 })
+
+test("un archivo de offsets ILEGIBLE no revienta la corrida: avisa y arranca del final", async () => {
+  // antes tiraba una excepción que subía hasta el catch de main → mensaje de una línea y CÓDIGO DE SALIDA 0.
+  // El cron lo leía como éxito mientras graphify dejaba de aprender.
+  writeFileSync(join(dir, "data", ".graphify-offsets.json"), '{"messages.jsonl":')
+  writeFileSync(join(dir, "data", "messages.jsonl"), JSON.stringify({ ts: 9, channel: "whatsapp", name: "A", text: "hola", dir: "in" }) + "\n")
+  const r = await store.loadNewEvents({ limit: 10 })
+  assert.equal(r.events.length, 0, "arranca desde el final, como la primera vez")
+  assert.equal(typeof r.endByte, "number")
+})
