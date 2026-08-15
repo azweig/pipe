@@ -8,7 +8,7 @@ import { upsertNode, loadIdentity, saveIdentity } from "./lib/vault.mjs"
 import { llm, smartChain } from "./lib/llm.mjs"
 import { harden, fence } from "./lib/safety.mjs"
 import { anchored, gstrip } from "./lib/grounding.mjs"
-import { mkdirSync, appendFileSync, readFileSync, existsSync } from "fs"
+import { mkdirSync, appendFileSync, readFileSync, writeFileSync, existsSync } from "fs"
 
 mkdirSync("./vault/Daily", { recursive: true })
 const BATCH = 30
@@ -51,66 +51,103 @@ async function processBatch(events, known) {
   return llm(prompt, { json: true, system: harden(SYSTEM), feature: "graphify", chain: smartChain({ sensitive: true, feature: "graphify" }) }) // feature top-level → área private (GPU box del hub); smartChain = fallback fail-closed
 }
 
+// ── ESTADO DE TRABA ──
+// El contador cuenta corridas seguidas en las que falló algún lote. Guarda TAMBIÉN el offset: si el offset cambió, es
+// otra tanda de mensajes y el contador arranca de cero (si no, un contador viejo hacía que la próxima tanda que fallara
+// se descartara en el PRIMER intento). Todas las escrituras van protegidas: si el disco está lleno, esto no puede ser lo
+// que tumbe la corrida entera — sin protección, un EACCES/ENOSPC salteaba toda la contabilidad y dejaba el offset clavado.
+const TRABA = "./data/.graphify-trabado.json"
+function leerTraba() { try { return JSON.parse(readFileSync(TRABA, "utf8")) || {} } catch { return {} } }
+function escribirTraba(o) { try { writeFileSync(TRABA, JSON.stringify(o)) } catch (e) { console.error("[graphify] no pude guardar el estado de traba:", e?.message || e) } }
+function limpiarTraba() { const t = leerTraba(); if (t.n) escribirTraba({ n: 0, ts: Date.now() }) }
+
 async function main() {
   if (process.argv.includes("--all")) { resetOffsets(); console.log("↻ reprocesando TODO desde cero") }
-  const { events: allEvents, commit } = await loadNewEvents() // streaming por bytes (no crashea con el jsonl de >2GB)
+  const { events: allEvents, commit, endByte: bytesFin } = await loadNewEvents() // streaming por bytes (no crashea con el jsonl de >2GB)
   // 🔒 graphify escribe vault/People/*.md con canales, menciones y timeline por mensaje, y eso se sincroniza a otro server.
   // Lee el jsonl crudo (por offset de bytes), así que no pasa por ningún filtro de la DB: se gatea acá, en la entrada.
   const events = allEvents.filter((e) => e.dir !== "out" && !isSecretJsonl(e)) // los salientes no crean entidades, solo sirven al coach/who
-  if (!allEvents.length) { commit(); console.log("Sin eventos nuevos."); return } // commit igual: persiste el offset de bytes (migra el formato viejo)
+  if (!allEvents.length) { limpiarTraba(); commit(); console.log("Sin eventos nuevos."); return } // commit igual: persiste el offset de bytes (migra el formato viejo)
   // Si el gate no se pudo calcular, isSecretJsonl dice que TODO es secreto (falla cerrado, y está bien). Pero acá eso se
   // combinaba con avanzar el offset: los mensajes quedaban marcados como procesados y no se grafiaban NUNCA MÁS. El
   // offset solo se mueve si sabemos de verdad que no había nada que aprender.
   if (!events.length) {
     const g = secretGate()
     if (g.blockAll || g.degraded || secretJsonlIndeciso()) { console.error("[graphify] no pude decidir qué es secreto → NO avanzo el offset (reintento en la próxima corrida)"); return }
-    commit(); console.log("Solo salientes — nada que grafiar."); return
+    limpiarTraba(); commit(); console.log("Solo salientes — nada que grafiar."); return
   }
   console.log(`📥 ${events.length} eventos nuevos → graphify (lotes de ${BATCH})`)
 
   const identity = loadIdentity()
   const known = [...new Set([...CANON_LIST, ...Object.values(identity)])]
-  let people = 0, companies = 0, projects = 0, dropped = 0
+  let people = 0, companies = 0, projects = 0, dropped = 0, fallados = 0
 
+  // El bucle entero va protegido: cualquier excepción fuera del try de processBatch (un upsert que no puede escribir por
+  // disco lleno, por ejemplo) se saltaba TODA la contabilidad de abajo y caía en el catch de main → ni comiteaba ni
+  // contaba, o sea offset clavado para siempre con un error de una línea. Ahora cuenta como fallo y sigue el flujo normal.
+  try {
   for (let i = 0; i < events.length; i += BATCH) {
-    const batch = events.slice(i, i + BATCH)
-    let g
-    try { g = await processBatch(batch, known) } catch (e) { console.log(`lote ${i}: ${e.message}`); continue }
-    // pajar del lote (lo que REALMENTE se le mandó al LLM): nombres + canales + texto → contra esto se verifica cada entidad
-    const hay = gstrip(batch.map((e) => `${e.name || ""} ${channelId(e)} ${e.text || ""}`).join("  "))
+      const batch = events.slice(i, i + BATCH)
+      let g
+      try { g = await processBatch(batch, known) } catch (e) { console.log(`lote ${i}: ${e.message}`); fallados++; continue }
+      // pajar del lote (lo que REALMENTE se le mandó al LLM): nombres + canales + texto → contra esto se verifica cada entidad
+      const hay = gstrip(batch.map((e) => `${e.name || ""} ${channelId(e)} ${e.text || ""}`).join("  "))
 
-    for (const p of g.people || []) {
-      if (!p.canonical) continue
-      const canon = norm(p.canonical)
-      if (NO_ATTRIBUTE.has(canon)) continue // nunca atribuir mensajes entrantes a menores/sin-canales
-      // grounding: una persona NUEVA (no ya conocida) tiene que estar anclada en el texto por su nombre, un alias o un canal.
-      // Sin eso → invención → descartar. Las conocidas pasan siempre (el LLM reusó bien un canónico existente).
-      if (!known.includes(canon) && !anchored(canon, hay) && !(p.aliases || []).some((a) => anchored(a, hay)) && !(p.channels || []).some((c) => anchored(c, hay))) { dropped++; continue }
-      const chans = (p.channels || []).filter((ch) => !isGroupChannel(ch)) // NO asociar grupos como canal de la persona
-      upsertNode("person", canon, { aliases: p.aliases, channels: chans, orgs: (p.orgs || []).filter((o) => anchored(o, hay)).map(norm), projects: (p.projects || []).filter((pr) => anchored(pr, hay)).map(norm), tags: p.tags },
-        (p.events || []).map((ev) => ({ date: ev.date, line: `[${ev.channel}] ${ev.gist}` })))
-      for (const ch of chans) identity[ch] = canon
-      if (!known.includes(canon)) known.push(canon)
-      people++
+      for (const p of g.people || []) {
+        if (!p.canonical) continue
+        const canon = norm(p.canonical)
+        if (NO_ATTRIBUTE.has(canon)) continue // nunca atribuir mensajes entrantes a menores/sin-canales
+        // grounding: una persona NUEVA (no ya conocida) tiene que estar anclada en el texto por su nombre, un alias o un canal.
+        // Sin eso → invención → descartar. Las conocidas pasan siempre (el LLM reusó bien un canónico existente).
+        if (!known.includes(canon) && !anchored(canon, hay) && !(p.aliases || []).some((a) => anchored(a, hay)) && !(p.channels || []).some((c) => anchored(c, hay))) { dropped++; continue }
+        const chans = (p.channels || []).filter((ch) => !isGroupChannel(ch)) // NO asociar grupos como canal de la persona
+        upsertNode("person", canon, { aliases: p.aliases, channels: chans, orgs: (p.orgs || []).filter((o) => anchored(o, hay)).map(norm), projects: (p.projects || []).filter((pr) => anchored(pr, hay)).map(norm), tags: p.tags },
+          (p.events || []).map((ev) => ({ date: ev.date, line: `[${ev.channel}] ${ev.gist}` })))
+        for (const ch of chans) identity[ch] = canon
+        if (!known.includes(canon)) known.push(canon)
+        people++
+      }
+      for (const c of g.companies || []) {
+        if (!c.name) continue
+        if (!anchored(c.name, hay)) { dropped++; continue } // empresa no mencionada (ni por dominio) → descartar
+        upsertNode("company", norm(c.name), { tags: c.tags, projects: (c.projects || []).map(norm),
+          aliases: [], channels: [], orgs: (c.people || []).map(norm) }, [])
+        companies++
+      }
+      for (const pr of g.projects || []) {
+        if (!pr.name) continue
+        if (!anchored(pr.name, hay)) { dropped++; continue } // proyecto no nombrado en el texto → descartar
+        upsertNode("project", norm(pr.name), { orgs: (pr.companies || []).map(norm), tags: [], aliases: [], channels: [], projects: [] },
+          pr.summary ? [{ date: dateOf(batch[0].ts), line: pr.summary }] : [])
+        projects++
+      }
+      saveIdentity(identity)
+      process.stdout.write(`\r  lote ${Math.floor(i / BATCH) + 1}/${Math.ceil(events.length / BATCH)} · ${people}p ${companies}e ${projects}pr`)
     }
-    for (const c of g.companies || []) {
-      if (!c.name) continue
-      if (!anchored(c.name, hay)) { dropped++; continue } // empresa no mencionada (ni por dominio) → descartar
-      upsertNode("company", norm(c.name), { tags: c.tags, projects: (c.projects || []).map(norm),
-        aliases: [], channels: [], orgs: (c.people || []).map(norm) }, [])
-      companies++
-    }
-    for (const pr of g.projects || []) {
-      if (!pr.name) continue
-      if (!anchored(pr.name, hay)) { dropped++; continue } // proyecto no nombrado en el texto → descartar
-      upsertNode("project", norm(pr.name), { orgs: (pr.companies || []).map(norm), tags: [], aliases: [], channels: [], projects: [] },
-        pr.summary ? [{ date: dateOf(batch[0].ts), line: pr.summary }] : [])
-      projects++
-    }
-    saveIdentity(identity)
-    process.stdout.write(`\r  lote ${Math.floor(i / BATCH) + 1}/${Math.ceil(events.length / BATCH)} · ${people}p ${companies}e ${projects}pr`)
+    // El offset avanzaba SIEMPRE, aunque hubieran fallado todos los lotes: con el modelo caído, esos mensajes se salteaban
+    // para siempre y nadie se enteraba. Ahora, si falló algo, NO se avanza y la próxima corrida los reprocesa (el upsert es
+    // idempotente, así que rehacer un lote bueno no duplica nada).
+    //
+    // Con un tope, porque lo contrario también es una trampa: un lote que falla SIEMPRE (un mensaje que rompe al modelo)
+    // dejaría el offset clavado y el grafo no volvería a avanzar nunca. Tras 3 corridas trabadas se avanza igual, avisando.
+  } catch (e) {
+    console.error("[graphify] el proceso de lotes se cortó:", e?.message || e)
+    fallados++
   }
-  commit() // TRANSACCIONAL: recién ahora avanzamos el offset (si crasheó a mitad, la próxima corrida reprocesa; upsert es idempotente)
+  const t = leerTraba()
+  // ¿es la MISMA tanda que la vez pasada? Si el offset cambió, esta es otra: el contador no se hereda.
+  const trabas = t.offset === bytesFin ? (t.n || 0) : 0
+  if (fallados && trabas < 3) {
+    escribirTraba({ n: trabas + 1, ts: Date.now(), lotes: fallados, offset: bytesFin })
+    console.error(`⚠️  ${fallados} lote(s) fallaron → NO avanzo el offset (intento ${trabas + 1}/3; la próxima corrida los reprocesa)`)
+  } else {
+    if (fallados) {
+      console.error(`⚠️  ${fallados} lote(s) siguen fallando tras 3 intentos → avanzo el offset igual para no quedar trabado.`)
+      console.error(`    NO ENTRAN AL GRAFO los eventos hasta el byte ${bytesFin} de data/messages.jsonl. Para recuperarlos: node src/graphify.mjs --all`)
+    }
+    limpiarTraba()
+    commit() // TRANSACCIONAL: recién ahora avanzamos el offset (si crasheó a mitad, la próxima corrida reprocesa)
+  }
   console.log(`\n✅ Grafo actualizado: ${people} personas · ${companies} empresas · ${projects} proyectos · ${dropped} descartadas (sin ancla en el texto)`)
   console.log(`   Vault: ./vault/  ·  Identidades: ${Object.keys(identity).length} canales mapeados`)
   appendFileSync(`./vault/Daily/${dateOf(Date.now())}.md`, `- graphify: +${people}p/+${companies}e/+${projects}pr @ ${new Date().toISOString().slice(11, 16)}\n`)

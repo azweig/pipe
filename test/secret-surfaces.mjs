@@ -325,3 +325,26 @@ test("isSecretSelfRow falla CERRADO (fallaba abierto justo cuando todo lo demás
   writeFileSync(join(dir, "data", "secret-numbers.json"), '["51999000001"]')
   secret.setSecretAccount("email", "x", false)
 })
+
+// EXCEPCIÓN DECLARADA: reenviar es, por definición, sacar el mensaje del hub. Con 2º PIN se permite (acción explícita del
+// usuario sobre un mensaje que está mirando); sin él, no. Este test fija ese contrato para que no cambie sin querer.
+test("forward: sin 2º PIN se niega, con 2º PIN se permite (excepción consciente)", async () => {
+  const { forwardMessages } = await import("../src/lib/brain/reply.mjs")
+  const id = dbc.handle().prepare("SELECT id FROM messages WHERE text='MENSAJE_SECRETO_MILI'").get()?.id
+  assert.ok(id, "el seed tiene el mensaje")
+  const sin = await forwardMessages([id], "mili")
+  assert.equal(sin?.error, "No encontré los mensajes a reenviar.", "sin 2º PIN ni se lee")
+  const con = await forwardMessages([id], "mili", { secretOn: true })
+  assert.notEqual(con?.error, "No encontré los mensajes a reenviar.", "con 2º PIN sí lo lee (falla más adelante, al enviar)")
+})
+
+// La cadena de un contenido secreto no puede depender de un interruptor de la UI: `feature:"meetings"` SÍ es conmutable
+// a nube, y el prep de una reunión secreta lo usaba.
+test("smartChain: `secreto` gana sobre cualquier preferencia de nube", async () => {
+  const { smartChain } = await import("../src/lib/llm.mjs")
+  assert.equal(smartChain({ sensitive: true, secreto: true, feature: "meetings" }), "ollama")
+  assert.equal(smartChain({ sensitive: true, secreto: true, feature: "meetings", complex: true }), "ollama")
+  assert.equal(smartChain({ secreto: true, vision: true }), "ollama", "ni siquiera por visión")
+  // sin la marca, el comportamiento de siempre
+  assert.ok(smartChain({ vision: true }).startsWith("gemini"))
+})

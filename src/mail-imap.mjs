@@ -79,13 +79,23 @@ function store(label, party, subject, preview, ts, unread, dir = "in", body = nu
 }
 
 // ENVIADOS — conexión aparte, poll cada 2 min. jid = destinatario, dir = out (para saber qué ya respondiste)
+// Cierre con tope. `logout()` habla con el servidor: contra un socket vivo-pero-sordo se queda esperando el timeout
+// interno del cliente (5 min), y mientras tanto no reconecta. A los 10s cortamos por lo sano.
+async function cerrar(client) {
+  try { await Promise.race([client.logout(), new Promise((r) => setTimeout(r, 10000))]) } catch {}
+  try { client.close() } catch {}
+}
+
 async function runSent(acc) {
   const client = new ImapFlow({ host: acc.host, port: acc.port || 993, secure: true, tls: acc.insecure ? { rejectUnauthorized: false } : undefined, auth: await imapAuth(acc), logger: false }) // insecure: cert self-signed (Mailcow self-hosted, mismo box)
   client.on("error", () => {})
   await client.connect()
+  // Mismo criterio que run(): desde el connect() hay un socket abierto y TODO lo que siga va dentro del try/finally.
+  // Acá el hueco era client.list(): si fallaba, la conexión quedaba viva y el supervisor abría otra encima cada 8s.
+  try {
   const boxes = await client.list()
   const sentBox = boxes.find((b) => (b.specialUse === "\\Sent") || /sent/i.test(b.path))?.path
-  if (!sentBox) { console.log(`[${acc.label}] sin carpeta Enviados`); await client.logout(); return }
+  if (!sentBox) { console.log(`[${acc.label}] sin carpeta Enviados`); return }
   let lastSeq = 0
   const pull = async () => {
     const lock = await client.getMailboxLock(sentBox)
@@ -101,14 +111,19 @@ async function runSent(acc) {
     } finally { lock.release() }
   }
   // loop con sleep (no setInterval): si la conexión se cae, pull() tira → runSent RETORNA → el supervisor reconecta.
-  try { for (;;) { await pull(); try { writeFileSync("/tmp/hb_email", String(Date.now())) } catch {}; await new Promise((r) => setTimeout(r, 120000)) } } // heartbeat: pull IMAP OK = correo conectado
-  finally { try { await client.logout() } catch {} }
+  for (;;) { await pull(); try { writeFileSync("/tmp/hb_email", String(Date.now())) } catch {}; await new Promise((r) => setTimeout(r, 120000)) } // heartbeat: pull IMAP OK
+  } finally { await cerrar(client) }
 }
 
 async function run(acc) {
   const client = new ImapFlow({ host: acc.host, port: acc.port || 993, secure: true, tls: acc.insecure ? { rejectUnauthorized: false } : undefined, auth: await imapAuth(acc), logger: false }) // insecure: cert self-signed (Mailcow self-hosted, mismo box)
   client.on("error", (e) => console.log(`[${acc.label}] error:`, e.message))
   await client.connect()
+  // Desde acá hay un socket abierto: TODO lo que siga va dentro del try/finally. Antes el logout vivía solo alrededor del
+  // idle() del final, así que si fallaba el lock del buzón (o cualquier cosa entre medio) la conexión quedaba viva y el
+  // supervisor reconectaba ENCIMA cada 8s. Con un servidor que limita conexiones simultáneas, eso se acumula hasta que
+  // rechaza todo — y desde afuera parece "el correo dejó de entrar" sin ningún error claro.
+  try {
   console.log(`✅ [${acc.label}] CONECTADO (${acc.user}) — escuchando INBOX...`)
   const lock = await client.getMailboxLock("INBOX")
   let lastSeq = 0
@@ -141,7 +156,8 @@ async function run(acc) {
     } finally { l2.release() }
   })
   // idle() resuelve/tira cuando la conexión termina → run() RETORNA → el supervisor reconecta (y el backfill de 60 recupera el downtime).
-  try { await client.idle() } finally { try { await client.logout() } catch {} }
+  await client.idle()
+  } finally { await cerrar(client) }
 }
 
 // SUPERVISOR: IMAP-IDLE puede quedar "vivo pero sordo" (la promesa idle no vuelve o la conexión se cae sin salir del proceso).

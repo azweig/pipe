@@ -671,6 +671,11 @@ const server = createServer(async (req, res) => {
         return json(res, 200, r)
       }
       // REENVIAR mensajes preservando el media (audio/imagen/archivo), no solo el texto
+      // ⚠️ EXCEPCIÓN DECLARADA al principio "desbloquear es mostrármelo a mí, no mandárselo a un tercero": reenviar es,
+      // por definición, sacar el mensaje del hub. Con el 2º PIN puesto SÍ se permite, porque es una acción explícita y
+      // deliberada del usuario sobre un mensaje que está mirando. Sin el 2º PIN se niega (messageById no lo entrega).
+      // Fijado por test para que no cambie sin querer. (La respuesta NO distingue si el mensaje era secreto: si algún
+      // día la app quiere avisar antes de mandarlo, hay que agregar esa marca acá.)
       if (path === "/api/forward" && req.method === "POST") { const b = await body(req); const r = await brain.forwardMessages(b.ids, b.key, { secretOn }); return json(res, r && r.error ? 400 : 200, r) }
       // AUTO-TEST DE ENVÍO: último resultado (GET) o correr ahora (POST). El cron lo corre cada ~12h; verifica que el envío funciona de verdad.
       if (path === "/api/selftest" && req.method === "GET") return json(res, 200, lastSelfTest() || { ts: 0, results: [] })
@@ -739,7 +744,7 @@ const server = createServer(async (req, res) => {
       // SYNC edit-aware: solo los mensajes NUEVOS o editados (rev > sinceRev) → el cliente cachea el resto y no lo re-baja
       if (path === "/api/thread/delta") return json(res, 200, brain.threadDeltaItems(q.key || "", +q.sinceRev || 0))
       if (path === "/api/thread/sync") return json(res, 200, brain.threadSyncPage(q.key || "", +q.before || 0, { limit: Math.min(1500, +q.limit || 800) })) // backfill de texto completo hacia atrás
-      if (path === "/api/thread/suggest-reply") return json(res, 200, await brain.suggestReply(q.key || "")) // borrador IA para el input (no envía)
+      if (path === "/api/thread/suggest-reply") return json(res, 200, await brain.suggestReply(q.key || "", { localOnly: secretoPorNombre(q.key) })) // borrador IA para el input (no envía)
       if (path === "/api/thread/summarize") return json(res, 200, await brain.summarizeChat(q.key || "", q.range || "all", ws)) // resumen guardado como nota IA
       if (path === "/api/thread/seen" && req.method === "POST") { const b = await body(req); return json(res, 200, { lastSeen: ws.markSeen(b.key, b.ts) }) }
       if (path === "/api/thread/schedule") return json(res, 200, await brain.scheduleIntent(q.key || "")) // calendarizador por chat: ¿hay intención de agendar?

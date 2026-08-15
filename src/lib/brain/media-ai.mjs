@@ -19,7 +19,7 @@ export async function summarizeMedia(id, { secretOn = false } = {}) {
   // …y CON 2º PIN tampoco sale a la nube: acá se manda la imagen o la transcripción a un modelo, y la cadena por defecto
   // es nube primero. Que vos puedas verlo no significa que un tercero pueda.
   const secreto = isSecretRow(m)
-  const cadena = secreto ? { chain: smartChain({ sensitive: true, feature: "media-summary" }) } : {}
+  const cadena = secreto ? { chain: smartChain({ sensitive: true, secreto: true, feature: "media-summary" }) } : {}
   if (!m.media) return { error: "este mensaje no tiene archivo para transcribir" }
   const path = casPathOf(m.media)
   if (!existsSync(path)) return { error: "el archivo ya no está disponible" }

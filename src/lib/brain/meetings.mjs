@@ -30,7 +30,7 @@ export async function meetingPrep(query, { localOnly = false } = {}) {
   const brief = await llm(`Sos jefe de gabinete de ${ownerFirst()}. Briefing accionable para esta reunión, español, con: objetivo, quién es cada asistente, estado del tema, pendientes, qué preparar. Breve.
 REUNIÓN: ${mtg.title} · ${mtg.start} · organiza ${mtg.organizer}
 ASISTENTES CONOCIDOS:\n${knownCtx || "(ninguno)"}
-DESCONOCIDOS: ${unknown.join(", ") || "ninguno"}`, localOnly ? { chain: smartChain({ sensitive: true, feature: "meetings" }) } : undefined)
+DESCONOCIDOS: ${unknown.join(", ") || "ninguno"}`, localOnly ? { chain: smartChain({ sensitive: true, secreto: true, feature: "meetings" }) } : undefined)
   return { title: mtg.title, start: mtg.start, organizer: mtg.organizer, attendees, known, unknown, brief: brief.trim() }
 }
 

@@ -91,7 +91,7 @@ ${ctx || "(sin datos)"}
 
 RESPUESTA:`
   // gemini primero (rápido/confiable); ollama en este box cuelga con prompts grandes. catch para no romper el endpoint.
-  const answer = await llm(prompt, { system: UNTRUSTED_NOTE, feature: "ask", chain: localOnly ? smartChain({ sensitive: true, feature: "ask" }) : (process.env.LLM_CHAIN_ASK || "gemini,ollama"), temperature: 0.2, task: "ask", bypassCap: true }).then((s) => (s || "").trim()).catch(() => "")
+  const answer = await llm(prompt, { system: UNTRUSTED_NOTE, feature: "ask", chain: localOnly ? smartChain({ sensitive: true, secreto: true, feature: "ask" }) : (process.env.LLM_CHAIN_ASK || "gemini,ollama"), temperature: 0.2, task: "ask", bypassCap: true }).then((s) => (s || "").trim()).catch(() => "")
   return { answer, matches: ctxItems.length, ragMode: semanticOk ? "semántico" : "keyword", degraded: !semanticOk }
 }
 

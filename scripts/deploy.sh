@@ -22,6 +22,13 @@ echo "▶ 3/4 · cerrando nudges viejos keyeados a grupos (JL, etc.)"
 ssh "$HOST" "cd $REMOTE_DIR && node -e 'const fs=require(\"fs\"),f=\"./data/coach-nudges.json\",s=JSON.parse(fs.readFileSync(f));let n=0;for(const k in s)if(s[k].status===\"open\"&&/@g\\.us|:!|@thread\\.v2/.test(s[k].key||\"\")){s[k].status=\"done\";n++}fs.writeFileSync(f,JSON.stringify(s,null,2));console.log(\"cerrados\",n)'"
 
 echo "▶ 4/4 · reiniciando el servicio web (ajustá si no usás systemd)"
-ssh "$HOST" "sudo systemctl restart pipe 2>/dev/null || pkill -f 'src/server.mjs' || true"
+# NUNCA un pkill amplio acá: en una caja multi-tenant, `pkill -f 'src/server.mjs'` mata también los procesos DENTRO de
+# los contenedores de los clientes (el host los ve en su propio espacio de PIDs). Ya pasó una vez. Si no hay systemd,
+# el reinicio es tuyo: preferimos avisar y que el deploy quede a medias antes que matar procesos ajenos.
+ssh "$HOST" "sudo systemctl restart pipe 2>/dev/null || sudo systemctl restart comms-hub 2>/dev/null" || {
+  echo "⚠️  No pude reiniciar por systemd. Reiniciá el servicio a mano en $HOST (NO uses 'pkill -f src/server.mjs': en esta caja mata los tenants)." >&2
+  # salir con error: los archivos ya se copiaron pero el proceso viejo sigue corriendo. Decir "deploy OK" acá sería mentir.
+  exit 1
+}
 
 echo "✅ deploy OK. El coach se regenera solo en su próximo ciclo; los nudges de grupo ya no van a aparecer."

@@ -150,7 +150,7 @@ NOTICIAS Y FUENTES DE ACTUALIDAD (prensa de varios países, tus feeds RSS y Redd
 ${curCtx || "(no aplica: la pregunta no es de actualidad)"}
 
 RESPUESTA:`
-  const call = (pr, sy) => llm(pr, { system: sy + "\n" + UNTRUSTED_NOTE, feature: "ask", temperature: 0.3, task: "assistant", bypassCap: true, ...(localOnly ? { chain: smartChain({ sensitive: true }) } : {}) }).then((s) => (s || "").trim()).catch(() => "")
+  const call = (pr, sy) => llm(pr, { system: sy + "\n" + UNTRUSTED_NOTE, feature: "ask", temperature: 0.3, task: "assistant", bypassCap: true, ...(localOnly ? { chain: smartChain({ sensitive: true, secreto: true, feature: "ask" }) } : {}) }).then((s) => (s || "").trim()).catch(() => "")
   let out = await call(prompt, sys)
   // A veces el modelo se aferra a "tu historial no lo menciona" aunque la pregunta sea de conocimiento general
   // (pasó con "¿cuánta gente vive en Arequipa?"). Un reintento explícito, sin el contexto personal que lo distrae.
@@ -223,7 +223,10 @@ export async function runAssistant() {
     }
     const c = classify(texto)
     if (!c.answer) continue
-    // si vino de una línea secreta, se responde con modelo LOCAL y sin internet: el contenido no sale del server
+    // Si vino de una línea secreta se responde con modelo LOCAL. OJO: eso NO es "sin internet" — la búsqueda web sigue
+    // activa a propósito (ver la nota larga de answerQuestion: lo que sale a buscar es la PREGUNTA, no tus datos, y
+    // bloquearla dejaba al asistente ciego justo cuando más servía). Este comentario decía lo contrario y era falso:
+    // el texto que escribís en la línea secreta puede llegar al buscador si la pregunta no es personal.
     const secreta = cfg.secretOk && isSecretSelfRow(m)
     const r = await answerQuestion(c.question, { web: cfg.web, localOnly: secreta }).catch(() => ({ text: "" }))
     if (!r.text) continue

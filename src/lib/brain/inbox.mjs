@@ -345,7 +345,7 @@ export async function catchup(key, ws, since = 0) {
   }
   if (!summary) { // sin media procesable o falló el multimodal → resumen de texto (rápido, gemini→ollama)
     const transcript = parts.filter((p) => p.text).map((p) => p.text).join("\n").slice(0, 9000)
-    summary = await llm(`${intro}\n\n${transcript}${closing}`, { system: sys, chain: hiloSecreto ? smartChain({ sensitive: true, feature: "catchup" }) : (process.env.LLM_CHAIN_CATCHUP || "gemini,ollama"), temperature: 0.3 }).then((s) => (s || "").trim()).catch(() => "")
+    summary = await llm(`${intro}\n\n${transcript}${closing}`, { system: sys, chain: hiloSecreto ? smartChain({ sensitive: true, secreto: true, feature: "catchup" }) : (process.env.LLM_CHAIN_CATCHUP || "gemini,ollama"), temperature: 0.3 }).then((s) => (s || "").trim()).catch(() => "")
   }
   return { summary, count: rows.length, days: dias, media: mediaAttached }
 }

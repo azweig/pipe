@@ -267,7 +267,7 @@ EJEMPLOS REALES:\n${examples.map((e) => `- "${e.slice(0, 180)}"`).join("\n") || 
 CON QUIÉN: ${canon} (${v.role || "contacto"}) categoría ${category}.
 CONVERSACIÓN:\n${recent}
 ${instruction ? "LO QUE QUIERE DECIR: " + instruction : "Redactá respuesta apropiada al último mensaje."}
-Devolvé SOLO el texto, como lo escribiría ${ownerFirst()}.`, { system: UNTRUSTED_NOTE, bypassCap: true })
+Devolvé SOLO el texto, como lo escribiría ${ownerFirst()}.`, { system: UNTRUSTED_NOTE, bypassCap: true, ...(localOnly ? { chain: smartChain({ sensitive: true, secreto: true, feature: "draft" }) } : {}) })
   return { to: canon, role: v.role, channel, category, replyingTo: lastInbound.text, draft: draft.trim() }
 }
 
@@ -338,14 +338,15 @@ export async function warmCorrectModel() {
 }
 
 // SUGERIR RESPUESTA: la IA redacta un borrador en tu voz según la conversación reciente. NO envía — va al input para que edites.
-export async function suggestReply(key) {
+// `localOnly`: el hilo es SECRETO → el borrador se arma con modelo local (mismo criterio que draftReply/composeCorrect).
+export async function suggestReply(key, { localOnly = false } = {}) {
   if (key === "self") return { draft: "" }
   const rows = dbThreadMsgs(key, { limit: 25 })
   const who = canonOfKey(key) || contactName(key) || "el contacto"
   const lines = rows.map((r) => `${r.dir === "out" ? "Vos" : stripWA(contactName(r.sender) || contactName(r.name) || r.name || "?")}: ${cleanMsg(r.text) || `[${r.mediaType || "adjunto"}]`}`).filter((l) => l.trim())
   if (!lines.length) return { draft: "" }
   const sys = harden(`Sos ${ownerFirst()} respondiendo un WhatsApp/email. Escribí SOLO el texto del mensaje a enviar (sin comillas, sin firmar, sin "Hola" genérico si no corresponde), en español, natural y directo, en tu voz. Respondé a lo ÚLTIMO que te dijeron. Breve salvo que amerite. Nada de explicaciones ni opciones.`)
-  const draft = await llm(`Conversación con ${who}:\n${lines.join("\n").slice(0, 4000)}\n\nMi respuesta:`, { system: sys, chain: localOnly ? smartChain({ sensitive: true, feature: "draft" }) : (process.env.LLM_CHAIN_CATCHUP || "gemini,ollama"), temperature: 0.5, bypassCap: true })
+  const draft = await llm(`Conversación con ${who}:\n${lines.join("\n").slice(0, 4000)}\n\nMi respuesta:`, { system: sys, chain: localOnly ? smartChain({ sensitive: true, secreto: true, feature: "draft" }) : (process.env.LLM_CHAIN_CATCHUP || "gemini,ollama"), temperature: 0.5, bypassCap: true })
     .then((s) => (s || "").trim().replace(/^["'`]|["'`]$/g, "")).catch(() => "")
   return { draft }
 }

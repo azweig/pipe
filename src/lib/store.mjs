@@ -29,7 +29,9 @@ export async function loadNewEvents({ limit = 800 } = {}) {
   }
   events.sort((a, b) => (a.ts || 0) - (b.ts || 0))
   const commit = () => writeFileSync(OFFSETS, JSON.stringify({ "messages.jsonl": endByte, _fmt: "bytes" }))
-  return { events, commit }
+  // `endByte` se expone para que el llamador pueda decir HASTA DÓNDE llegó esta tanda: sirve para saber si dos corridas
+  // seguidas están atascadas en los mismos eventos, y para poder nombrar el rango que se descarta si hay que rendirse.
+  return { events, commit, endByte }
 }
 
 // resetea offsets (reprocesar TODO desde el principio — caro por LLM, solo con --all)

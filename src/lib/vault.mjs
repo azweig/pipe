@@ -73,10 +73,13 @@ export function upsertNode(type, name, patch = {}, timeline = []) {
   for (const k of ["aliases", "channels", "orgs", "projects", "tags"]) if (patch[k]) fm[k] = uniq([...arr(fm[k]), ...arr(patch[k])])
   const dates = timeline.map((t) => t.date).filter(Boolean)
   if (dates.length) { fm.first_seen = [fm.first_seen, ...dates].filter(Boolean).sort()[0]; fm.last_seen = [fm.first_seen, ...dates].filter(Boolean).sort().reverse()[0] }
-  fm.mentions = String((parseInt(fm.mentions) || 0) + timeline.length)
-
   const prevTl = getSectionLines(body, "## Timeline")
   const tl = uniq([...prevTl, ...timeline.map((t) => `- ${t.date} ${t.line}`.trim())]).sort().slice(-200)
+  // `mentions` se DERIVA del timeline (que ya viene deduplicado), no se acumula. Sumar hacía que reprocesar un lote
+  // inflara el número: la misma corrida dos veces daba 2, tres veces 3. Y todo el diseño de reintentos de graphify
+  // se apoya en que rehacer un lote bueno no cambie nada. Con el tope de 200 líneas el número queda topeado ahí,
+  // que es lo honesto: es "menciones que conservamos", no un contador histórico que nadie puede verificar.
+  fm.mentions = String(tl.length)
 
   if (fm.seed === "true") { // NO pisar cuerpo autoritativo, solo Timeline
     body = replaceSection(body, "## Timeline", tl.join("\n"))

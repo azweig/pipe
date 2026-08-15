@@ -346,7 +346,12 @@ export function featureWantsCloud(feature) {
   if (feature) return sensitivePolicyMap()[feature] === "cloud"
   return process.env.SENSITIVE_ALLOW_CLOUD === "1"
 }
-export function smartChain({ sensitive = false, complex = false, vision = false, feature = "" } = {}) {
+export function smartChain({ sensitive = false, complex = false, vision = false, feature = "", secreto = false } = {}) {
+  // `secreto`: el contenido viene de una cuenta/número marcado SECRETO. Eso NO es conmutable desde la UI: aunque el hub
+  // haya elegido nube para esa función, este contenido no sale. Sin esto la protección quedaba por omisión — funcionaba
+  // porque la clave no figuraba en la lista de funciones conmutables, y se caía sola el día que alguien la agregara.
+  // (Caso real: el prep de una reunión secreta pasaba `feature:"meetings"`, que SÍ es conmutable.)
+  if (secreto) return "ollama"
   // FAIL-CLOSED PRIMERO: contenido privado va LOCAL por defecto — ni siquiera nube por complejo/visión. Gana sobre vision/complex a
   // propósito: si el local no puede, la tarea falla (no degrada a nube). El hub OPTA a nube por feature (UI) — decisión consciente,
   // NUNCA un default. Con nube elegida, usa la cadena BYOK del hub (su proveedor/token). LLM_CHAIN_SENSITIVE la pisa (env, a medida).
