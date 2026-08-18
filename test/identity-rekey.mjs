@@ -130,3 +130,32 @@ test("pushname: no toca los que ya cubre la agenda ni un nombre inservible", () 
   assert.equal(countIn(`whatsapp:${CONAGENDA}@s.whatsapp.net`), 1, "si está en la agenda lo resuelve rekeyContacts, no este")
   assert.equal(countIn(`whatsapp:${NUMERICO}@s.whatsapp.net`), 1, "un 'nombre' que es un número no sirve")
 })
+
+// ── thread_stats tras un re-key: reconstruir esa tabla cuesta ~2.4s de WRITE-LOCK sobre 1.9M mensajes, y se hacía
+// después de CADA re-key aunque no hubiera cambiado nada (una corrida real: emails:0 manual:0 pushnames:0 = tres
+// reconstrucciones completas para cero cambios). Ese lock sostenido es lo que hacía morir a los otros jobs con
+// "database is locked". Ahora solo se reconstruye si algo se movió — este test fija que siga quedando CORRECTA. ──
+const statsOf = (thread) => handle().prepare("SELECT count FROM thread_stats WHERE thread=?").get(thread)
+
+test("stats: tras renombrar por agenda, thread_stats queda con el nombre nuevo (no el número)", () => {
+  resetDb(":memory:")
+  const N = "15550007001"
+  seed([
+    { thread: `whatsapp:${N}@s.whatsapp.net`, channel: "whatsapp", account: "matrix", jid: `${N}@s.whatsapp.net`, sender: `${N}@s.whatsapp.net`, dir: "in", text: "1", ts: NOW },
+    { thread: `whatsapp:${N}@s.whatsapp.net`, channel: "whatsapp", account: "matrix", jid: `${N}@s.whatsapp.net`, sender: `${N}@s.whatsapp.net`, dir: "in", text: "2", ts: NOW + 1 },
+  ])
+  rebuildStats()
+  assert.equal(statsOf(`whatsapp:${N}@s.whatsapp.net`)?.count, 2, "punto de partida")
+  rekeyContacts({ [N]: "Sofía Vega" }, {})
+  assert.equal(statsOf("Sofía Vega")?.count, 2, "las stats tienen que seguir al hilo renombrado")
+  assert.equal(statsOf(`whatsapp:${N}@s.whatsapp.net`), undefined, "y no puede quedar la fila vieja")
+})
+
+test("stats: si el re-key no cambia nada, las stats siguen correctas (no se rompen por no reconstruir)", () => {
+  resetDb(":memory:")
+  const N = "15550007002"
+  seed([{ thread: `whatsapp:${N}@s.whatsapp.net`, channel: "whatsapp", account: "matrix", jid: `${N}@s.whatsapp.net`, sender: `${N}@s.whatsapp.net`, dir: "in", text: "x", ts: NOW }])
+  rebuildStats()
+  rekeyContacts({}, {}) // agenda vacía → no renombra nada
+  assert.equal(statsOf(`whatsapp:${N}@s.whatsapp.net`)?.count, 1, "sin cambios, las stats quedan como estaban")
+})

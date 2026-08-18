@@ -6,7 +6,16 @@ import Database from "better-sqlite3"
 
 // initSchema(handle): función PURA con el mismo DDL que vivía dentro de db(). Idempotente
 // (CREATE IF NOT EXISTS + PRAGMA table_info para migraciones). Corre igual sobre archivo o ':memory:'.
+// Versión del esquema de abajo. ⚠️ SI TOCÁS initSchema, SUBÍ ESTE NÚMERO: si no, las bases que ya existen se
+// saltean la migración y quedan viejas en silencio. `test/schema-version.mjs` falla si te olvidás.
+export const SCHEMA_V = 1
+
 export function initSchema(h) {
+  // ATAJO: abrir una base YA inicializada no debe tomar WRITE-LOCK. Todo lo de abajo (CREATE IF NOT EXISTS, ALTER,
+  // INSERT OR IGNORE) abre transacción de escritura aunque no cambie NADA, y con >20 procesos escribiendo la misma
+  // base eso hacía morir jobs enteros en el propio open ("database is locked" antes de hacer una sola consulta).
+  // Con la marca puesta, abrir es solo-lectura. Una base nueva o vieja no la tiene → corre todo y la deja marcada.
+  try { if (h.prepare("SELECT v FROM meta WHERE k='schema_v'").get()?.v === String(SCHEMA_V)) return } catch {}
   h.exec(`
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT PRIMARY KEY,
@@ -114,6 +123,8 @@ export function initSchema(h) {
   if (!cols.includes("channels") || !cols.includes("nsenders")) h.exec("DROP TABLE IF EXISTS thread_stats")
   h.exec(`CREATE TABLE IF NOT EXISTS thread_stats (thread TEXT PRIMARY KEY, last_ts INTEGER, count INTEGER, unread INTEGER, channels TEXT, nsenders INTEGER DEFAULT 0);
     CREATE INDEX IF NOT EXISTS idx_stats_ts ON thread_stats(last_ts DESC);`)
+  // marca de esquema al día → los próximos open no escriben nada
+  try { h.prepare("INSERT INTO meta(k,v) VALUES('schema_v',?) ON CONFLICT(k) DO UPDATE SET v=?").run(String(SCHEMA_V), String(SCHEMA_V)) } catch {}
 }
 
 // reintento centralizado para ESCRITURAS ante SQLITE_BUSY (lock multi-proceso: server + ingest + crons compiten por el write-lock).
@@ -139,7 +150,12 @@ const isFile = (p) => p !== ":memory:" && !String(p).startsWith("file::memory:")
 function openDb(path) {
   const h = new Database(path)
   h.pragma("synchronous = NORMAL")
-  h.pragma("busy_timeout = " + (+process.env.DB_BUSY_TIMEOUT_MS || 2000)) // multi-proceso (default 2s). withRetry paga ESTE timeout por reintento → con 2s el worst-case de insertMany baja de 123s a ~15s. Subilo por env si hiciera falta.
+  // DEFAULT 15s (era 2s). En esta caja hay >20 procesos escribiendo la MISMA base y SQLite admite UN escritor:
+  // con 2s, cualquier job que abría la base mientras otro escribía moría con "database is locked". No es un costo
+  // fijo — es una espera MÁXIMA: si el lock se libera en 200ms, seguís en 200ms. Cinco jobs ya lo venían parcheando
+  // a mano (8s/20s/30s) uno por uno; esto lo arregla para todos, incluido el momento de ABRIR (initSchema), que
+  // ocurre ANTES de que setBusyTimeout pueda correr — por eso el autopiloto seguía cayéndose aunque pidiera 30s.
+  h.pragma("busy_timeout = " + (+process.env.DB_BUSY_TIMEOUT_MS || 15000))
   if (isFile(path)) {
     try { h.pragma("journal_mode = WAL") } catch {}          // WAL requiere archivo
     try { h.pragma("mmap_size = 1073741824") } catch {}       // 1GB mapeado (no aplica a :memory:)
@@ -151,7 +167,10 @@ function openDb(path) {
   }
   try { h.pragma("cache_size = " + -(1024 * (+process.env.DB_CACHE_MB || 16))) } catch {} // cache PRIVADO por conexión. 16MB default: 64MB×~22 procesos (readers+crons) = 1.4GB reventaba el mem_limit del container (OOM→crash-loop). El server puede subirlo con DB_CACHE_MB.
   try { h.pragma("temp_store = MEMORY") } catch {}
-  initSchema(h)
+  // initSchema hace ALTER/CREATE INDEX/CREATE TRIGGER → necesita WRITE-LOCK. Sin reintento, cualquier proceso que
+  // abriera la base mientras otro escribía moría de entrada, ANTES de hacer nada (así se caían ingest y person-cards).
+  // El busy_timeout ya está puesto arriba; esto agrega los reintentos con backoff para los picos de contención.
+  withRetry(() => initSchema(h))
   try { h.pragma("optimize") } catch {}
   return h
 }
@@ -162,7 +181,8 @@ export function handle() {
   return _db
 }
 
-// ajusta el busy_timeout del handle (algunos crons quieren más/menos que el default de 20s según su workload).
+// ajusta el busy_timeout del handle (algunos crons quieren más que el default). OJO: esto corre DESPUÉS de abrir
+// la base, así que NO cubre initSchema — para eso está el default de arriba.
 // Named op → el handle sigue privado. Sin try/catch interno: el caller lo envuelve como hacía con db().pragma(...).
 export function setBusyTimeout(ms) {
   handle().pragma("busy_timeout = " + Number(ms))

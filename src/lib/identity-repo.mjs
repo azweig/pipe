@@ -51,7 +51,8 @@ export function rekeyContacts(contactsMap, manual = {}) {
     return n
   }).immediate
   const migrated = withRetry(() => tx(rows)) // .immediate+withRetry: sobrevive al SQLITE_BUSY cuando el daemon está escribiendo (igual que rekeyBridge)
-  rebuildStats()
+  // reconstruir thread_stats cuesta ~2.4s de write-lock sobre 1.9M mensajes: solo si de verdad movimos algo.
+  if (migrated) rebuildStats()
   return migrated
 }
 
@@ -83,7 +84,7 @@ export function rekeyPushNames(contactsMap = {}, manual = {}) {
   const tx = D.transaction(() => {
     for (const [thread, nm] of cand) { if (porNombre.get(nm.toLowerCase()) > 1) continue; upd.run(nm, thread); n++ }
   }).immediate
-  withRetry(() => tx()); rebuildStats()
+  withRetry(() => tx()); if (n) rebuildStats()
   return n
 }
 
@@ -101,7 +102,7 @@ export function rekeyEmails(manual = {}) {
       n += upd.run("email:" + addr, addr, "email:" + addr).changes
     }
   }).immediate
-  withRetry(() => tx()); rebuildStats(); return n
+  withRetry(() => tx()); if (n) rebuildStats(); return n
 }
 
 // re-etiqueta mensajes del BRIDGE (matrix) 1:1 por el número del sender (@whatsapp_<num>) → nombre de contacto. NO toca grupos.
@@ -190,7 +191,7 @@ export function unifyByNumber(contactsMap = {}, manual = {}) {
       for (const t of ts) { if (t.thread !== target) { movidos += upd.run(target, t.thread).changes; fusionados++ } }
     }
   }).immediate
-  withRetry(() => tx()); rebuildStats()
+  withRetry(() => tx()); if (fusionados) rebuildStats()
   return { grupos, fusionados, movidos }
 }
 
@@ -199,7 +200,7 @@ export function mergeThreads(target, sources) {
   const upd = db().prepare("UPDATE messages SET thread=? WHERE thread=?")
   let n = 0
   const tx = db().transaction(() => { for (const s of sources) { if (s !== target) n += upd.run(target, s).changes } })
-  tx(); rebuildStats(); return n
+  tx(); if (n) rebuildStats(); return n
 }
 
 // re-etiqueta hilos 1:1 según identidades manuales. NUNCA toca grupos (matchea por JID de la conversación, no por sender).
@@ -216,5 +217,5 @@ export function rekeyManual(manual) {
       else n += updExact.run(name, low, name).changes
     }
   }).immediate
-  withRetry(() => tx()); rebuildStats(); return n
+  withRetry(() => tx()); if (n) rebuildStats(); return n
 }
