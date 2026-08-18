@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",
-  "description": "Unified inbox (WhatsApp, email, Telegram, Teams…) + AI that reads, summarizes and drafts in your voice. Your own second brain, self-hostable.",
+  "description": "Unified inbox (WhatsApp, email, Telegram, Teams\u2026) + AI that reads, summarizes and drafts in your voice. Your own second brain, self-hostable.",
   "scripts": {
     "preflight": "node scripts/check-node.mjs",
     "prestart": "node scripts/check-node.mjs",
@@ -37,6 +37,7 @@
   },
   "overrides": {
     "brace-expansion": "5.0.9",
-    "ip-address": "^10.4.0"
+    "ip-address": "^10.4.0",
+    "deepmerge-ts": "^8.0.1"
   }
 }
