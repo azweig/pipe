@@ -309,6 +309,17 @@ function runResolve() {
   p.on("exit", () => { resolveRunning = false })
 }
 
+// --- agenda de WhatsApp: el bridge ya baja tu lista de contactos; la volcamos a contacts-map.json (sin pisar lo tuyo).
+// Sin esto la agenda envejece: era un export del teléfono y quedaba desactualizada, dejando contactos con miles de
+// mensajes mostrándose como un número. ---
+let waContactsRunning = false
+function runWaContacts() {
+  if (waContactsRunning) return
+  waContactsRunning = true
+  const p = spawnLogged("wa-contacts", NODE, ["scripts/sync-wa-contacts.mjs"])
+  p.on("exit", () => { waContactsRunning = false })
+}
+
 // --- índice RAG semántico (embeddings de mensajes + vault, incremental) ---
 let ragRunning = false
 function runRagIndex() {
@@ -441,6 +452,8 @@ setInterval(runClips, 4 * 60000) // clasifica + "para qué sirve" los clips nuev
 setInterval(runRecordings, 60000) // buzón de grabaciones: transcribe (whisper) los audios nuevos de la carpeta cada 1 min
 setTimeout(runMaintain, 300000) // primera pasada de mantenimiento a los 5 min
 setInterval(runMaintain, 30 * 60000) // ensureStats + fixGroupLeaks cada 30 min — proceso APARTE, ya NO bloquea el event loop del server (freeze del arquitecto)
+setTimeout(runWaContacts, 90000) // agenda de WhatsApp ANTES del primer resolve (le da los nombres nuevos)
+setInterval(runWaContacts, 12 * 3600000) // refresca la agenda 2×/día
 setTimeout(runResolve, 120000) // primer resolve de identidades a los 2 min
 setInterval(runResolve, 20 * 60000) // resuelve número→nombre + reglas manuales cada 20 min
 setTimeout(runSpamClassify, 4 * 60000) // primera clasificación de spam a los 4 min

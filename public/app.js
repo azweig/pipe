@@ -1720,13 +1720,24 @@ window.spamSender = async (keyEnc) => { const key = decodeURIComponent(keyEnc); 
 
 // ══════════ CONVERSACIÓN UNIFICADA ══════════
 let convState = null
+// ¿el chat sigue "pegado" al final? Lo decide el SCROLL DEL USUARIO, no una medición del momento: con media todavía
+// sin cargar, document.body.scrollHeight miente y cualquier cuenta hecha en el instante del poll te tira al fondo.
+let stickBottom = true
+addEventListener("scroll", () => {
+  const falta = document.body.scrollHeight - (window.innerHeight + window.scrollY)
+  if (falta > 400) stickBottom = false      // subiste a propósito → no te muevo más
+  else if (falta < 80) stickBottom = true   // volviste al final → seguí pegado
+}, { passive: true })
 const fmtText = (t) => esc(t).replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" style="color:var(--accent);word-break:break-all">$1</a>')
 // pill de velocidad estilo WhatsApp: cicla 1x → 1.25 → 1.5 → 2x sobre el <audio>/<video> del mismo contenedor
 window.cycleSpeed = (btn) => { const m = btn.parentElement.querySelector("audio,video"); if (!m) return; const r = [1, 1.25, 1.5, 2]; const n = r[(r.indexOf(m.playbackRate) + 1) % r.length] || 1; m.playbackRate = n; btn.textContent = n + "x" }
 const spdVideo = (media) => `<div style="position:relative;display:inline-block;line-height:0">${media}<button onclick="cycleSpeed(this)" title="Velocidad" style="position:absolute;top:8px;right:8px;background:rgba(0,0,0,.55);color:#fff;border:0;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;line-height:1.35;cursor:pointer">1x</button></div>`
 const spdAudio = (media) => `<div style="display:flex;align-items:center;gap:8px">${media}<button onclick="cycleSpeed(this)" title="Velocidad" style="background:var(--bg,#eef);color:var(--accent);border:1px solid var(--line);border-radius:999px;padding:5px 10px;font-size:12px;font-weight:700;cursor:pointer;flex:none">1x</button></div>`
 function mediaHtml(it) { if (!it.media) return ""
-  if (it.mediaType === "image") return `<img src="${esc(it.media)}" alt="Imagen del mensaje" loading="lazy" style="max-width:230px;border-radius:12px;display:block;cursor:pointer" onclick="window.open(${escj(it.media)})" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'small muted',textContent:'🖼 imagen no disponible'}))">`
+  // min-height: una imagen lazy SIN alto mide 0px hasta que carga, y con miles de ellas document.body.scrollHeight
+  // queda muchísimo por debajo del real → el "¿estoy cerca del final?" del autoscroll da verdadero estando arriba.
+  // Reservamos el hueco y lo soltamos en onload (así no quedan huecos en las imágenes bajitas).
+  if (it.mediaType === "image") return `<img src="${esc(it.media)}" alt="Imagen del mensaje" loading="lazy" style="max-width:230px;min-height:170px;background:var(--bg2,#f0f0f5);border-radius:12px;display:block;cursor:pointer" onload="this.style.minHeight='0';this.style.background='none'" onclick="window.open(${escj(it.media)})" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'small muted',textContent:'🖼 imagen no disponible'}))">`
   if (it.mediaType === "video") return spdVideo(`<video src="${esc(it.media)}" controls preload="none" style="max-width:250px;border-radius:12px;display:block"></video>`)
   if (it.mediaType === "audio") return spdAudio(`<audio src="${esc(it.media)}" controls preload="metadata" style="max-width:200px;display:block"></audio>`)
   return `<a href="${esc(it.media)}" target="_blank" class="row" style="padding:9px 11px;background:#fff;border-radius:10px;text-decoration:none;color:inherit;gap:9px;min-width:180px"><span style="font-size:22px">📄</span><div style="min-width:0"><div class="sb small" style="word-break:break-word">${esc(it.filename || it.text || "Documento")}</div><div class="tiny" style="color:var(--accent)">Abrir / descargar</div></div></a>` }
@@ -2510,6 +2521,7 @@ async function showSendOptions(text, ch) {
 }
 async function viewConv(key) {
   const startHash = location.hash
+  stickBottom = true // al abrir un chat siempre arrancás en el último mensaje
   // 1) pintar la HISTORIA COMPLETA cacheada en IndexedDB al instante (no solo 40 msgs; funciona offline)
   // 🔒 PERO si hay PIN secreto configurado, NO uso la cache local: traigo fresco del server (que filtra las líneas ocultas cuando está
   // bloqueado). Si no, un mensaje de una línea oculta que quedó cacheado seguiría apareciendo. El server es la única fuente de verdad.
@@ -2564,11 +2576,12 @@ async function refreshConv(key) {
     // DEDUP optimista: el eco del server reemplaza la burbuja "opt-…" (mismo texto out, ~mismo momento)
     if (it.dir === "out") for (const [id, o] of [...byId]) if (String(id).startsWith("opt-") && (o.text || "") === (it.text || "") && Math.abs((o.ts || 0) - (it.ts || 0)) < 120000) { byId.delete(id); needRender = true }
   }
-  const nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 280
+  const keepY = window.scrollY
   convState.items = [...byId.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0))
   if (needRender) renderConv()
   else { let html = ""; for (const it of appended) html += convBubble(it); scr.insertAdjacentHTML("beforeend", html) }
-  if (nearBottom) window.scrollTo(0, document.body.scrollHeight)
+  if (stickBottom) window.scrollTo(0, document.body.scrollHeight)
+  else if (window.scrollY !== keepY) window.scrollTo(0, keepY) // estabas leyendo arriba: el re-render no te mueve
   const lastTs = d.items.reduce((m, x) => Math.max(m, x.ts || 0), 0)
   if (lastTs && key !== "self") post("/api/thread/seen", { key, ts: lastTs }).catch(() => {}) // marcar visto los nuevos
 }

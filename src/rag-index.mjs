@@ -11,7 +11,10 @@ loadEnv()
 
 const OUT = "./data/rag.jsonl"
 const have = new Set()
-if (existsSync(OUT)) for (const l of readFileSync(OUT, "utf8").split("\n")) { if (!l) continue; try { have.add(JSON.parse(l).id) } catch {} }
+// STREAMING obligatorio: el propio índice ya pesa >512MB y leerlo como un solo string tira ERR_STRING_TOO_LONG
+// (tope de string de Node). Cuando pasó, este job crasheaba ANTES de indexar nada y el índice quedó congelado un
+// mes entero, en silencio: la búsqueda semántica seguía respondiendo, pero sin ver nada nuevo.
+if (existsSync(OUT)) await streamJsonl(OUT, (r) => { if (r && r.id) have.add(r.id) })
 
 let added = 0, saltados = 0
 // `thread` va en la línea a propósito: sin él, quien consulta el índice no puede decidir si el mensaje es de un canal

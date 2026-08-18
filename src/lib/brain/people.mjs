@@ -102,10 +102,18 @@ function buildMembershipIndex() {
 }
 function getMembership() { const raw = getMeta("membership_idx"); if (raw) { try { return JSON.parse(raw) } catch {} } return null }
 // EN COMÚN: grupos donde la persona participa (match por número/nombre) + co-miembros, ponderados por grupos compartidos
-function sharedFor(canon, ids, idx) {
+export function sharedFor(canon, ids, idx) {
   if (!idx || !idx.groups) return { groups: [], people: [] }
-  const cl = canon.toLowerCase(), first = cl.split(/\s+/)[0]
-  const isThem = ([nm, key]) => (key && ids.has(key)) || (nm || "").toLowerCase() === cl || (nm || "").toLowerCase().startsWith(first + " ")
+  const cl = canon.toLowerCase()
+  // La IDENTIDAD manda: número/LID de la persona. El nombre solo cuenta si ES el canónico o lo EXTIENDE con apellido
+  // ("Marcos Salinas Peralta" ⊃ "Marcos Salinas"). Compartir el nombre de PILA no alcanza: antes `startsWith(first+" ")`
+  // le colgaba a "Marcos Salinas" los grupos de "Marcos Beltrán". Un miembro con solo el nombre de pila ("Marcos") es
+  // ambiguo por definición → que lo resuelva el número, no la corazonada.
+  const isThem = ([nm, key]) => {
+    if (key && ids.has(key)) return true
+    const n = (nm || "").toLowerCase()
+    return n === cl || n.startsWith(cl + " ")
+  }
   const myGroups = idx.groups.filter((g) => (g.members || []).some(isThem))
   const co = new Map()
   for (const g of myGroups) for (const m of (g.members || [])) { const nm = m[0]; if (isThem(m) || isOwnerName(nm) || (nm || "").length < 3 || /^\d+$/.test(nm)) continue; const k = nm.toLowerCase(); const cur = co.get(k) || { name: nm, shared: 0 }; cur.shared++; co.set(k, cur) }
@@ -114,8 +122,15 @@ function sharedFor(canon, ids, idx) {
     people: [...co.values()].sort((a, b) => b.shared - a.shared).slice(0, 6),
   }
 }
+// VERSIÓN de la tarjeta. Subirla invalida las cacheadas (se regeneran solas). v5 = construidas con la CLAVE del hilo
+// (antes se usaba el nombre → 0 mensajes) y con el "en común" sin homónimos.
+const CARD_V = 5
 async function buildPersonCard(canon, t, mem) {
-  const key = canon
+  // OJO: `canon` es un NOMBRE; las consultas de abajo son `WHERE thread=?` y necesitan la CLAVE del hilo.
+  // Solo coinciden en los contactos FUSIONADOS (ahí el hilo quedó keyeado por nombre). Para el resto
+  // (whatsapp:NUM@…, email:…) devolvían 0 filas: la ficha salía con 0 mensajes, sin bio real y sin ids,
+  // y como no quedaba nada propio, lo único que la llenaba era el match por nombre → mezcla de homónimos.
+  const key = (t && t.key) || canon
   const stats = threadCountFirstLast(key)
   const chans = threadChannelActivity(key)
   const vcard = cardFor("People", canon), role = fm(vcard, "role"), tags = fm(vcard, "tags"), orgs = fm(vcard, "orgs")
@@ -150,7 +165,7 @@ Los "temas" son los ejes de QUÉ hablan a lo largo del tiempo (concretos, no 'sa
     bio = (r?.bio || "").trim(); topics = (r?.temas || []).filter(Boolean).slice(0, 4)
   } catch {}
   return {
-    v: 4, canon, name: canon, role, tags, orgs, bio, topics,
+    v: CARD_V, canon, name: canon, role, tags, orgs, bio, topics,
     stats: { messages: stats.c || 0, respMin, firstTs: stats.first || 0, lastTs: stats.last || 0 },
     channels: chans.map((c) => ({ channel: c.channel, last: c.last, n: c.n })),
     links, shared, photo: (t && t.photo) || null, generatedAt: Date.now(),
@@ -168,7 +183,7 @@ export async function genPersonCards({ topN = 1000, minMsgs = 15 } = {}) {
   let n = 0
   for (const t of top) {
     const canon = t.canon, prev = getMeta("personcard:" + canon.toLowerCase())
-    if (prev) { try { const p = JSON.parse(prev); if (p.v === 4 && p.generatedAt && Date.now() - p.generatedAt < 3 * 86400000 && p.stats?.messages === (t.count || 0)) continue } catch {} }
+    if (prev) { try { const p = JSON.parse(prev); if (p.v === CARD_V && p.generatedAt && Date.now() - p.generatedAt < 3 * 86400000 && p.stats?.messages === (t.count || 0)) continue } catch {} }
     try { const card = await buildPersonCard(canon, t, mem); setMeta("personcard:" + canon.toLowerCase(), JSON.stringify(card)); n++ } catch {}
   }
   return n
@@ -233,7 +248,7 @@ export async function personCard(nameOrKey, { force = false } = {}) {
   const canon = resolvePerson(eff)
   // force → saltear la cache y REGENERAR el grafify completo (botón "Explorar" del perfil)
   if (!force) for (const k of [...new Set([norm(eff), norm(nameOrKey), canon ? norm(canon) : ""].filter(Boolean))]) {
-    const v = getMeta("personcard:" + k); if (v) { try { const c = JSON.parse(v); if (c && c.canon) return enrichCard(c) } catch {} }
+    const v = getMeta("personcard:" + k); if (v) { try { const c = JSON.parse(v); if (c && c.canon && c.v === CARD_V) return enrichCard(c) } catch {} }
   }
   // hilo por nombre canónico exacto → generá + cacheá
   const want = canon ? norm(canon) : norm(eff)
