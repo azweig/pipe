@@ -1,6 +1,7 @@
 // Indexador RAG — convierte cada mensaje + nota del vault en un vector semántico (data/rag.jsonl).
 // INCREMENTAL: solo indexa lo nuevo (por id). Corre en el daemon cada N min. Uso: node src/rag-index.mjs
 import { readFileSync, existsSync, appendFileSync, readdirSync, statSync } from "fs"
+import { statfsSync } from "fs"
 import { loadEnv } from "./lib/env.mjs"
 import { embed } from "./lib/embed.mjs"
 import { streamJsonl } from "./lib/jsonl.mjs"
@@ -16,6 +17,16 @@ const have = new Set()
 // mes entero, en silencio: la búsqueda semántica seguía respondiendo, pero sin ver nada nuevo.
 if (existsSync(OUT)) await streamJsonl(OUT, (r) => { if (r && r.id) have.add(r.id) })
 
+// FRENO DE DISCO. Cada entrada pesa ~15KB (768 floats serializados como texto JSON) y hay ~1.8M mensajes
+// elegibles: el índice COMPLETO son ~27GB. Este job estuvo un mes caído justamente porque el disco se llenó,
+// así que no puede volver a ser el que lo llene. Si quedan menos de RAG_MIN_FREE_GB libres, no indexa más.
+const MIN_FREE_GB = +process.env.RAG_MIN_FREE_GB || 20
+function libresGB() { try { const s = statfsSync("."); return (s.bavail * s.bsize) / 1073741824 } catch { return Infinity } }
+if (libresGB() < MIN_FREE_GB) {
+  console.log(`[rag] FRENADO: quedan ${libresGB().toFixed(1)}GB libres (mínimo ${MIN_FREE_GB}GB). No indexo para no llenar el disco.`)
+  process.exit(0)
+}
+
 let added = 0, saltados = 0
 // `thread` va en la línea a propósito: sin él, quien consulta el índice no puede decidir si el mensaje es de un canal
 // secreto y el filtro de ask() quedaba ciego. Las notas del vault no tienen hilo y no lo necesitan.
@@ -26,6 +37,7 @@ async function add(id, kind, ref, text, ts, thread) {
   appendFileSync(OUT, JSON.stringify({ id, kind, ref, text: text.slice(0, 500), ts: ts || 0, ...(thread ? { thread } : {}), vec: v }) + "\n")
   have.add(id); added++
   if (added % 200 === 0) console.log(`  … +${added} indexados`)
+  if (added % 500 === 0 && libresGB() < MIN_FREE_GB) { console.log(`[rag] FRENADO a mitad de corrida: ${libresGB().toFixed(1)}GB libres`); process.exit(0) }
 }
 
 // 1) mensajes — streaming línea por línea (el jsonl pesa >1GB: readFileSync utf8 rompía con ERR_STRING_TOO_LONG)
