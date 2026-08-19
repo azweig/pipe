@@ -94,7 +94,12 @@ export function listThreads({ limit = 200, q = "" } = {}, { cache = true } = {})
     const jid = jidOfKey(r.key), canon = canonOfKey(r.key)
     const self = r.key === "self"
     // grupo SOLO si el jid es contenedor (@g.us / thread.v2 / sala !room). Un 1:1 fusionado puede tener varios nombres → NO es grupo.
-    const kind = self ? "self" : (isContainerJid(jid) ? "group" : "dm")
+    // EXCEPCIÓN: una sala de Matrix (!room:) puede ser un grupo O un DM del bridge — la clave no lo dice. Lo dice cuántos
+    // remitentes DISTINTOS escribieron: 1 = DM. Sin esto los DM de Discord aparecían como "Grupo · 1 personas", sin el
+    // nombre ni la foto de quien te habla. Los de WhatsApp no lo mostraban porque rekeyBridge los renombra a la persona
+    // antes de llegar acá; Discord no tiene ese re-key y se queda con la sala.
+    const dmDeSala = /^![^:]+:/.test(jid || "") && (r.nsenders || 0) <= 1
+    const kind = self ? "self" : (isContainerJid(jid) && !dmDeSala ? "group" : "dm")
     let name = canon || r.name || numOf(jid), avatar = initials(name)
     if (kind === "self") { name = "Mis Notas"; avatar = "📝" }
     else if (kind === "group") {
@@ -228,7 +233,11 @@ export async function unifiedThread(key, ws, { before = 0, limit = 100, secretOn
   const senders = new Set(tail.filter((m) => m.dir !== "out" && m.name).map((m) => m.name))
   // grupo solo si la KEY es contenedor, o si hay un jid de grupo REAL de WhatsApp en la cola (@g.us/thread/newsletter/broadcast).
   // OJO: NO usar isContainerJid sobre el jid del mensaje — los DMs bridgeados llegan como sala matrix "!room:server" y eso los marcaría como grupo.
-  const isGroup = isContainerJid(jidOfKey(key)) || tail.some((m) => /@g\.us$|@thread\.v2$|@newsletter$|@broadcast$/.test(m.jid || ""))
+  // …y la KEY tampoco alcanza cuando ES una sala matrix: puede ser grupo O el DM del bridge (Discord no re-keyea sus
+  // DMs a la persona, como sí hace rekeyBridge con WhatsApp). Un solo remitente distinto = DM.
+  const _k = jidOfKey(key)
+  const _dmDeSala = /^![^:]+:/.test(_k || "") && senders.size <= 1
+  const isGroup = (isContainerJid(_k) && !_dmDeSala) || tail.some((m) => /@g\.us$|@thread\.v2$|@newsletter$|@broadcast$/.test(m.jid || ""))
   const groupName = tail.map((m) => m.grp || m.group).find(Boolean)
   const last = [...tail].reverse().find((m) => m.dir !== "out" && m.name)
   const dmNum = jidOfKey(key) || last?.jid

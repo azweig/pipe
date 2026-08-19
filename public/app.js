@@ -99,7 +99,7 @@ const $ = (h) => { const t = document.createElement("template"); t.innerHTML = h
 const PAL = ["#c98d7f", "#c9a06a", "#7d7da6", "#8bb0a2", "#a98bb0", "#7fa9c4", "#c4a07f", "#9db07f"]
 const color = (n) => PAL[[...(n || "?")].reduce((a, c) => a + c.charCodeAt(0), 0) % PAL.length]
 const initials = (n) => (n || "?").replace(/[·].*/, "").trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase()
-const CH = { whatsapp: "WhatsApp", email: "Email", teams: "Teams", telegram: "Telegram", notion: "Notion", calendar: "Calendar", discord: "Discord", instagram: "Instagram", facebook: "Facebook", linkedin: "LinkedIn", tiktok: "TikTok" }
+const CH = { whatsapp: "WhatsApp", email: "Email", teams: "Teams", telegram: "Telegram", notion: "Notion", calendar: "Calendar", discord: "Discord", slack: "Slack", signal: "Signal", instagram: "Instagram", facebook: "Facebook", linkedin: "LinkedIn", tiktok: "TikTok" }
 // Locale de fechas. i18n.js corre DESPUÉS de este archivo y es quien fija PIPE_LANG, así que se lee en cada llamada
 // (una const de nivel superior se evaluaría antes de tiempo y quedaría clavada en "es").
 const LOC = () => (window.PIPE_LANG === "en" ? "en" : "es")
@@ -134,6 +134,9 @@ const CHAN_ICON = {
   facebook: ["#1877f2", '<path d="M13.4 21v-7h2.2l.4-2.7h-2.6V9.4c0-.8.2-1.3 1.3-1.3h1.4V5.7c-.3 0-1.1-.1-2-.1-2 0-3.3 1.2-3.3 3.4v1.9H8.3V14h2.4v7h2.7Z"/>'],
   teams: ["#5b5fc7", '<path d="M9 4.5a2.4 2.4 0 1 1 0 4.8 2.4 2.4 0 0 1 0-4.8ZM4 10.5h7.2v5.7a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-5.7Zm12-1.3a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm-3.3 1.3H20v4.2a2.5 2.5 0 0 1-2.5 2.5h-.8c.1-.4.1-.8.1-1.3v-5.4Z"/>'],
   linkedin: ["#0a66c2", '<path d="M6.5 8.6a1.6 1.6 0 1 0 0-3.2 1.6 1.6 0 0 0 0 3.2ZM5 10h3v9.5H5V10Zm5 0h2.9v1.3c.4-.7 1.4-1.6 3-1.6 3.1 0 3.6 2 3.6 4.6v5.2h-3v-4.6c0-1.1 0-2.5-1.5-2.5s-1.7 1.2-1.7 2.4v4.7h-3V10Z"/>'],
+  discord: ["#5865f2", '<path d="M19.3 5.6A15 15 0 0 0 15.5 4.4l-.2.4c1.3.4 2.4 1 3.3 1.6a12.4 12.4 0 0 0-9.2 0c.9-.6 2-1.2 3.3-1.6l-.2-.4a15 15 0 0 0-3.8 1.2C5.9 8.5 5.1 11.4 5.3 14.3A15 15 0 0 0 9.8 16.8l.9-1.3c-.7-.3-1.3-.6-1.9-1l.4-.3a11 11 0 0 0 9.6 0l.4.3c-.6.4-1.2.7-1.9 1l.9 1.3a15 15 0 0 0 4.5-2.5c.3-3.4-.6-6.3-2.4-8.7ZM10.1 12.9c-.8 0-1.4-.7-1.4-1.5s.6-1.5 1.4-1.5 1.4.7 1.4 1.5-.6 1.5-1.4 1.5Zm4.5 0c-.8 0-1.4-.7-1.4-1.5s.6-1.5 1.4-1.5 1.4.7 1.4 1.5-.6 1.5-1.4 1.5Z"/>'],
+  slack: ["#4a154b", '<path d="M7 14.4a1.7 1.7 0 1 1-1.7-1.7H7v1.7Zm.9 0a1.7 1.7 0 0 1 3.4 0v4.3a1.7 1.7 0 1 1-3.4 0v-4.3Zm1.7-6.8a1.7 1.7 0 1 1 1.7-1.7v1.7H9.6Zm0 .9a1.7 1.7 0 0 1 0 3.4H5.3a1.7 1.7 0 1 1 0-3.4h4.3Zm7.4 1.7a1.7 1.7 0 1 1 1.7 1.7H17v-1.7Zm-.9 0a1.7 1.7 0 0 1-3.4 0V5.9a1.7 1.7 0 1 1 3.4 0v4.3Zm-1.7 6.8a1.7 1.7 0 1 1-1.7 1.7v-1.7h1.7Zm0-.9a1.7 1.7 0 0 1 0-3.4h4.3a1.7 1.7 0 1 1 0 3.4h-4.3Z"/>'],
+  signal: ["#3a76f0", '<path d="M12 3.2a8.8 8.8 0 0 0-7.4 13.5l-1 3.5 3.6-1A8.8 8.8 0 1 0 12 3.2Zm0 1.8a7 7 0 1 1-3.6 13l-.4-.2-1.9.5.5-1.8-.2-.4A7 7 0 0 1 12 5Z"/>'],
   notion: ["#111827", '<path d="M5 4h9.5L19 8.5V20H5V4Zm8.5 1.2v3.8h3.8L13.5 5.2ZM7.5 11h9v1.3h-9V11Zm0 3h9v1.3h-9V14Z"/>'],
   meeting: ["#7c3aed", '<path d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3ZM6 11a6 6 0 0 0 12 0h1.8a7.8 7.8 0 0 1-6.8 7.7V21h-2v-2.3A7.8 7.8 0 0 1 4.2 11H6Z"/>'],
   calendar: ["#6366f1", '<path d="M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm-1 5h16M8 3v4M16 3v4"/>'],
