@@ -1,6 +1,6 @@
 // brain/ask — RAG semántico (embeddings + FTS) + router-search por facetas/grafo. Leaf (ask↔routerSearch internos).
 import { existsSync, statSync, readFileSync } from "fs"
-import { embed, topK } from "../embed.mjs"
+import { embed, topK, unpackVec } from "../embed.mjs"
 import { route as routeFacets, activate as activateGraph } from "../router.mjs"
 import { search as dbSearch, searchBody as dbSearchBody, conversationsByThreads as dbConvsByThreads, filesByTerms as dbFilesByTerms, mediaInThreads as dbMediaInThreads, bodyMatchInThreads as dbBodyMatch, recentInThread as dbRecentInThread, messageById as dbMessageById } from "../db.mjs"
 import { llm, smartChain } from "../llm.mjs"
@@ -16,6 +16,8 @@ function ragIndex() {
   if (!existsSync(f)) return []
   const m = statSync(f).mtimeMs
   if (_rag && m === _ragMtime) return _rag
+  // Los vectores se desempaquetan al cargar (int8 en base64 → Int8Array): además de disco, ahorra RAM, porque
+  // este índice se carga ENTERO en memoria y un array de floats de JS pesa ~6KB por entrada contra 768 bytes.
   // LEER POR BUFFER, no como un string: rag.jsonl puede pasar los ~512MB del límite de string de Node (ERR_STRING_TOO_LONG) → el
   // RAG semántico se caía en silencio (todo el cerebro degradado a FTS). Los Buffers SÍ superan ese límite; parseamos línea por línea.
   const out = []
@@ -24,11 +26,11 @@ function ragIndex() {
     let start = 0
     for (let i = 0; i < buf.length; i++) {
       if (buf[i] === 10) { // '\n'
-        if (i > start) { try { const o = JSON.parse(buf.toString("utf8", start, i)); if (o) out.push(o) } catch {} }
+        if (i > start) { try { const o = JSON.parse(buf.toString("utf8", start, i)); if (o) { if (o.vec) o.vec = unpackVec(o.vec); out.push(o) } } catch {} }
         start = i + 1
       }
     }
-    if (start < buf.length) { try { const o = JSON.parse(buf.toString("utf8", start)); if (o) out.push(o) } catch {} }
+    if (start < buf.length) { try { const o = JSON.parse(buf.toString("utf8", start)); if (o) { if (o.vec) o.vec = unpackVec(o.vec); out.push(o) } } catch {} }
   } catch (e) { console.warn("[rag] no pude cargar rag.jsonl:", e.message) }
   _rag = out
   _ragMtime = m

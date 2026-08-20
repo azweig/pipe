@@ -3,7 +3,7 @@
 import { readFileSync, existsSync, appendFileSync, readdirSync, statSync } from "fs"
 import { statfsSync } from "fs"
 import { loadEnv } from "./lib/env.mjs"
-import { embed } from "./lib/embed.mjs"
+import { embed, packVec } from "./lib/embed.mjs"
 import { streamJsonl } from "./lib/jsonl.mjs"
 import { isSecretJsonl } from "./lib/secret.mjs" // 🔒 lo que entra al índice sale en respuestas de IA: los canales secretos no entran
 import { computeThread } from "./lib/thread.mjs" // el jsonl NO trae `thread` (lo calcula la ingesta): hay que calcularlo para guardarlo
@@ -34,7 +34,8 @@ async function add(id, kind, ref, text, ts, thread) {
   if (have.has(id) || !text || text.trim().length < 4) return
   const v = await embed(text)
   if (!v) return
-  appendFileSync(OUT, JSON.stringify({ id, kind, ref, text: text.slice(0, 500), ts: ts || 0, ...(thread ? { thread } : {}), vec: v }) + "\n")
+  // vec CUANTIZADO a int8/base64 (~1KB en vez de ~15KB como texto JSON): el coseno es invariante a escala
+  appendFileSync(OUT, JSON.stringify({ id, kind, ref, text: text.slice(0, 500), ts: ts || 0, ...(thread ? { thread } : {}), vec: packVec(v) }) + "\n")
   have.add(id); added++
   if (added % 200 === 0) console.log(`  … +${added} indexados`)
   if (added % 500 === 0 && libresGB() < MIN_FREE_GB) { console.log(`[rag] FRENADO a mitad de corrida: ${libresGB().toFixed(1)}GB libres`); process.exit(0) }

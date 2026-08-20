@@ -23,3 +23,22 @@ export function topK(queryVec, index, k = 40) {
   scored.sort((a, b) => b.s - a.s)
   return scored.slice(0, k)
 }
+
+// ── EMPAQUETADO del vector para el índice en disco ──────────────────────────────────────────────────────────
+// Un embedding de 768 floats serializado como texto JSON pesa ~15KB. Con 1.8M mensajes elegibles eso son ~27GB
+// de disco (y el índice se carga ENTERO en RAM). Cuantizado a int8 y guardado en base64 son ~1KB: ~14x menos.
+// Se puede porque el coseno es INVARIANTE A ESCALA — solo importa la dirección del vector, no su magnitud — así
+// que dividir por el máximo absoluto y redondear a [-127,127] no cambia el orden de los resultados.
+export function packVec(v) {
+  let max = 0
+  for (let i = 0; i < v.length; i++) { const a = v[i] < 0 ? -v[i] : v[i]; if (a > max) max = a }
+  const q = new Int8Array(v.length), k = max ? 127 / max : 0
+  for (let i = 0; i < v.length; i++) q[i] = Math.round(v[i] * k)
+  return Buffer.from(q.buffer, q.byteOffset, q.byteLength).toString("base64")
+}
+// acepta el formato nuevo (base64) y el viejo (array de floats) → el índice existente sigue funcionando mientras migra
+export function unpackVec(v) {
+  if (typeof v !== "string") return v
+  const b = Buffer.from(v, "base64")
+  return new Int8Array(b.buffer, b.byteOffset, b.byteLength)
+}
