@@ -2,30 +2,17 @@
 // Cuerpos movidos verbatim desde db.mjs; `db` = alias de handle() de db-core.
 import { handle as db, withRetry } from "./db-core.mjs"
 import { rebuildStats } from "./ingest-repo.mjs"
-import { phoneOf, isContainerJid, MY_NUMBERS } from "./thread.mjs"
+import { phoneOf, isContainerJid, MY_NUMBERS, canonNameFor } from "./thread.mjs"
 
 // nombre de agenda de un número SOLO si es ÚNICO (no homónimo): si el mismo nombre está en 2+ números, keyear por nombre fusionaría
 // personas DISTINTAS en un hilo → responderías al equivocado. Compartido por las 3 funciones de re-key (antes solo rekeyContacts lo tenía).
+// La regla de identidad NO vive acá: es UNA sola, en thread.mjs (`canonNameFor`). Esta es la firma que usan los
+// re-keys. Duplicarla fue el bug del 24-ago — los contactos salían duplicados en la bandeja porque la copia de la
+// ingesta se quedó con la versión vieja.
 export function safeName(contactsMap, num, manual = {}, convo = null) {
-  if (manual[num]) return manual[num] // verdad del usuario (mapa manual): tiene prioridad sobre la agenda y NO pasa por el chequeo de homónimo (ya decidió que es esta persona). Antes unifyByNumber ignoraba el mapa manual → consolidaba por número y peleaba con computeThread.
-  const nm = contactsMap[num]; if (!nm) return null
-  // Homónimo: bloquear SOLO si el choque puede ocurrir DE VERDAD, o sea si OTRO número con ese mismo nombre
-  // también conversa. La agenda repite muchísimo un nombre en números que nunca escribieron (contactos
-  // duplicados, o el mismo número con y sin el "9" de Argentina); bloquear por eso no evitaba ninguna fusión
-  // y dejaba a gente con miles de mensajes mostrándose como número. `convo` = números con conversación real
-  // (convoNumbers()); sin él se mantiene el comportamiento viejo (conservador).
-  // Se cuentan IDENTIDADES, no claves: WhatsApp lista a cada contacto por teléfono Y por LID con el mismo nombre,
-  // y eso parecía un choque. `phoneOf` colapsa el LID en su teléfono (misma corrección que safeContactName, que es
-  // la copia de esta regla que corre en la INGESTA).
-  const ids = new Set()
-  for (const [k, v] of Object.entries(contactsMap)) {
-    if (v !== nm) continue
-    if (convo && k !== num && !convo.has(k)) continue
-    ids.add(phoneOf(k) || k)
-    if (ids.size > 1) return null
-  }
-  return nm
+  return canonNameFor(contactsMap, num, { manual, convo })
 }
+
 
 // Números que tienen HILO PROPIO (clave `whatsapp:<num>@…`). Es la pregunta correcta para el guard de homónimo:
 // lo único que un re-key puede fusionar son dos HILOS. Que un número aparezca suelto como jid no alcanza —

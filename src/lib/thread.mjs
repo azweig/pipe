@@ -10,22 +10,33 @@ function contactsMap() { const f = "./data/contacts-map.json"; if (!existsSync(f
 // keyeo por nombre de computeThread para que ingest y resolve-identities COINCIDAN. Antes computeThread usaba contactsMap()[num] crudo
 // (sin guard) → creaba un hilo por-nombre para contactos con nombre repetido en la agenda, que resolve-identities dejaba por número →
 // la misma conversación se partía (ej: 2 mensajes salientes sueltos bajo el nombre). Con el guard, ambos keyean igual → sin duplicado.
-function safeContactName(num) {
-  const cm = contactsMap(); const nm = num && cm[num]; if (!nm) return null
-  // Contamos IDENTIDADES, no claves de agenda. WhatsApp lista a cada contacto DOS veces —por teléfono y por LID de
-  // 15 dígitos— con el MISMO nombre; contando claves crudas eso parecían dos personas, se bloqueaba el nombre y el
-  // hilo se keyeaba por número → la persona aparecía DUPLICADA en la bandeja (su historia en un hilo y el mensaje
-  // nuevo solo en otro) hasta que el re-key periódico los unía, hasta 20 minutos después. `phoneOf` resuelve el LID
-  // a su teléfono, así que las dos entradas colapsan en una. Dos TELÉFONOS distintos con el mismo nombre siguen
-  // bloqueando: ahí sí pueden ser dos personas.
+// ══ LA REGLA DE IDENTIDAD, EN UN SOLO LUGAR ═══════════════════════════════════════════════════════════════════
+// ¿Puedo keyear el hilo de <num> por su NOMBRE de agenda, o ese nombre podría ser de dos personas distintas?
+//
+// Vivía DUPLICADA (acá y en identity-repo.safeName) y se pagó caro: el 18-ago arreglé una sola, el bug siguió, y
+// los contactos se seguían viendo DUPLICADOS en la bandeja. Sincronizar dos copias a mano no funciona → una sola
+// función, y `test/identity-rule-once.mjs` falla si alguien vuelve a copiarla.
+//
+// Cuenta IDENTIDADES, no claves de agenda: WhatsApp lista a cada contacto DOS veces (teléfono + LID de 15 dígitos)
+// con el mismo nombre, y contar claves los tomaba como dos personas. `phoneOf` colapsa el LID en su teléfono.
+// Dos TELÉFONOS distintos con el mismo nombre SÍ bloquean: ahí pueden ser dos personas de verdad.
+//   · manual → el mapa del usuario ("es la misma persona") gana sobre todo y no pasa por el chequeo.
+//   · convo  → si se pasa, solo cuentan los números que TIENEN HILO PROPIO (lo único que un re-key puede fusionar).
+export function canonNameFor(cm, num, { manual = null, convo = null } = {}) {
+  if (manual && manual[num]) return manual[num]
+  const nm = num && cm[num]; if (!nm) return null
   const ids = new Set()
   for (const [k, v] of Object.entries(cm)) {
     if (v !== nm) continue
+    if (convo && k !== num && !convo.has(k)) continue
     ids.add(phoneOf(k) || k)
     if (ids.size > 1) return null
   }
   return nm
 }
+// atajo para la INGESTA: la misma regla contra la agenda en disco
+function safeContactName(num) { return canonNameFor(contactsMap(), num) }
+
 const digitsOf = (s) => (s || "").replace(/[^\d]/g, "")
 // mapa LID → número real (de jid_map de WhatsApp). Resuelve los chats @lid a su teléfono.
 let _lid = null, _lidM = 0

@@ -17,7 +17,7 @@ sqlite3 data/messages.db ".timeout 30000" ".backup '$TMP/messages.db'"
 
 # 1b. SESIONES del bridge WhatsApp (whatsmeow): sin esto, perder /opt/matrix = re-escanear el QR de TODOS los números a mano.
 #     Snapshot consistente con el bridge vivo. Path por env (cada tenant el suyo); default = hub principal.
-WA_BRIDGE_DB="${WA_BRIDGE_DB:-/opt/matrix/bridges/whatsapp/mautrix-whatsapp.db}"
+WA_BRIDGE_DB="${MAUTRIX_WA_DB:-${WA_BRIDGE_DB:-/opt/matrix/bridges/whatsapp/mautrix-whatsapp.db}}"  # mismo nombre que el resto del código
 if [ -f "$WA_BRIDGE_DB" ]; then sqlite3 "$WA_BRIDGE_DB" ".timeout 30000" ".backup '$TMP/mautrix-whatsapp.db'" 2>/dev/null && echo "  + sesiones bridge WhatsApp"; fi
 
 # 1c. índice del CAS (cas.db, SQLite): mapea cada blob → ruta. El CAS es rebuildable, pero esto da un restore coherente.

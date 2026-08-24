@@ -11,7 +11,9 @@ import { existsSync, readFileSync, writeFileSync, copyFileSync } from "fs"
 
 const args = process.argv.slice(2)
 const dry = args.includes("--dry")
-const BRIDGE = args.find((a) => !a.startsWith("--")) || process.env.WA_BRIDGE_DB || "/opt/matrix/bridges/whatsapp/mautrix-whatsapp.db"
+// MAUTRIX_WA_DB es el nombre que usa el resto del código (matrix.mjs, heartbeat, selftest). Se acepta WA_BRIDGE_DB
+// como alias porque backup.sh lo usaba así. Una sola variable, documentada en .env.example — nada de rutas fijas.
+const BRIDGE = args.find((a) => !a.startsWith("--")) || process.env.MAUTRIX_WA_DB || process.env.WA_BRIDGE_DB || "/opt/matrix/bridges/whatsapp/mautrix-whatsapp.db"
 const MAP = "./data/contacts-map.json"
 
 if (!existsSync(BRIDGE)) { console.error(`❌ no encuentro la DB del bridge en ${BRIDGE}`); process.exit(1) }
