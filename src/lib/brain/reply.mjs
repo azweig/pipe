@@ -1,6 +1,7 @@
 // brain/reply — SEND-PATH (WhatsApp bridge/Unipile/email) + compositor (draft en tu voz, corrección, sugerencia).
 // wrong-recipient es EL fallo temido → threadTargets (destinos + default) está characterizado en test/brain-reply.mjs.
 // threadTargets / sendReply* son export function HOISTED: schedule/meetings/otros los importan por la fachada (brain.mjs).
+import { isSecretMsg } from "../secret.mjs" // reenviar saca el mensaje del hub: los de línea oculta nunca salen
 import { insertSent as dbInsertSent, threadMessagesTail as dbThreadMsgs, whatsappRoomsOf, roomInboundSenders, emailAddressesOf, lastInboundJid, lastEmailByAddress, lastEmailInThread, lastUnipileJid, lastWhatsappRoom, lastHistoricJid, messageById, directPeersOf } from "../db.mjs"
 import { readFileSync } from "fs"
 import { join } from "path"
@@ -235,6 +236,9 @@ export async function forwardMessages(ids, key, { secretOn = false } = {}) {
   const pedidos = (Array.isArray(ids) ? ids : [ids])
   const rows = pedidos.map((id) => messageById(id, { secretOn })).filter(Boolean).sort((a, b) => (a.ts || 0) - (b.ts || 0))
   if (!rows.length) return { error: "No encontré los mensajes a reenviar." }
+  // 🔒 Y CON el 2º PIN puesto tampoco: desbloquear es para LEER lo tuyo, no para sacarlo del hub. Reenviar manda el
+  // contenido a otra conversación —fuera del gateo— y desde ahí ya no hay vuelta atrás. Decisión de Alvaro (24-ago).
+  if (rows.some((m) => isSecretMsg(m))) return { error: "Este mensaje es de una línea oculta: no se puede reenviar." }
   let sent = 0, lastErr = null
   for (const m of rows) {
     const hasMedia = m.media && String(m.media).startsWith("/cas/")
