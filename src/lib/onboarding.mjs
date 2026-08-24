@@ -1,4 +1,4 @@
-// Checklist de primer arranque: conectá WhatsApp · agregá tu correo · elegí tu IA.
+// Checklist de primer arranque: conectá WhatsApp · agregá tu correo · elegí tu IA · poné el backup afuera.
 //
 // Vivía SÓLO en el cliente web, con 4 llamadas y las reglas de "está conectado" escritas ahí. El escritorio y el móvil
 // no podían mostrarlo sin reimplementarlo y quedar desincronizados, así que ahora el cálculo es uno solo. Vive acá
@@ -8,6 +8,7 @@
 // filtran. Aunque acá sólo salgan booleanos, el booleano ES la filtración: si /api/status dice "no hay WhatsApp" y esto
 // dice "sí hay", queda claro que hay una línea oculta. Peor todavía, el checklist DESAPARECE al quedar completo, y esa
 // desaparición se ve en las tres apps.
+import { existsSync } from "fs"
 export function calcularOnboarding({ st = {}, acc = {}, llm = {}, chans = [], secretOn = false,
   esNumeroSecreto = () => false, esCuentaSecreta = () => false, numerosSecretos = [] } = {}) {
   const wa = (st && st.whatsapp) || {}
@@ -22,11 +23,15 @@ export function calcularOnboarding({ st = {}, acc = {}, llm = {}, chans = [], se
   const mailOK = ((acc.email || []).filter((e) => secretOn || !esCuentaSecreta("email", e && e.label))).length > 0
   // IA lista = hay key de NUBE, o el usuario eligió ollama como primario a propósito. Ollama por default NO cuenta: en un
   // tenant no hay ollama corriendo y la IA no funcionaría — habría que pedirle la key igual.
+  const backupOK = existsSync("./auth/google-backup-token.json") || !!(process.env.BACKUP_RCLONE_REMOTE || "").trim()
   const aiOK = (llm.providers || []).some((p) => p && p.hasKey && p.id !== "ollama") || (Array.isArray(llm.chain) && llm.chain[0] === "ollama")
   const steps = [
     { id: "whatsapp", ok: waOK, icon: "📱", title: "Conectá WhatsApp", sub: "Escaneá un QR desde tu teléfono" },
     { id: "email", ok: mailOK, icon: "📧", title: "Agregá tu correo", sub: "Gmail/Outlook con contraseña de aplicación" },
     { id: "ia", ok: aiOK, icon: "🤖", title: "Elegí tu IA", sub: "Tu motor y token (o usá el nuestro)" },
+    // Sin esto todo vive en UN disco: si falla o alguien borra algo, no hay vuelta atrás. Va en el checklist
+    // inicial a propósito — un backup que configurás "después" es un backup que no existe.
+    { id: "backup", ok: backupOK, icon: "💾", title: "Poné el backup afuera", sub: "Conectá tu Drive: sube una copia cifrada cada noche" },
   ]
   const done = steps.filter((x) => x.ok).length
   return { steps, done, total: steps.length, listo: done === steps.length }

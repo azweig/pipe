@@ -45,8 +45,19 @@ test("un correo secreto NO apaga la señal de WhatsApp (son cosas distintas)", (
   assert.equal(ok(r, "whatsapp"), true)
 })
 
-test("listo=true sólo con los tres", () => {
+test("el backup entra en el checklist inicial, no queda para 'después'", () => {
+  // Un hub con los canales andando pero SIN copia afuera no está listo: todo vive en un disco. Por eso el
+  // backup es un paso más del arranque y no una recomendación escondida en la documentación.
   const r = calcularOnboarding({ st: { whatsapp: { bridge: ["1"] } }, acc: { email: [{ label: "x" }] }, llm: conKeyNube })
-  assert.equal(r.listo, true); assert.equal(r.done, 3)
+  assert.ok(r.steps.some((s) => s.id === "backup"), "falta el paso de backup")
+  assert.equal(r.total, 4)
+  assert.equal(r.listo, false, "sin backup configurado el checklist NO está completo")
+})
+
+test("listo=true sólo con los cuatro", () => {
+  process.env.BACKUP_RCLONE_REMOTE = "remoto:" // una de las dos formas de tener copia afuera
+  const r = calcularOnboarding({ st: { whatsapp: { bridge: ["1"] } }, acc: { email: [{ label: "x" }] }, llm: conKeyNube })
+  delete process.env.BACKUP_RCLONE_REMOTE
+  assert.equal(r.done, 4); assert.equal(r.listo, true)
   assert.equal(calcularOnboarding({}).listo, false)
 })

@@ -36,21 +36,17 @@ cp hub-config.example.json data/hub-config.json     # your identity
 
 Edit **`data/hub-config.json`** — this is who you are (used to route "yourself" and greet you):
 
-`myNumbers` = your WhatsApp number(s), digits only. `myEmails` = your own addresses. Both are how Pipe recognises *you* in a group or a thread.
-
 ```json
 {
   "ownerName": "Your Name",
   "ownerFirst": "You",
   "company": "",
-  "myNumbers": ["15551234567"],
-  "myEmails": ["you@example.com"],
+  "myNumbers": ["5491100000000"],        // your WhatsApp number(s), digits only
+  "myEmails": ["you@gmail.com"],         // your own email(s)
   "timezone": "America/Lima",
   "domain": "localhost"
 }
 ```
-
-> JSON has no comments — paste the block above as-is. If the file doesn't parse, Pipe falls back to its defaults **silently**: you'd show up as "Owner" and your own numbers wouldn't be recognised as yours.
 
 Edit **`.env`** — fill only what you use (see `.env.example` for the full list). At minimum, one AI key **or** an Ollama host if you want the AI layer:
 
@@ -160,6 +156,47 @@ Privacy-sensitive crons (the knowledge graph, the self-model learner, email summ
 ## 8. Operations
 
 **Backups** — `scripts/backup.sh` makes an encrypted, consistent bundle (DB snapshot + configs + `auth/` + WhatsApp bridge sessions), excludes the giant `messages.jsonl` (already materialized in the DB). Put a passphrase in `secrets/backup.pass`. Schedule it, and set `BACKUP_RCLONE_REMOTE` for offsite copies.
+
+### Getting the backup off the box
+
+A backup that lives on the same disk as the data is not a backup. Two ways to send it out — pick one.
+
+**A. Your Google Drive (from the app, no SSH).** Uploads the encrypted bundle nightly. Pipe asks for
+`drive.file`, the narrowest scope that allows uploading: it only ever sees the files it creates, never the rest
+of your Drive. The bundle is already encrypted with your passphrase, so Google stores an opaque blob.
+
+You need a Google OAuth client once. In [Google Cloud Console](https://console.cloud.google.com):
+
+1. Pick (or create) a project **you own** — check the account switcher; a client from someone else's project
+   will fail with `Error 400: redirect_uri_mismatch` and you will not be able to fix it.
+2. **APIs & Services → OAuth consent screen** → *External* → app name + your support email → save. While the app
+   is in testing, add your own address under **Test users**, or Google blocks the login.
+3. **APIs & Services → Credentials → + Create credentials → OAuth client ID → Web application**.
+4. Under **Authorized redirect URIs** add both, replacing the host with yours:
+   ```
+   https://YOUR-HOST/oauth/backup/callback
+   https://YOUR-HOST/oauth/google/callback
+   ```
+   They must match character for character — that mismatch is the single most common failure here.
+5. Copy the Client ID and Client Secret into `.env` and restart:
+   ```
+   GOOGLE_CLIENT_ID=...
+   GOOGLE_CLIENT_SECRET=...
+   ```
+6. In the app: **Settings → 💾 Backup → Connect Google Drive → Allow**. Available in all three clients (web,
+   desktop, mobile); the desktop and mobile open your real browser, because Google refuses to sign you in
+   inside a WebView.
+
+It keeps the last 5 copies and prunes older ones — at ~1.6GB a day, without that your Drive fills up on its own.
+Media (`data/cas`) is deliberately **not** included: that can be tens of GB and depends on your Drive plan.
+
+**B. Any rclone remote (media included).** For everything, or if you want the media encrypted end to end:
+`rclone config` a remote (a `crypt:` one if the media must travel encrypted), then set `BACKUP_RCLONE_REMOTE` in
+`/etc/comms-hub-backup.env` — and `BACKUP_CAS_CIFRADO=1` only if that remote really is a `crypt:`. Without an
+encrypted remote, files belonging to secret accounts are skipped and the script tells you how many.
+
+**Check it worked:** `bash scripts/restore.sh` reports how many blobs it can see offsite. "CAS offsite VACÍO"
+means nothing is being stored.
 
 **Status page** — the app exposes `GET /api/health` → `{"ok":true,"ingestLagMin":N,"uptimeMin":N}` (public). Point [Uptime Kuma](https://github.com/louislam/uptime-kuma) (a one-container self-hosted status page) at it.
 
