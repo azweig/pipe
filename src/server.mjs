@@ -781,6 +781,18 @@ const server = createServer(async (req, res) => {
         if (r && !r.error) brain.invalidateThreads()
         return json(res, r && r.error ? 400 : 200, r)
       }
+      // ENVIAR UN CONTACTO: se manda el NOMBRE de alguien que el hub ya conoce y el server arma la vCard con sus
+      // datos reales (nunca los escribe el cliente: así no se puede usar para exfiltrar datos de un hilo secreto).
+      if (path === "/api/send-contact" && req.method === "POST") {
+        const b = await body(req)
+        if (!b.key || !b.contacto) return json(res, 400, { error: "falta key o contacto" })
+        if (secret.secretThreadKeys().has(String(b.contacto))) return json(res, 403, { error: "ese contacto está en una línea oculta" })
+        const ficha = await brain.personCard(b.contacto)
+        const c = (ficha && ficha.contacts) || {}
+        const r = await brain.sendReplyContact(b.key, { name: ficha?.name || b.contacto, phones: c.phones || [], emails: c.emails || [], org: ficha?.orgs || "" }, { channel: b.channel, target: b.target })
+        if (r && !r.error) brain.invalidateThreads()
+        return json(res, r && r.error ? 400 : 200, r)
+      }
       if (path === "/api/send-sticker" && req.method === "POST") {
         const inMime = (req.headers["content-type"] || "image/jpeg").split(";")[0].trim()
         const raw = await rawBody(req, 16 * 1024 * 1024)

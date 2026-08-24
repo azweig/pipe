@@ -207,6 +207,32 @@ export async function sendReplyMedia(key, buffer, { channel, target, mime = "app
   return { ok: true, channel: channel || "whatsapp", media, mediaType: kind, ...ins }
 }
 
+// ENVIAR UN CONTACTO (vCard). WhatsApp y Telegram lo muestran como tarjeta de contacto, no como archivo suelto:
+// el destinatario lo agrega a su agenda con un toque. Se arma desde los datos que el hub YA tiene del contacto
+// (teléfonos y correos reales del hilo), así que no hay que escribir nada a mano.
+// Escapado según RFC 6350: en un vCard la coma, el punto y coma y la barra son separadores — un apellido con coma
+// partía la tarjeta en dos campos y el nombre llegaba cortado.
+const vEsc = (s) => String(s || "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n")
+export function buildVCard({ name, phones = [], emails = [], org = "" }) {
+  const nm = String(name || "").trim() || (phones[0] ? "+" + phones[0] : "Contacto")
+  const l = ["BEGIN:VCARD", "VERSION:3.0", `FN:${vEsc(nm)}`, `N:${vEsc(nm)};;;;`]
+  if (org) l.push(`ORG:${vEsc(org)}`)
+  for (const p of phones.slice(0, 5)) l.push(`TEL;type=CELL;waid=${String(p).replace(/\D/g, "")}:+${String(p).replace(/\D/g, "")}`)
+  for (const e of emails.slice(0, 3)) l.push(`EMAIL;type=INTERNET:${vEsc(e)}`)
+  l.push("END:VCARD")
+  return l.join("\r\n") + "\r\n" // CRLF: lo exige el RFC y algunos clientes no la parsean con \n solo
+}
+
+// manda el contacto <quien> al hilo <key>. Reusa el camino de media: ya resuelve sala, cifra y registra local.
+export async function sendReplyContact(key, quien, { channel, target } = {}) {
+  if (!quien || !quien.name) return { error: "no sé qué contacto mandar" }
+  const phones = (quien.phones || []).filter(Boolean), emails = (quien.emails || []).filter(Boolean)
+  if (!phones.length && !emails.length) return { error: `no tengo teléfono ni correo de ${quien.name}` }
+  const vcf = Buffer.from(buildVCard(quien), "utf8")
+  const archivo = String(quien.name).replace(/[^\w\s.-]/g, "").trim().slice(0, 40) || "contacto"
+  return sendReplyMedia(key, vcf, { channel, target, mime: "text/vcard", filename: `${archivo}.vcf` })
+}
+
 // ENVÍO DE STICKER: misma resolución de sala; manda un evento m.sticker (webp). El server ya convirtió la imagen a webp 512×512.
 export async function sendReplySticker(key, buffer, { channel, target, mime = "image/webp" } = {}) {
   if (!buffer || !buffer.length) return { error: "sticker vacío" }
