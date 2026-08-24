@@ -37,11 +37,13 @@ export function insertMany(records) {
 export function insertSent(thread, channel, text, extra = {}) {
   const ts = Date.now(), id = `sent:${channel}:${ts}:${Math.random().toString(36).slice(2, 8)}`
   // withRetry + tx ATÓMICA: el mensaje YA salió por el cable; un SQLITE_BUSY acá lo dejaba entregado pero AUSENTE en la DB → reenvío = duplicado del lado del contacto.
+  // .immediate: sin esto la transacción arranca DIFERIDA y al subir a escritura SQLite devuelve SQLITE_BUSY_SNAPSHOT,
+  // que NO se resuelve esperando (el busy_timeout no aplica) → el reintento de arriba pagaba de más y a veces perdía.
   return withRetry(() => db().transaction(() => {
     insertStmt().run(normalizeRec({ id, channel, account: "sent", thread, jid: "", sender: "me", name: owner(), text, ts, dir: "out", unread: 0, media: extra.media || null, mediaType: extra.mediaType || null, filename: extra.filename || null }))
     db().prepare("UPDATE thread_stats SET count=count+1, last_ts=MAX(last_ts,?) WHERE thread=?").run(ts, thread)
     return { id, ts, media: extra.media || null, mediaType: extra.mediaType || null }
-  })())
+  }).immediate())
 }
 // reconstruye thread_stats desde cero (después de un import masivo).
 // ATÓMICO: DELETE+INSERT en UNA transacción. Si el proceso muere en el medio → rollback → conserva los datos
