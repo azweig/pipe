@@ -359,6 +359,45 @@ const server = createServer(async (req, res) => {
       }
       return json(res, 200, { ok: true })
     }
+    // ── VUELTA DE GOOGLE (OAuth): VA ANTES DEL GATE, a propósito ────────────────────────────────────────────
+    // La cookie de sesión es SameSite=Strict, así que en la redirección de vuelta desde accounts.google.com el
+    // navegador NO la manda: el gate veía "no autenticado", respondía la pantalla del PIN, y el código de Google
+    // se perdía en silencio (ni log, ni token, ni error visible — el usuario solo veía que le pedían el PIN).
+    // Que esté antes del gate NO lo deja abierto: exige un `state` que coincida con una cookie que solo emite
+    // /oauth/*/start, y ESE sí está detrás del gate. O sea, el flujo únicamente lo puede iniciar alguien con sesión.
+    if (path === "/oauth/google/callback") {
+      const back = (msg, ok) => { res.writeHead(302, { "Set-Cookie": "goauth=; Path=/; Max-Age=0", Location: `/?gmail=${ok ? "ok" : "err"}&m=${encodeURIComponent(String(msg).slice(0, 120))}#cuenta` }); res.end() }
+      try {
+        const code = url.searchParams.get("code"), state = url.searchParams.get("state")
+        if (url.searchParams.get("error")) return back(url.searchParams.get("error"), false)
+        if (!code || !state || state !== cookies.goauth) return back("estado inválido (reintentá)", false)
+        const redirectUri = `https://${req.headers.host}/oauth/google/callback`
+        const { tokens, email } = await goauth.exchangeGmailCode(code, redirectUri)
+        if (!tokens.refresh_token) return back("Google no devolvió refresh token — revocá el acceso previo de pipe en tu cuenta de Google y reintentá", false)
+        const r = accounts.saveGmailOAuth(email, tokens.refresh_token)
+        return back(r.error || `${email} conectado`, !r.error)
+      } catch (e) { return back(e.message || "error", false) }
+    }
+    if (path === "/oauth/backup/callback") {
+      // el resultado se logueaba SOLO en la URL de vuelta: si el usuario no la miraba, un fallo era invisible.
+      const back = (msg, ok) => { console.log(`[oauth-backup] ${ok ? "OK" : "FALLÓ"}: ${msg}`); res.writeHead(302, { "Set-Cookie": "boauth=; Path=/; Max-Age=0", Location: `/?backup=${ok ? "ok" : "err"}&m=${encodeURIComponent(String(msg).slice(0, 120))}` }); res.end() }
+      try {
+        const code = url.searchParams.get("code"), state = url.searchParams.get("state")
+        if (url.searchParams.get("error")) return back(url.searchParams.get("error"), false)
+        if (!code || !state || state !== cookies.boauth) return back("estado inválido (reintentá)", false)
+        const redirectUri = `https://${req.headers.host}/oauth/backup/callback`
+        const { tokens, email } = await goauth.exchangeBackupCode(code, redirectUri)
+        // En la pantalla de Google el permiso de Drive es una CASILLA APARTE. Si no se tilda, Google devuelve un
+        // token perfectamente válido… que solo sirve para leer tu correo. Sin este chequeo quedaba "conectado" y
+        // recién fallaba de noche, al intentar subir. Mejor decirlo acá, con la instrucción exacta.
+        if (!String(tokens.scope || "").includes("drive.file"))
+          return back("faltó tildar el permiso de Drive en la pantalla de Google (la casilla de 'crear y editar sus propios archivos'). Reintentá y marcala.", false)
+        if (!tokens.refresh_token) return back("Google no devolvió refresh token — revocá el acceso previo de pipe y reintentá", false)
+        goauth.saveBackupToken(tokens, email)
+        return back(`backup conectado a ${email}`, true)
+      } catch (e) { return back(e.message || "error", false) }
+    }
+
     if (!authed) { // no autenticado y remoto → 401 para API, página de PIN para HTML
       if (path.startsWith("/api/")) return json(res, 401, { error: "no autorizado" })
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(loginPage(auth.pinIsSet(), isLocal))
@@ -400,19 +439,6 @@ const server = createServer(async (req, res) => {
         return res.end()
       } catch (e) { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(`<p>No se pudo iniciar la conexión con Google (¿falta configurar la app OAuth?). Volvé a la app.</p>`) }
     }
-    if (path === "/oauth/google/callback") {
-      const back = (msg, ok) => { res.writeHead(302, { "Set-Cookie": "goauth=; Path=/; Max-Age=0", Location: `/?gmail=${ok ? "ok" : "err"}&m=${encodeURIComponent(String(msg).slice(0, 120))}#cuenta` }); res.end() }
-      try {
-        const code = url.searchParams.get("code"), state = url.searchParams.get("state")
-        if (url.searchParams.get("error")) return back(url.searchParams.get("error"), false)
-        if (!code || !state || state !== cookies.goauth) return back("estado inválido (reintentá)", false)
-        const redirectUri = `https://${req.headers.host}/oauth/google/callback`
-        const { tokens, email } = await goauth.exchangeGmailCode(code, redirectUri)
-        if (!tokens.refresh_token) return back("Google no devolvió refresh token — revocá el acceso previo de pipe en tu cuenta de Google y reintentá", false)
-        const r = accounts.saveGmailOAuth(email, tokens.refresh_token)
-        return back(r.error || `${email} conectado`, !r.error)
-      } catch (e) { return back(e.message || "error", false) }
-    }
     // ── OAuth BACKUP EN DRIVE: mismo flujo "Conectar → Permitir", pero con scope drive.file (pipe solo ve lo que
     //    él sube). Así el backup offsite se configura desde la Consola y NO por SSH con un CLI interactivo. ──
     if (path === "/oauth/backup/start") {
@@ -422,19 +448,6 @@ const server = createServer(async (req, res) => {
         res.writeHead(302, { "Set-Cookie": `boauth=${state}; Path=/; Max-Age=600; HttpOnly; SameSite=Lax; Secure`, Location: goauth.backupAuthUrl(redirectUri, state) })
         return res.end()
       } catch (e) { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(`<p>No se pudo iniciar: ${esc(e.message)}</p>`) }
-    }
-    if (path === "/oauth/backup/callback") {
-      const back = (msg, ok) => { res.writeHead(302, { "Set-Cookie": "boauth=; Path=/; Max-Age=0", Location: `/?backup=${ok ? "ok" : "err"}&m=${encodeURIComponent(String(msg).slice(0, 120))}` }); res.end() }
-      try {
-        const code = url.searchParams.get("code"), state = url.searchParams.get("state")
-        if (url.searchParams.get("error")) return back(url.searchParams.get("error"), false)
-        if (!code || !state || state !== cookies.boauth) return back("estado inválido (reintentá)", false)
-        const redirectUri = `https://${req.headers.host}/oauth/backup/callback`
-        const { tokens, email } = await goauth.exchangeBackupCode(code, redirectUri)
-        if (!tokens.refresh_token) return back("Google no devolvió refresh token — revocá el acceso previo de pipe y reintentá", false)
-        goauth.saveBackupToken(tokens, email)
-        return back(`backup conectado a ${email}`, true)
-      } catch (e) { return back(e.message || "error", false) }
     }
     // ── API ──
     if (path.startsWith("/api/")) {
