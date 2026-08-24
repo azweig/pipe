@@ -5,18 +5,41 @@ import * as chrono from "chrono-node"
 
 // stems con \b SOLO al inicio (el \b de cierre rompía "agend|emos", "coordin|emos", "llamad|a"…). Se filtra igual
 // porque además exige una FECHA parseable, y el humano confirma en el modal.
-const CUE = /\b(agend|reu|coordin|llamad|videollamad|junt[ae]|hangout|encontr[ae]|nos vemos|verte|vernos|cita|meet|call|zoom|teams)/i
-const NEG = /\b(no puedo|no llego|no va a poder|cancel|reprogram|posterg|otro d[ií]a|no me sirve|ya no|despu[eé]s vemos)/i
+// La app está en español, inglés y portugués: las pistas también. Antes eran casi todas en español y se perdían
+// conversaciones enteras (caso real: "tonight 8pm?" + "send me an invite please" no disparó nada).
+const CUE = /\b(agend|reu|coordin|llamad|videollamad|junt[ae]|hangout|encontr[ae]|nos vemos|verte|vernos|cita|disponib|horario|invit|convite|marcar|meet|call|zoom|teams|schedul|appointment|sync|catch up|available|availability|calendar|book a)/i
+const NEG = /\b(no puedo|no llego|no va a poder|cancel|reprogram|posterg|otro d[ií]a|no me sirve|ya no|despu[eé]s vemos|another day|can\'t make|reschedul|postpone|não posso)/i
 
 // Devuelve la fecha como COMPONENTES (year/month/day/hour/minute), no como instante UTC: el evento se crea
 // después con timeZone explícito → evita el clásico bug de timezone (el owner viaja). El humano confirma en el modal.
+
+// chrono trae un parser POR IDIOMA y cada uno entiende solo el suyo: con `chrono.es` sola, "tonight 8pm" no existe.
+// Probamos todos los que shippea y nos quedamos con el primero que encuentre algo. Es barato (regex) y hace que
+// el detector hable los mismos idiomas que la app.
+const PARSERS = ["es", "en", "pt", "fr", "de", "nl"].map((l) => chrono[l]).filter(Boolean)
+function parseFecha(text, now) {
+  for (const p of PARSERS) {
+    try { const r = p.parse(text, new Date(now), { forwardDate: true })[0]; if (r) return r } catch {}
+  }
+  return null
+}
+
 export function detectSchedule(messages, { now = Date.now() } = {}) {
   const recent = (messages || []).filter((m) => (m.text || "").trim().length > 2).slice(-15)
   for (let i = recent.length - 1; i >= 0; i--) {
     const m = recent[i], text = String(m.text)
-    if (!CUE.test(text) || NEG.test(text)) continue
+    if (NEG.test(text)) continue
+    // La pista y la hora no siempre viven en el MISMO mensaje: la gente escribe "tonight 8pm?" y en el mensaje
+    // siguiente "send me an invite please". Buscamos la pista en la ventana cercana (±2 mensajes, ≤10 min) —
+    // seguimos exigiendo una FECHA parseable en ESTE mensaje, así que no se dispara por charla suelta.
+    const cerca = recent.slice(Math.max(0, i - 2), i + 3)
+      .filter((x) => Math.abs((x.ts || 0) - (m.ts || 0)) <= 10 * 60000)
+    if (!cerca.some((x) => CUE.test(String(x.text || "")))) continue
+    if (cerca.some((x) => NEG.test(String(x.text || "")))) continue
     let r
-    try { r = chrono.es.parse(text, new Date(now), { forwardDate: true })[0] } catch { continue }
+    // Se interpreta contra el RELOJ DEL MENSAJE, no contra ahora: "esta noche a las 8" dicho a las 18:56 es HOY.
+    // Evaluándolo más tarde, `forwardDate` lo empujaba a mañana y la reunión salía con la fecha equivocada.
+    r = parseFecha(text, m.ts || now)
     if (!r) continue
     const g = (k, d) => { const v = r.start.get(k); return v == null ? d : v }
     const year = g("year"), month = g("month"), day = g("day")
