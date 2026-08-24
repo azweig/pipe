@@ -646,7 +646,7 @@ const server = createServer(async (req, res) => {
       if (path === "/api/onboarding") {
         const st = integrationsStatus(), acc = accounts.listAccounts(), llm = llmConfigMasked()
         const chans = (brain.channelHealth() || {}).channels || []
-        return json(res, 200, calcularOnboarding({ st, acc, llm, chans, secretOn, esNumeroSecreto: secret.isSecretNumber, esCuentaSecreta: secret.isSecretAccount, numerosSecretos: secret.listSecretNumbers() }))
+        return json(res, 200, calcularOnboarding({ backupOK: !!(goauth.backupStatus().connected || (process.env.BACKUP_RCLONE_REMOTE || "").trim()), st, acc, llm, chans, secretOn, esNumeroSecreto: secret.isSecretNumber, esCuentaSecreta: secret.isSecretAccount, numerosSecretos: secret.listSecretNumbers() }))
       }
       if (path === "/api/llm-config") return json(res, 200, llmConfigMasked())
       if (path === "/api/llm-config/save" && req.method === "POST") { const b = await body(req); return json(res, 200, setLlmConfig(b)) }

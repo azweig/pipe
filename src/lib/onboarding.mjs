@@ -8,8 +8,7 @@
 // filtran. Aunque acá sólo salgan booleanos, el booleano ES la filtración: si /api/status dice "no hay WhatsApp" y esto
 // dice "sí hay", queda claro que hay una línea oculta. Peor todavía, el checklist DESAPARECE al quedar completo, y esa
 // desaparición se ve en las tres apps.
-import { existsSync } from "fs"
-export function calcularOnboarding({ st = {}, acc = {}, llm = {}, chans = [], secretOn = false,
+export function calcularOnboarding({ backupOK = false, st = {}, acc = {}, llm = {}, chans = [], secretOn = false,
   esNumeroSecreto = () => false, esCuentaSecreta = () => false, numerosSecretos = [] } = {}) {
   const wa = (st && st.whatsapp) || {}
   const bridge = (wa.bridge || []).filter((n) => secretOn || !esNumeroSecreto(n))
@@ -23,7 +22,6 @@ export function calcularOnboarding({ st = {}, acc = {}, llm = {}, chans = [], se
   const mailOK = ((acc.email || []).filter((e) => secretOn || !esCuentaSecreta("email", e && e.label))).length > 0
   // IA lista = hay key de NUBE, o el usuario eligió ollama como primario a propósito. Ollama por default NO cuenta: en un
   // tenant no hay ollama corriendo y la IA no funcionaría — habría que pedirle la key igual.
-  const backupOK = existsSync("./auth/google-backup-token.json") || !!(process.env.BACKUP_RCLONE_REMOTE || "").trim()
   const aiOK = (llm.providers || []).some((p) => p && p.hasKey && p.id !== "ollama") || (Array.isArray(llm.chain) && llm.chain[0] === "ollama")
   const steps = [
     { id: "whatsapp", ok: waOK, icon: "📱", title: "Conectá WhatsApp", sub: "Escaneá un QR desde tu teléfono" },
