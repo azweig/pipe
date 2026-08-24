@@ -100,6 +100,12 @@ if [ -n "${BACKUP_RCLONE_REMOTE:-}" ] && command -v rclone >/dev/null; then
         && echo "→ CAS offsite: $(du -sh data/cas 2>/dev/null | cut -f1)"
     fi
   fi
+# 5c. OFFSITE FÁCIL — tu Google Drive, conectado desde la Consola (sin SSH ni rclone). Si no está conectado, el
+#     script avisa y sigue: no es un error. Sube solo el bundle CIFRADO, no la media.
+if [ -f auth/google-backup-token.json ]; then
+  node scripts/backup-drive.mjs || echo "  ⚠️  no pude subir a Drive (sigue el backup local)"
+fi
+
 else
   echo "⚠️  sin BACKUP_RCLONE_REMOTE: el backup vive en el MISMO disco que la data (un fallo de disco = pérdida total) y los 64GB de"
   echo "    CAS quedan SIN respaldo (RPO de la media = ∞). RAID1 no cubre rm -rf/ransomware/fat-finger. Configurá un remote rclone."

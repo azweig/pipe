@@ -73,3 +73,40 @@ export async function gmailAccessToken(refreshToken) {
   const { token } = await o.getAccessToken()
   return token
 }
+
+// ══ BACKUP EN TU DRIVE — "Conectar → Permitir" desde la Consola, igual que Gmail ══════════════════════════════
+// Scope `drive.file`: pipe SOLO ve los archivos que él mismo crea. No puede leer, listar ni tocar el resto de tu
+// Drive — ni tus documentos ni tus fotos. Es el permiso mínimo que existe para poder subir algo.
+// El bundle que sube ya va CIFRADO con tu passphrase (secrets/backup.pass), así que Google guarda un blob opaco.
+export const BACKUP_SCOPES = ["https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/userinfo.email"]
+const BACKUP_TOKEN = "./auth/google-backup-token.json"
+
+export function backupAuthUrl(redirectUri, state) {
+  return webClient(redirectUri).generateAuthUrl({ access_type: "offline", prompt: "consent", scope: BACKUP_SCOPES, state })
+}
+export async function exchangeBackupCode(code, redirectUri) {
+  const o = webClient(redirectUri)
+  const { tokens } = await o.getToken(code)
+  o.setCredentials(tokens)
+  let email = ""
+  try { const oauth2 = google.oauth2({ version: "v2", auth: o }); const me = await oauth2.userinfo.get(); email = me.data.email || "" } catch {}
+  return { tokens, email }
+}
+export function saveBackupToken(tokens, email) {
+  const prev = existsSync(BACKUP_TOKEN) ? JSON.parse(readFileSync(BACKUP_TOKEN, "utf8")) : {}
+  // el refresh_token solo viene la PRIMERA vez que autorizás: si no llega, conservamos el que ya teníamos
+  writeFileSync(BACKUP_TOKEN, JSON.stringify({ ...prev, ...tokens, refresh_token: tokens.refresh_token || prev.refresh_token, email: email || prev.email }))
+}
+export function backupStatus() {
+  if (!existsSync(BACKUP_TOKEN)) return { connected: false }
+  try { const t = JSON.parse(readFileSync(BACKUP_TOKEN, "utf8")); return { connected: !!t.refresh_token, email: t.email || "" } } catch { return { connected: false } }
+}
+// cliente de Drive listo para subir (refresca el access_token solo y lo persiste)
+export function backupDrive() {
+  if (!existsSync(BACKUP_TOKEN)) return null
+  const c = webCreds(); if (!c) return null
+  const o = new google.auth.OAuth2(c.client_id, c.client_secret)
+  o.setCredentials(JSON.parse(readFileSync(BACKUP_TOKEN, "utf8")))
+  o.on("tokens", (t) => { try { saveBackupToken(t, "") } catch {} })
+  return google.drive({ version: "v3", auth: o })
+}

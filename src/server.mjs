@@ -413,6 +413,29 @@ const server = createServer(async (req, res) => {
         return back(r.error || `${email} conectado`, !r.error)
       } catch (e) { return back(e.message || "error", false) }
     }
+    // ── OAuth BACKUP EN DRIVE: mismo flujo "Conectar → Permitir", pero con scope drive.file (pipe solo ve lo que
+    //    él sube). Así el backup offsite se configura desde la Consola y NO por SSH con un CLI interactivo. ──
+    if (path === "/oauth/backup/start") {
+      try {
+        const redirectUri = `https://${req.headers.host}/oauth/backup/callback`
+        const state = randomBytes(16).toString("hex")
+        res.writeHead(302, { "Set-Cookie": `boauth=${state}; Path=/; Max-Age=600; HttpOnly; SameSite=Lax; Secure`, Location: goauth.backupAuthUrl(redirectUri, state) })
+        return res.end()
+      } catch (e) { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(`<p>No se pudo iniciar: ${esc(e.message)}</p>`) }
+    }
+    if (path === "/oauth/backup/callback") {
+      const back = (msg, ok) => { res.writeHead(302, { "Set-Cookie": "boauth=; Path=/; Max-Age=0", Location: `/?backup=${ok ? "ok" : "err"}&m=${encodeURIComponent(String(msg).slice(0, 120))}` }); res.end() }
+      try {
+        const code = url.searchParams.get("code"), state = url.searchParams.get("state")
+        if (url.searchParams.get("error")) return back(url.searchParams.get("error"), false)
+        if (!code || !state || state !== cookies.boauth) return back("estado inválido (reintentá)", false)
+        const redirectUri = `https://${req.headers.host}/oauth/backup/callback`
+        const { tokens, email } = await goauth.exchangeBackupCode(code, redirectUri)
+        if (!tokens.refresh_token) return back("Google no devolvió refresh token — revocá el acceso previo de pipe y reintentá", false)
+        goauth.saveBackupToken(tokens, email)
+        return back(`backup conectado a ${email}`, true)
+      } catch (e) { return back(e.message || "error", false) }
+    }
     // ── API ──
     if (path.startsWith("/api/")) {
       const q = Object.fromEntries(url.searchParams)
@@ -553,6 +576,12 @@ const server = createServer(async (req, res) => {
         res.writeHead(404); return res.end()
       }
       if (path === "/api/channels/catalog") return json(res, 200, { channels: channelCatalog() }) // catálogo (labels/marca/flujo de conexión) desde el registro — los clientes derivan la UI de acá
+      if (path === "/api/backup/status") {
+        const st = goauth.backupStatus()
+        let ultimo = null
+        try { const fs2 = await import("fs"); const b = fs2.readdirSync("./data/backups").filter((f) => /\.tar\.zst\.enc$/.test(f)).sort(); ultimo = b[b.length - 1] || null } catch {}
+        return json(res, 200, { ...st, ultimo })
+      }
       if (path === "/api/status") { const st = integrationsStatus(); if (!secretOn && st.whatsapp) { // 🔒 números/cuentas secretos NO aparecen en config si está bloqueado (igual que /api/accounts)
         st.whatsapp.bridge = (st.whatsapp.bridge || []).filter((n) => !secret.isSecretNumber(n))
         st.whatsapp.baileys = (st.whatsapp.baileys || []).filter((b) => !secret.isSecretNumber(b.num)) } return json(res, 200, st) }

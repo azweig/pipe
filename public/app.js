@@ -351,6 +351,7 @@ const CFG_SECS = [
   { id: "enrich", icon: SVG.globe, name: "Enriquecimiento (Apify)", kick: "Perfiles sociales", title: "Enriquecimiento (Apify)", desc: "Perfiles sociales anónimos (no usa tus cookies). Cargá una o varias cuentas Apify — la app rota entre ellas y si una llega al límite mensual pasa a la siguiente." },
   { id: "mail", icon: IC_MAIL, name: "Cuentas de correo", kick: "Correo", title: "Tus bandejas", desc: "Gmail, Outlook o cualquier IMAP — todo en un solo lugar." },
   { id: "msg", icon: SVG.chat, name: "Mensajería", kick: "Chat", title: "WhatsApp, Telegram y más", desc: "Sumá tus chats a la bandeja unificada." },
+  { id: "backup", icon: "💾", name: "Backup automático", kick: "Tus datos", title: "Una copia fuera del server", desc: "Todo vive en un solo disco. Conectá tu Google Drive y cada noche se sube una copia CIFRADA de tu base, tu configuración y tus credenciales — sin que tengas que hacer nada." },
   { id: "send", icon: IC_SEND, name: "Estado de envío", kick: "Diagnóstico", title: "¿Tus mensajes salen?", desc: "El hub se autoprueba mandándote un mensaje y te avisa si algo no sale." },
   { id: "autopilot", icon: IC_ROBOT, name: "Piloto automático", kick: "Automatización", title: "Qué escala el piloto", desc: "Elegí qué temas el piloto NO responde solo — esos te los deja a vos." },
   { id: "asistente", icon: IC_ROBOT, name: "Asistente en tu chat", kick: "Automatización", title: "Asistente en tu propio chat", desc: "Escribile a tu propio WhatsApp: si le PREGUNTÁS algo te responde (busca en internet y en tu historial). Tus notas no se tocan." },
@@ -367,6 +368,7 @@ function cfgStatus(id) {
   if (id === "mail") { const n = (a.email || []).length; return n ? { cls: "ok", text: `${n} ${n === 1 ? "conectada" : "conectadas"}` } : { cls: "warn", text: "sin cuentas" } }
   if (id === "msg") { if ((wa.loggedOut || []).length) return { cls: "err", text: "revincular WhatsApp" }; const nums = (a.messaging && a.messaging[0] && a.messaging[0].numbers) || []; return nums.length ? { cls: "ok", text: `${nums.length} ${nums.length === 1 ? "número" : "números"}` } : { cls: "warn", text: "sin canales" } }
   if (id === "send") { const s = window.__selftest; if (!s) return { cls: "", text: "sin probar" }; const bad = s.filter((x) => !x.ok).length; return bad ? { cls: "err", text: `${bad} ${bad === 1 ? "falla" : "fallas"}` } : { cls: "ok", text: "todo ok" } }
+  if (id === "backup") { const b = window.__backup; if (!b) return { cls: "", text: "…" }; return b.connected ? { cls: "ok", text: b.email || "conectado" } : { cls: "warn", text: "sin copia externa" } }
   if (id === "prefs") return { cls: auth.pinSet ? "ok" : "warn", text: auth.pinSet ? "PIN activo" : "sin PIN" }
   if (id === "enrich") return { cls: "", text: "gestionar" }
   if (id === "autopilot") return { cls: "", text: "qué escala" }
@@ -467,6 +469,15 @@ function renderCfgSection(id) {
     body = card + pinBtn + warn + `<button class="btn" onclick="addConnectionSheet('telefonia')">➕ Agregar canal de mensajería</button>
       <button class="btn ghost" onclick="waImportSheet()"><span class="ei">📤</span>Importar historial de WhatsApp</button>
       <div class="cfg-note">${IC_INFO}<div>¿Tenés chats viejos de WhatsApp? Exportalos desde la app (“Exportar chat”) y traelos acá — se suman sin duplicar.</div></div>`
+  } else if (id === "backup") {
+    const b = window.__backup || {}
+    body = b.connected
+      ? `<div class="cfg-card">${cfgRow("✅", "Google Drive conectado", esc(b.email || ""), b.ultimo ? `última copia: ${b.ultimo}` : "esperando la primera")}</div>
+         <div class="cfg-note">${IC_INFO}<div>Cada noche se sube una copia <b>cifrada</b> a la carpeta “Pipe Backups” de tu Drive. Se guardan las últimas 5 y las viejas se borran solas.</div></div>
+         <button class="btn ghost" onclick="location.href='/oauth/backup/start'">Reconectar o cambiar de cuenta</button>`
+      : `<div class="cfg-card">${cfgRow("⚠️", "Todo vive en un solo disco", "Si ese disco falla o alguien borra algo, no hay vuelta atrás", "sin copia externa")}</div>
+         <div class="cfg-note">${IC_INFO}<div>Se sube tu base, tu configuración y tus credenciales, <b>ya cifradas</b> con tu passphrase: Google guarda algo que no puede leer. Pipe pide el permiso mínimo (<code>drive.file</code>): <b>solo ve los archivos que él mismo sube</b>, no el resto de tu Drive.</div></div>
+         <button class="btn" onclick="location.href='/oauth/backup/start'">Conectar Google Drive</button>`
   } else if (id === "send") {
     body = `<div class="cfg-card"><div class="cfg-r"><div class="rm" style="width:100%"><div id="selftest-box" style="font-size:13.5px;line-height:1.6;color:var(--muted)">Cargando…</div></div></div></div>
     <div class="cfg-note">${IC_INFO}<div>Cada 12h pipe.one se manda una prueba a tu propio número y correo, y verifica que salió de verdad.</div></div>
@@ -500,6 +511,7 @@ function renderCfgSection(id) {
     <div class="cfg-sec-h"><div class="cfg-kick">${esc(sec.kick || "Configuración")}</div><h1>${esc(sec.title || sec.name || "")}</h1>${sec.desc ? `<p>${esc(sec.desc)}</p>` : ""}</div>
     ${body}
   </div>`, "cuenta")
+  if (id === "backup" && !window.__backup) api("/api/backup/status").then((b) => { window.__backup = b || { connected: false }; cfgOpen("backup") }).catch(() => { window.__backup = { connected: false } }) // el guard evita el bucle: cfgOpen vuelve a pasar por acá
   if (id === "send") loadSelfTest()
   if (id === "mail") loadSignatures()
   if (id === "storage") loadStorageCfg()
