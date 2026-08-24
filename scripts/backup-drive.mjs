@@ -29,7 +29,8 @@ const bundles = readdirSync(DIR).filter((f) => /^pipe-.*\.tar\.zst\.enc$/.test(f
 if (!bundles.length) { console.error("[backup-drive] no encontré ningún bundle"); process.exit(1) }
 const ultimo = bundles[bundles.length - 1]
 const ruta = `${DIR}/${ultimo}`, tam = statSync(ruta).size
-const mb = (b) => (b / 1048576).toFixed(0) + "MB"
+// en GB a partir del giga: "1540MB" se lee mucho peor que "1.5GB" y confunde sobre la escala real
+const mb = (b) => b >= 1073741824 ? (b / 1073741824).toFixed(1) + "GB" : (b / 1048576).toFixed(0) + "MB"
 
 // carpeta propia (la crea la primera vez). Con drive.file solo vemos lo NUESTRO, así que este listado ya está acotado.
 async function carpetaId() {
