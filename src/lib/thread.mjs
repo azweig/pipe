@@ -12,7 +12,18 @@ function contactsMap() { const f = "./data/contacts-map.json"; if (!existsSync(f
 // la misma conversación se partía (ej: 2 mensajes salientes sueltos bajo el nombre). Con el guard, ambos keyean igual → sin duplicado.
 function safeContactName(num) {
   const cm = contactsMap(); const nm = num && cm[num]; if (!nm) return null
-  let c = 0; for (const v of Object.values(cm)) if (v === nm && ++c > 1) return null // nombre en 2+ números → no keyear por nombre (podrían ser 2 personas)
+  // Contamos IDENTIDADES, no claves de agenda. WhatsApp lista a cada contacto DOS veces —por teléfono y por LID de
+  // 15 dígitos— con el MISMO nombre; contando claves crudas eso parecían dos personas, se bloqueaba el nombre y el
+  // hilo se keyeaba por número → la persona aparecía DUPLICADA en la bandeja (su historia en un hilo y el mensaje
+  // nuevo solo en otro) hasta que el re-key periódico los unía, hasta 20 minutos después. `phoneOf` resuelve el LID
+  // a su teléfono, así que las dos entradas colapsan en una. Dos TELÉFONOS distintos con el mismo nombre siguen
+  // bloqueando: ahí sí pueden ser dos personas.
+  const ids = new Set()
+  for (const [k, v] of Object.entries(cm)) {
+    if (v !== nm) continue
+    ids.add(phoneOf(k) || k)
+    if (ids.size > 1) return null
+  }
   return nm
 }
 const digitsOf = (s) => (s || "").replace(/[^\d]/g, "")

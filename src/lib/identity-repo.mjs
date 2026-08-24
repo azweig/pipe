@@ -14,11 +14,15 @@ export function safeName(contactsMap, num, manual = {}, convo = null) {
   // duplicados, o el mismo número con y sin el "9" de Argentina); bloquear por eso no evitaba ninguna fusión
   // y dejaba a gente con miles de mensajes mostrándose como número. `convo` = números con conversación real
   // (convoNumbers()); sin él se mantiene el comportamiento viejo (conservador).
-  let c = 0
+  // Se cuentan IDENTIDADES, no claves: WhatsApp lista a cada contacto por teléfono Y por LID con el mismo nombre,
+  // y eso parecía un choque. `phoneOf` colapsa el LID en su teléfono (misma corrección que safeContactName, que es
+  // la copia de esta regla que corre en la INGESTA).
+  const ids = new Set()
   for (const [k, v] of Object.entries(contactsMap)) {
     if (v !== nm) continue
     if (convo && k !== num && !convo.has(k)) continue
-    if (++c > 1) return null
+    ids.add(phoneOf(k) || k)
+    if (ids.size > 1) return null
   }
   return nm
 }
