@@ -3444,8 +3444,15 @@ async function viewEspacio(id) {
     ${(d.children || []).length ? `<div class="b" style="margin:16px 2px 8px">Subespacios</div>${d.children.map(child).join("")}` : ""}
     <div class="b" style="margin:16px 2px 8px">Mensajes recientes</div>
     ${(d.recent || []).map(msg).join("") || '<div class="sub">Sin mensajes que matcheen las reglas todavía.</div>'}
+    <button class="btn ghost btn-danger" style="margin-top:22px" onclick="delEspacio(${escj(d.id)},${escj(d.name || "")})">Eliminar espacio</button>
   </div>`)
 }
+// destructivo → nunca de un click: sheet con Cancelar / Eliminar en rojo
+window.delEspacio = (id, name) => openSheet(`<h2>¿Eliminar el espacio ${esc(name)}?</h2>
+  <div class="sub" style="margin:8px 0 16px">No se borra ningún mensaje: solo dejan de agruparse acá. Si tiene subespacios, quedan sueltos.</div>
+  <div class="row" style="gap:8px"><button class="btn ghost" style="flex:1" onclick="closeSheet()">Cancelar</button>
+    <button class="btn btn-danger" style="flex:1" onclick="doDelEspacio(${escj(id)})">Eliminar</button></div>`)
+window.doDelEspacio = async (id) => { await post("/api/espacio/delete", { id }); closeSheet(); go("#espacios") }
 let ruleType = "email"
 window.newRule = (id) => {
   ruleType = "email"
