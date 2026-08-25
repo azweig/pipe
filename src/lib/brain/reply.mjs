@@ -93,7 +93,7 @@ export async function sendReply(key, text, { channel, target } = {}) {
   // EXPLÍCITA: ahí sí hay que enviar de verdad. Es el caso del asistente, que contesta dentro de tu chat de WhatsApp
   // — sin esta excepción sus respuestas se guardaban como notas y nunca llegaban al teléfono.
   const selfToRoom = key === "self" && channel === "whatsapp" && /^![^:]+:/.test(String(target || ""))
-  if (key === "self" && !selfToRoom) return { ok: true, channel: "note", ...dbInsertSent("self", "note", text) }
+  if (key === "self" && !selfToRoom) return { ok: true, channel: "note", ...guardarEnviado("self", "note", text) }
   // destino EXPLÍCITO elegido por el usuario
   if (channel === "email" && target) {
     const last = lastEmailByAddress(target) || lastEmailInThread(key)
@@ -102,12 +102,12 @@ export async function sendReply(key, text, { channel, target } = {}) {
   }
   if (channel === "whatsapp" && target) {
     const r = await sendMatrix(target, text)
-    return r.ok ? { ok: true, channel: "whatsapp", ...dbInsertSent(key, "whatsapp", text) } : await waSendError(target)
+    return r.ok ? { ok: true, channel: "whatsapp", ...guardarEnviado(key, "whatsapp", text) } : await waSendError(target)
   }
   // canales de mensajería SIMPLES (slack/signal/telegram/…): dispatch genérico por el registro de canales (mismo comportamiento que el if-por-canal previo)
   if (target && isSimpleSender(channel) && SIMPLE_SENDERS[channel]) {
     const r = await SIMPLE_SENDERS[channel](target, text)
-    return r.ok ? { ok: true, channel, ...dbInsertSent(key, channel, text) } : r
+    return r.ok ? { ok: true, channel, ...guardarEnviado(key, channel, text) } : r
   }
   // AUTO (sin destino): email si el key es email, si no la última sala de WhatsApp
   if (String(key).startsWith("email:")) {
@@ -120,7 +120,7 @@ export async function sendReply(key, text, { channel, target } = {}) {
   const pfx = String(key).match(/^([a-z]+):(.+)$/)
   if (pfx && isSimpleSender(pfx[1]) && SIMPLE_SENDERS[pfx[1]]) {
     const r = await SIMPLE_SENDERS[pfx[1]](pfx[2], text)
-    return r.ok ? { ok: true, channel: pfx[1], ...dbInsertSent(key, pfx[1], text) } : r
+    return r.ok ? { ok: true, channel: pfx[1], ...guardarEnviado(key, pfx[1], text) } : r
   }
   // ¿el contacto se maneja por Unipile? (sus mensajes recientes vienen con account='unipile') → enviar por Unipile, NO por el
   // bridge (que para ese número está deslogueado a propósito). Cierra el híbrido: recibe y envía por Unipile.
@@ -128,13 +128,13 @@ export async function sendReply(key, text, { channel, target } = {}) {
     const u = lastUnipileJid(key)
     if (u?.jid) {
       const r = await unipileSend(u.jid, text)
-      return r.ok ? { ok: true, channel: "whatsapp", ...dbInsertSent(key, "whatsapp", text) } : { error: r.error }
+      return r.ok ? { ok: true, channel: "whatsapp", ...guardarEnviado(key, "whatsapp", text) } : { error: r.error }
     }
   }
   const room = lastWhatsappRoom(key)?.jid
   if (room) {
     const r = await sendMatrix(room, text)
-    return r.ok ? { ok: true, channel: "whatsapp", ...dbInsertSent(key, "whatsapp", text) } : await waSendError(room)
+    return r.ok ? { ok: true, channel: "whatsapp", ...guardarEnviado(key, "whatsapp", text) } : await waSendError(room)
   }
   // contacto HISTÓRICO (jid crudo <num>@s.whatsapp.net, sin sala del bridge) → iniciar chat nuevo por número
   const histJid = lastHistoricJid(key)?.jid
@@ -151,7 +151,7 @@ export async function sendReply(key, text, { channel, target } = {}) {
   const histNum = (histJid && phoneOf(histJid)) || numDeClave
   if (histNum && !MY_NUMBERS.has(histNum)) {
     const mxid = await startWhatsAppChat(histNum)
-    if (mxid) { const r = await sendMatrix(mxid, text); return r.ok ? { ok: true, channel: "whatsapp", ...dbInsertSent(key, "whatsapp", text) } : { error: "no se pudo enviar por WhatsApp (bridge)" } }
+    if (mxid) { const r = await sendMatrix(mxid, text); return r.ok ? { ok: true, channel: "whatsapp", ...guardarEnviado(key, "whatsapp", text) } : { error: "no se pudo enviar por WhatsApp (bridge)" } }
     return { error: "Estoy abriendo el chat de WhatsApp con este contacto (es la primera vez desde acá). Probá de nuevo en unos segundos." }
   }
   return { error: "No encuentro por qué canal responder (sin sala de WhatsApp ni dirección de email)." }
@@ -216,6 +216,16 @@ export async function sendReplyMedia(key, buffer, { channel, target, mime = "app
 // número queda tocable en WhatsApp. El archivo sigue sirviendo para agregarlo a la agenda.
 // Escapado según RFC 6350: en un vCard la coma, el punto y coma y la barra son separadores — un apellido con coma
 // partía la tarjeta en dos campos y el nombre llegaba cortado.
+// El mensaje YA SALIÓ por el cable cuando llegamos acá. insertSent reintenta ante SQLITE_BUSY, pero si la base
+// está muy trabada puede agotar los reintentos — y hasta ahora ese error subía y hacía fallar el envío ENTERO.
+// Eso es doblemente malo desde que hay cola de reintentos: para el contacto el mensaje llegó, pero vos ves un
+// error, la reserva del msgId se suelta y el reintento se lo manda DOS VECES. Preferimos perder la copia local
+// (la ingesta la recupera) antes que duplicarle el mensaje a alguien.
+const guardarEnviado = (thread, channel, text, extra) => {
+  try { return dbInsertSent(thread, channel, text, extra) }
+  catch (e) { console.error(`[send] salió por ${channel} pero no pude guardarlo local: ${e.message}`); return {} }
+}
+
 const vEsc = (s) => String(s || "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n")
 export function buildVCard({ name, phones = [], emails = [], org = "" }) {
   const nm = String(name || "").trim() || (phones[0] ? "+" + phones[0] : "Contacto")

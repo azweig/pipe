@@ -1147,6 +1147,9 @@ fetch('/api/wa-status?acc=${acc}').then(r=>r.json()).then(d=>{if(d.connected){do
     // SPA fallback
     res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-cache" }); res.end(readFileSync(join(process.cwd(), "public", "index.html")))
   } catch (e) {
+    // LOGUEAR, no solo responder. Antes esto devolvía el 500 en silencio: el usuario veía "database is locked" al
+    // enviar y en los logs no quedaba NADA, así que era indiagnosticable. La ruta y el mensaje alcanzan.
+    console.error(`[api] ${req.method} ${(req.url || "").split("?")[0]} → 500: ${e && e.message}`)
     json(res, 500, { error: e.message })
   }
 })
