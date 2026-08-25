@@ -84,8 +84,18 @@ const BRIDGES = {
 const isBotSender = (u) => /bot:/.test(u) // @whatsappbot:... etc (avisos de bridge, no mensajes reales)
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-async function api(method, path, token, body, raw) {
-  const r = await fetch(HS + path, { method, headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) }, body: body ? JSON.stringify(body) : undefined })
+// TIMEOUT (importante): sin él, un Synapse trabado deja el pedido colgado para siempre y el proxy corta con 502
+// del lado del usuario — pero el mensaje YA pudo haber salido. Pasó el 2026-08-25: un /api/send tardó 62 s.
+// Mejor fallar rápido y claro; la cola de reintentos del cliente se encarga del resto.
+const MATRIX_TIMEOUT_MS = Number(process.env.MATRIX_TIMEOUT_MS || 25000)
+async function api(method, path, token, body, raw, { timeoutMs = MATRIX_TIMEOUT_MS } = {}) {
+  let r
+  try {
+    r = await fetch(HS + path, { method, headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(timeoutMs) })
+  } catch (e) {
+    if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw new Error(`el servidor Matrix no respondió en ${Math.round(timeoutMs / 1000)}s`)
+    throw e
+  }
   return raw ? r : r.json()
 }
 
@@ -121,8 +131,17 @@ export async function sendMatrix(room, text) {
 }
 
 // sube un binario al content-repo de Matrix → devuelve mxc://
+// La subida lleva su propio timeout, MUY holgado: un video o un APK de 60 MB tarda, y cortarlo a los 25s como al
+// resto rompería envíos legítimos. Escala con el tamaño (2 min de piso, +1 min por cada 10 MB).
 async function uploadMedia(token, buffer, mime, filename = "voz.ogg") {
-  const r = await fetch(HS + `/_matrix/media/v3/upload?filename=${encodeURIComponent(filename)}`, { method: "POST", headers: { "Content-Type": mime, Authorization: "Bearer " + token }, body: buffer })
+  const timeoutMs = Math.max(120000, Math.ceil(buffer.length / (10 * 1024 * 1024)) * 60000)
+  let r
+  try {
+    r = await fetch(HS + `/_matrix/media/v3/upload?filename=${encodeURIComponent(filename)}`, { method: "POST", headers: { "Content-Type": mime, Authorization: "Bearer " + token }, body: buffer, signal: AbortSignal.timeout(timeoutMs) })
+  } catch (e) {
+    if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw new Error(`la subida al servidor Matrix no terminó en ${Math.round(timeoutMs / 1000)}s`)
+    throw e
+  }
   if (!r.ok) return null
   const d = await r.json().catch(() => ({}))
   return d.content_uri || null

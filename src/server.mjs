@@ -2,6 +2,7 @@
 import { createServer } from "http"
 import { createHash, randomBytes, timingSafeEqual } from "crypto"
 import { readFileSync, existsSync, openSync, unlinkSync, statSync, writeFileSync, createReadStream } from "fs"
+import { claimSend, finishSend, releaseSend, pruneSends } from "./lib/outbox-repo.mjs"
 import { loadEnv } from "./lib/env.mjs"
 import { spawn } from "child_process"
 import { extname, join, normalize } from "path"
@@ -707,7 +708,24 @@ const server = createServer(async (req, res) => {
         if (!secretOn && secretoPorNombre(r.key)) return json(res, 200, { ...r, existe: false })
         return json(res, 200, { ...r, name: previo?.name || r.name, existe: !!previo })
       }
-      if (path === "/api/send" && req.method === "POST") { const b = await body(req); let text = b.text; if (b.covert) { try { text = brain.encodeCovertFor(b.key, b.text) } catch (e) { return json(res, 400, { error: e.message }) } } const r = await brain.sendReply(b.key, text, { channel: b.channel, target: b.target }); if (r && !r.error) brain.invalidateThreads(); return json(res, r && r.error ? 400 : 200, b.covert && !(r && r.error) ? { ...r, cover: text } : r) } // covert: cifra→texto tapadera antes de mandar; devuelve el poema para "ver original". invalidateThreads → la bandeja refleja tu envío YA (antes tardaba hasta el TTL del cache)
+      // ENVÍO IDEMPOTENTE: el cliente manda un `msgId` propio y lo repite en cada reintento de su cola. Un 502 no
+      // significa "no se envió" (puede cortarse DESPUÉS de que el mensaje salió), así que sin esto reintentar
+      // duplicaría mensajes. Ver src/lib/outbox-repo.mjs.
+      if (path === "/api/send" && req.method === "POST") {
+        const b = await body(req)
+        const reserva = claimSend(b.msgId)
+        if (reserva.estado === "hecho") return json(res, 200, { ...(reserva.resultado || {}), dedup: true }) // ya salió: devolvemos lo de antes
+        if (reserva.estado === "en-curso") return json(res, 202, { pending: true })                          // otro reintento lo está mandando
+        let text = b.text
+        if (b.covert) { try { text = brain.encodeCovertFor(b.key, b.text) } catch (e) { releaseSend(b.msgId); return json(res, 400, { error: e.message }) } }
+        let r
+        try { r = await brain.sendReply(b.key, text, { channel: b.channel, target: b.target }) }
+        catch (e) { releaseSend(b.msgId); throw e } // falló de verdad → soltamos la reserva o el reintento esperaría eternamente
+        if (r && r.error) { releaseSend(b.msgId); return json(res, 400, r) }
+        finishSend(b.msgId, r)
+        brain.invalidateThreads() // la bandeja refleja tu envío YA (antes tardaba hasta el TTL del cache)
+        return json(res, 200, b.covert ? { ...r, cover: text } : r) // covert: devolvemos el texto tapadera para "ver original"
+      } // covert: cifra→texto tapadera antes de mandar; devuelve el poema para "ver original". invalidateThreads → la bandeja refleja tu envío YA (antes tardaba hasta el TTL del cache)
       // ── modo encubierto ("El Santo"): config por-contacto + preview en vivo ──
       if (path === "/api/covert/config" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setCovert(b.key, b.pass, b.style)) }
       if (path === "/api/covert/config") return json(res, 200, brain.getCovert(q.key || ""))
@@ -1156,3 +1174,8 @@ server.listen(PORT, process.env.HOST || "127.0.0.1", () => {
 // mantenimiento periódico (ensureStats + fixGroupLeaks) MOVIDO al cron maintain.mjs del daemon → ya NO bloquea el event loop del
 // HTTP (~3s cada 30 min). Acá queda solo el ensureStats del warm-up de arriba (una vez al boot, sin usuarios todavía = sin freeze).
 setInterval(() => { try { brain.listThreads({ limit: 600 }); brain.coachData() } catch {} }, 4 * 60000) // mantener calientes bandeja + coach
+// poda de los ids de envío ya usados (idempotencia): al arrancar y una vez por día. La tabla es chica, pero sin
+// esto crece para siempre.
+const podarEnvios = () => { try { const n = pruneSends(); if (n) console.log(`[outbox] ${n} ids de envío viejos podados`) } catch (e) { console.error("[outbox] poda:", e.message) } }
+setTimeout(podarEnvios, 30000)
+setInterval(podarEnvios, 24 * 3600000)

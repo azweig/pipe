@@ -5,7 +5,10 @@ let _reauthChecking = false
 // tocar "Ocultar" / 5 min inactivo se borra. Mientras está lleno, las requests lo mandan y el server devuelve también lo secreto.
 let _secretTok = null, _secretPinSet = false // _secretPinSet: hay un 2º PIN configurado → NO cachear/servir mensajes de local (el server filtra)
 window.secretOn = () => !!_secretTok
-const api = async (p, opts) => {
+// núcleo del cliente HTTP. Devuelve { status, data } — la COLA DE ENVÍO necesita el código para decidir si
+// reintentar (502/red) o rendirse (400): sin el status, un rechazo definitivo se reintentaría para siempre.
+// `api` (abajo) es el envoltorio de siempre, que solo devuelve el cuerpo.
+const apiFull = async (p, opts) => {
   try {
     if (_secretTok) opts = { ...opts, headers: { ...(opts && opts.headers), "x-secret-token": _secretTok } } // 🔒 mientras esté desbloqueado
     const r = await fetch(p, opts)
@@ -15,10 +18,19 @@ const api = async (p, opts) => {
       if (!_reauthChecking) { _reauthChecking = true; try { const s = await fetch("/api/auth/status").then((x) => x.json()).catch(() => null); if (s && s.authed === false) { location.reload(); return null } } finally { _reauthChecking = false } }
       return null
     }
-    return await r.json()
+    const data = await r.json().catch(() => null)
+    return { status: r.status, data }
   } catch { return null }
 }
+const api = async (p, opts) => { const r = await apiFull(p, opts); return r ? r.data : null }
 const post = (p, b) => api(p, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) })
+
+// COLA DE ENVÍO: estado acá arriba porque renderConv (más abajo) re-inyecta lo pendiente al pintar el hilo.
+// La lógica de reintento está junto a doSend.
+const OUTBOX_KEY = "outbox_v1"
+let _outbox = []
+try { _outbox = JSON.parse(localStorage.getItem(OUTBOX_KEY) || "[]") } catch {}
+const saveOutbox = () => { try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(_outbox.slice(-200))) } catch {} }
 // corrección ortográfica del navegador en el composer — OFF por defecto (no todos la quieren; con las líneas rojas se tipea más lento). Toggle con el botón "Aa".
 let _spell = localStorage.getItem("spellcheck") === "1"
 let _aiSearch = false // robotito: búsqueda con IA (Jarvis) en la bandeja — opt-in, no obligatorio
@@ -1772,7 +1784,10 @@ function dayLabel(ts) {
   return d.toLocaleDateString(LOC(), { day: "numeric", month: "long", ...(d.getFullYear() !== n.getFullYear() ? { year: "numeric" } : {}) })
 }
 const dateSep = (ts) => `<div class="daysep" data-label="${dayLabel(ts)}" style="text-align:center;margin:16px 0 10px"><span style="background:#e6eaf0;color:var(--muted);padding:4px 13px;border-radius:9px;font-size:12px;font-weight:600;text-transform:capitalize">${dayLabel(ts)}</span></div>`
-const timeEl = (it) => `<span style="font-size:10px;color:${it.dir === "out" ? "#6b9a80" : "var(--muted2)"};margin-left:8px;white-space:nowrap;float:right;position:relative;top:5px">${hhmm(it.ts)}${it.dir === "out" ? " ✓✓" : ""}</span>`
+// Estado de un mensaje propio: 🕐 en la cola (todavía no salió), ⚠️ rechazado, ✓✓ entregado al hub.
+// Antes SIEMPRE decía ✓✓, aunque el envío hubiera fallado — en mensajería eso es lo peor: creés que avisaste y no.
+const estadoEl = (it) => (it.pendiente ? " 🕐" : it.fallo ? " ⚠️" : " ✓✓")
+const timeEl = (it) => `<span style="font-size:10px;color:${it.dir === "out" ? (it.fallo ? "var(--urgent,#e2483d)" : "#6b9a80") : "var(--muted2)"};margin-left:8px;white-space:nowrap;float:right;position:relative;top:5px">${hhmm(it.ts)}${it.dir === "out" ? estadoEl(it) : ""}</span>`
 function convBubble(it) {
   if (it.channel === "ai-summary" || it.dir === "ai") {
     const rl = { day: "último día", week: "última semana", month: "último mes", all: "toda la historia" }[it.aiRange] || ""
@@ -1820,6 +1835,14 @@ function convBubble(it) {
 }
 function renderConv() {
   const d = convState
+  // Lo que todavía está en la cola se re-inyecta acá. Cualquier recarga del hilo reemplaza `items` con lo que trae
+  // el server, y sin esto la burbuja pendiente desaparecía de la vista aunque el envío siguiera vivo — parecería
+  // que el mensaje se perdió.
+  for (const it of _outbox) {
+    if (it.key !== d.key) continue
+    if ((d.items || []).some((x) => x.id === it.msgId)) continue
+    d.items = [...(d.items || []), { id: it.msgId, channel: it.channel || "whatsapp", dir: "out", name: hubName(), ts: it.ts, text: it.text, pendiente: true }]
+  }
   const remaining = (d.total || 0) - d.items.length
   const moreBtn = d.hasMore ? `<div class="card itemtap" style="text-align:center;color:var(--accent);margin-bottom:10px;padding:10px" onclick="loadOlder()">▲ Cargar mensajes anteriores${remaining > 0 ? ` (${remaining} más)` : ""}</div>` : ""
   // cuerpo con LÍNEAS SEPARADORAS de fecha (como WhatsApp)
@@ -2026,29 +2049,86 @@ window.pickTarget = () => {
 }
 window.setTarget = (i) => { convState.target = (convState.targets || [])[i]; closeSheet(); renderConv(); document.getElementById("msgInput")?.focus() }
 // envío REAL (bubble optimista + POST). Lo llama pickSend con el texto elegido.
+// ══════════ COLA DE ENVÍO (outbox) ══════════
+// Un 502 no quiere decir "no se envió": puede cortarse ANTES de que el pedido llegue (seguro reintentar) o DESPUÉS
+// de que el mensaje salió (reintentar lo duplicaría). Por eso cada mensaje lleva un `msgId` propio que se REPITE en
+// cada reintento; el server lo reserva y, si ya salió, devuelve el resultado viejo en vez de mandar de nuevo.
+// La cola vive en localStorage: sobrevive a recargar, cerrar la pestaña y quedarse sin internet.
+const nuevoMsgId = () => (crypto.randomUUID ? crypto.randomUUID() : "m" + Date.now() + Math.random().toString(36).slice(2))
+// espera creciente: 2s, 4s, 8s… hasta 1 min. Rápido cuando fue un hipo, sin martillar cuando el hub está caído.
+const esperaReintento = (intentos) => Math.min(60000, 2000 * Math.pow(2, Math.max(0, intentos - 1)))
+window.outboxPendientes = () => _outbox.length
+
+let _flushTimer = null, _flushing = false
+function programarFlush() {
+  clearTimeout(_flushTimer)
+  if (!_outbox.length) return
+  const proximo = Math.min(..._outbox.map((it) => it.nextAt || 0))
+  _flushTimer = setTimeout(flushOutbox, Math.max(500, proximo - Date.now()))
+}
+// marca la burbuja optimista según cómo fue el envío (si el hilo abierto es el de ese mensaje)
+function marcarBurbuja(msgId, cambios) {
+  if (!convState) return
+  const it = (convState.items || []).find((x) => x.id === msgId)
+  if (!it) return
+  Object.assign(it, cambios)
+  renderConv()
+}
+async function flushOutbox() {
+  if (_flushing || !_outbox.length) return
+  if (navigator.onLine === false) return programarFlush() // sin red no gastamos intentos
+  _flushing = true
+  try {
+    for (const it of [..._outbox]) {
+      if (it.nextAt && Date.now() < it.nextAt) continue
+      const r = await apiFull("/api/send", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: it.key, text: it.text, channel: it.channel, target: it.target, covert: it.covert, msgId: it.msgId }) })
+      const reintentar = (motivo) => {
+        it.intentos = (it.intentos || 0) + 1
+        it.nextAt = Date.now() + esperaReintento(it.intentos)
+        it.motivo = motivo
+        marcarBurbuja(it.msgId, { pendiente: true, fallo: null })
+      }
+      if (!r) { reintentar("sin conexión"); continue }                                     // red caída o sesión revisándose
+      if (r.status === 202 || (r.data && r.data.pending)) { reintentar("saliendo"); continue } // otro reintento lo está mandando
+      if (r.status >= 500 || !r.data) { reintentar("el hub no respondió"); continue }       // 502/503: reintentable
+      if (r.status >= 400 || r.data.error) {                                                // rechazo definitivo: reintentar no arregla nada
+        _outbox = _outbox.filter((x) => x.msgId !== it.msgId)
+        marcarBurbuja(it.msgId, { pendiente: false, fallo: (r.data && r.data.error) || `error ${r.status}` })
+        flash("❌ No se pudo enviar: " + ((r.data && r.data.error) || `error ${r.status}`))
+        continue
+      }
+      _outbox = _outbox.filter((x) => x.msgId !== it.msgId)                                  // salió (o el server lo dedupeó)
+      marcarBurbuja(it.msgId, { pendiente: false, fallo: null, ...(it.covert && r.data.cover ? { text: r.data.cover } : {}) })
+    }
+  } finally {
+    _flushing = false
+    saveOutbox()
+    programarFlush()
+  }
+}
+// Reintentar también cuando vuelve la red o cuando volvés a la app (no solo por temporizador).
+addEventListener("online", () => flushOutbox())
+addEventListener("visibilitychange", () => { if (!document.hidden) flushOutbox() })
+if (_outbox.length) setTimeout(flushOutbox, 1500) // quedaron mensajes de la sesión anterior
+
 window.doSend = async (text) => {
   text = (text || "").trim(); if (!text || !convState) return
   if (replyTo) { const q = (replyTo.text || "").replace(/\s+/g, " ").slice(0, 160); text = `> ${replyTo.name}: ${q}\n${text}`; replyTo = null } // cita (texto) al mensaje respondido; se limpia la barra al enviar
   const t = convState.target || {}
   const ch = t.channel || ((convState.key || "").startsWith("email:") ? "email" : "whatsapp")
-  const optId = "opt-" + Date.now()
   const covert = !!window._covertOn // modo encubierto: mando el flag; el server cifra→tapadera antes de enviar. La burbuja muestra tu texto real + badge.
-  convState.items = [...(convState.items || []), { id: optId, channel: ch, dir: "out", name: hubName(), ts: Date.now(), text, ...(covert ? { covert: { text, style: window._covertStyle || "poema" } } : {}) }]
+  // El id de la burbuja ES el msgId que va al server: así el reintento puede marcar la burbuja correcta, y el server
+  // reconoce el mensaje repetido y no lo manda dos veces.
+  const msgId = nuevoMsgId()
+  convState.items = [...(convState.items || []), { id: msgId, channel: ch, dir: "out", name: hubName(), ts: Date.now(), text, pendiente: true, ...(covert ? { covert: { text, style: window._covertStyle || "poema" } } : {}) }]
   convState.total = (convState.total || 0) + 1
   renderConv(); document.getElementById("msgInput")?.focus(); window.scrollTo(0, document.body.scrollHeight)
-  const r = await post("/api/send", { key: convState.key, text, channel: t.channel, target: t.target, covert })
-  // api() devuelve null ante CUALQUIER fallo de red (y ante un 401 transitorio). Mirar solo `r.error` dejaba la burbuja
-  // optimista puesta, con doble check, sobre un mensaje que nunca salió del navegador. En una app de mensajería eso es
-  // lo peor que puede pasar: creés que avisaste y no avisaste. `null` = falló, igual que un error explícito.
-  if (!r || r.error) {
-    convState.items = convState.items.filter((x) => x.id !== optId)
-    convState.total = Math.max(0, (convState.total || 1) - 1)
-    renderConv()
-    // devolver el texto al compositor es un lujo; AVISAR no lo es. Si algo falla al repintar, el aviso sale igual.
-    try { const inp = document.getElementById("msgInput"); if (inp && !inp.value) { inp.value = text; growComposer(inp) } } catch { /* el aviso es lo que importa */ }
-    alert("No se pudo enviar: " + ((r && r.error) || "sin conexión con el hub. Revisá tu red e intentá de nuevo."))
-  }
-  else if (covert && r && r.cover) { const it = (convState.items || []).find((x) => x.id === optId); if (it) it.text = r.cover } // guardá el poema real para "ver original"
+  // A la cola. La burbuja se queda con 🕐 hasta que salga de verdad: nada de ✓✓ sobre un mensaje que no salió,
+  // y nada de perder el texto porque el hub estaba reiniciando.
+  _outbox.push({ msgId, key: convState.key, text, channel: t.channel, target: t.target, covert, ts: Date.now(), intentos: 0, nextAt: 0 })
+  saveOutbox()
+  flushOutbox()
 }
 window.pickSend = (enc) => { const inp = document.getElementById("msgInput"); if (inp) inp.value = ""; doSend(decodeURIComponent(enc)) }
 // tocar un hueco libre del calendario: agrega "a las HH:MM" al mensaje (no envía), para que el owner revise y mande
