@@ -9,6 +9,7 @@ import { mkdirSync, readFileSync, existsSync, writeFileSync, unlinkSync } from "
 import { appendMessage } from "./lib/lock.mjs"
 import { owner } from "./lib/hub.mjs"
 import { tgRecord } from "./lib/telegram-store.mjs" // misma forma de fila que el importador de historial
+import { pullDesde } from "./lib/telegram-pull.mjs"
 
 mkdirSync("./data", { recursive: true })
 mkdirSync("./auth", { recursive: true })
@@ -73,27 +74,35 @@ async function store(msg, { live = true } = {}) {
   if (live) console.log(`${rec.dir === "out" ? "➡️ " : "💬"} [telegram] ${rec.name}: ${rec.text.slice(0, 80)}`)
 }
 
-// CATCH-UP: recupera lo que llegó mientras el proceso estuvo caído (dedup por id en la DB cubre solapamientos).
-async function catchUp() {
-  if (!lastTs) { lastTs = Date.now(); saveSince(); return } // primera vez: no bajar todo el historial
-  try {
-    const dialogs = await client.getDialogs({ limit: 25 })
-    let n = 0
-    for (const d of dialogs) {
-      try { for (const m of await client.getMessages(d.entity, { limit: 30 })) { const ts = m.date ? Number(m.date) * 1000 : 0; if (ts > lastTs) { await store(m, { live: false }); n++ } } } catch {}
-    }
-    if (n) console.log(`[telegram] catch-up: ${n} mensajes recuperados del downtime`)
-  } catch (e) { console.log("[telegram] catch-up err:", e.message) }
+const pull = (since) => pullDesde({ client, store, since })
+
+// CATCH-UP al arrancar: recupera lo que llegó mientras el proceso estuvo caído (dedup por id en la DB cubre solapamientos).
+if (!lastTs) { lastTs = Date.now(); saveSince() } // primera vez: no bajamos todo el historial
+else {
+  try { const { n } = await pull(lastTs); if (n) console.log(`[telegram] catch-up: ${n} mensajes recuperados del downtime`) }
+  catch (e) { console.log("[telegram] catch-up err:", e.message) }
 }
-await catchUp()
 
 client.addEventHandler((event) => store(event.message).catch(() => {}), new NewMessage({ incoming: true, outgoing: true }))
 
-// WATCHDOG: GramJS puede quedar "vivo pero sordo" (agota reintentos sin salir del proceso). Sondeamos cada 2 min;
-// si el ping falla, salimos → el daemon reinicia el lector (que reconecta + hace catch-up).
+// WATCHDOG. Son dos fallas distintas y hacen falta dos sondas:
+//  a) sin conexión → getMe() falla → salimos y el daemon reinicia el lector (reconecta + catch-up).
+//  b) "vivo pero sordo": la conexión responde pero GramJS dejó de entregar updates. getMe() NO lo ve — el
+//     2026-08-25 estuvo 16 h conectado sin entregar un solo mensaje. Para eso está el pull de respaldo de abajo.
 const heartbeat = () => { try { writeFileSync("/tmp/hb_telegram", String(Date.now())) } catch {} } // el reader está vivo → "conectado" aunque no haya mensajes
 heartbeat()
 setInterval(async () => {
   try { await Promise.race([client.getMe(), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 15000))]); heartbeat() }
   catch (e) { console.error("[telegram] watchdog: sin conexión → reinicio:", e.message); process.exit(1) }
 }, 120000)
+
+// PULL DE RESPALDO (caso b): con el stream sano esto no encuentra nada, porque el handler ya guardó y movió lastTs.
+// Si encuentra algo, el stream no lo entregó: lo guardamos igual y, si no fue una carrera, reiniciamos para resincronizar.
+setInterval(async () => {
+  try {
+    const { n, masViejo } = await pull(lastTs)
+    if (!n) return
+    console.log(`[telegram] pull de respaldo: ${n} mensajes que el stream no entregó`)
+    if (masViejo > 180000) { console.error("[telegram] stream sordo → reinicio para resincronizar"); process.exit(1) }
+  } catch (e) { console.log("[telegram] pull err:", e.message) }
+}, 300000)
