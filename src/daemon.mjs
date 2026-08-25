@@ -386,6 +386,8 @@ for (const [name, exec, args] of READERS) startReader(name, exec, args)
 const HB_WATCH = [
   { hb: "/tmp/hb_whatsapp", staleMs: 6 * 60000, readers: ["matrix", "unipile"] },
   { hb: "/tmp/hb_email", staleMs: 10 * 60000, readers: ["mail-imap", "mail-outlook"] },
+  { hb: "/tmp/hb_telegram", staleMs: 6 * 60000, readers: ["telegram"] }, // lo escribe cada 2 min; 3 fallados = colgado
+  { hb: "/tmp/hb_teams", staleMs: 6 * 60000, readers: ["teams"] },       // lo escribe cada 20s
 ]
 function readerWatchdog() {
   const now = Date.now()
