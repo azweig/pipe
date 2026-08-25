@@ -6,11 +6,11 @@ import { parseWhatsAppExport } from "../src/lib/wa-import.mjs"
 test("iOS (corchetes, AM/PM) + multi-línea + media + owner", () => {
   const txt = [
     "[12/31/23, 10:30:45 PM] John Doe: Hey how are you?",
-    "[12/31/23, 10:31:02 PM] Alvaro: Good!",
+    "[12/31/23, 10:31:02 PM] Ana: Good!",
     "esta es la segunda línea",
     "[12/31/23, 10:32:00 PM] John Doe: ‎image omitted",
   ].join("\n")
-  const m = parseWhatsAppExport(txt, { owner: "Alvaro", dateOrder: "MDY", tzOffsetMin: 0 })
+  const m = parseWhatsAppExport(txt, { owner: "Ana", dateOrder: "MDY", tzOffsetMin: 0 })
   assert.equal(m.length, 3)
   assert.equal(m[0].sender, "John Doe"); assert.equal(m[0].dir, "in"); assert.equal(m[0].text, "Hey how are you?")
   assert.equal(m[1].dir, "out"); assert.equal(m[1].text, "Good!\nesta es la segunda línea") // continuación
@@ -22,10 +22,10 @@ test("Android (guión, 24h) + línea de sistema ignorada", () => {
   const txt = [
     "31/12/2023, 22:00 - Los mensajes y las llamadas están cifrados de extremo a extremo.",
     "31/12/2023, 22:30 - María: hola!",
-    "31/12/2023, 22:31 - Alvaro: qué tal",
+    "31/12/2023, 22:31 - Ana: qué tal",
     "31/12/2023, 22:32 - María: <Media omitted>",
   ].join("\n")
-  const m = parseWhatsAppExport(txt, { owner: "Alvaro", dateOrder: "DMY" })
+  const m = parseWhatsAppExport(txt, { owner: "Ana", dateOrder: "DMY" })
   assert.equal(m.length, 3, "la línea de cifrado E2E (sistema) no cuenta")
   assert.equal(m[0].sender, "María"); assert.equal(m[0].dir, "in")
   assert.equal(m[1].dir, "out")

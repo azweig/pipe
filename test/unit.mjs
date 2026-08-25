@@ -320,11 +320,11 @@ test("audioExt: mime → extensión canónica que Whisper acepta por nombre de a
     assert.ok(r.html.startsWith("<div>"), "siempre hay parte HTML (si no, la firma se ve rota)")
   })
   test("composeEmailBody: con skip NO firma (el texto ya venía firmado)", () => {
-    const r = composeEmailBody("Saludos,\nAlvaro", "x", { skip: true })
-    assert.equal(r.text, "Saludos,\nAlvaro")
+    const r = composeEmailBody("Saludos,\nAna", "x", { skip: true })
+    assert.equal(r.text, "Saludos,\nAna")
   })
   test("looksSigned: detecta el separador -- para no duplicar la firma", () => {
-    assert.equal(looksSigned("Listo, mañana lo veo.\n\n--\nAlvaro"), true)
+    assert.equal(looksSigned("Listo, mañana lo veo.\n\n--\nAna"), true)
     assert.equal(looksSigned("Listo, mañana lo veo."), false)
     assert.equal(looksSigned(""), false)
   })

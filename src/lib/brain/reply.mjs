@@ -184,7 +184,7 @@ export async function sendReplyAudio(key, buffer, { channel, target, mime = "aud
 
 // ENVÍO DE IMAGEN / VIDEO / ARCHIVO: misma resolución de sala que sendReplyAudio. Solo canales bridgeados (no email/self).
 const _mimeExt = (m) => ({ "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/heic": "heic", "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm", "video/3gpp": "3gp", "application/pdf": "pdf" }[(m || "").toLowerCase()] || (m || "").split("/")[1] || "bin")
-export async function sendReplyMedia(key, buffer, { channel, target, mime = "application/octet-stream", filename = "archivo" } = {}) {
+export async function sendReplyMedia(key, buffer, { channel, target, mime = "application/octet-stream", filename = "archivo", caption = "", placeholder = "" } = {}) {
   if (!buffer || !buffer.length) return { error: "archivo vacío" }
   if (key === "self" || channel === "email" || String(key).startsWith("email:")) return { error: "este canal no soporta enviar archivos (van por WhatsApp/Telegram/etc., no por email)." }
   let room = (target && /^![^:]+:/.test(target)) ? target : null // sala Matrix (!<id>:<dominio>), agnóstico del dominio
@@ -195,21 +195,25 @@ export async function sendReplyMedia(key, buffer, { channel, target, mime = "app
     if (histNum && !MY_NUMBERS.has(histNum)) room = await startWhatsAppChat(histNum)
   }
   if (!room) return { error: "No encuentro un chat de mensajería para mandar el archivo." }
-  const r = await sendMatrixMedia(room, buffer, { mime, filename })
+  const r = await sendMatrixMedia(room, buffer, { mime, filename, caption })
   if (!r.ok) return { error: r.error || "no se pudo enviar el archivo (bridge)" }
   // ya salió por el bridge → copia local (CAS) para verlo en la app + registrar. Lock de DB no debe fallar el envío.
   const kind = /^image\//.test(mime) ? "image" : /^video\//.test(mime) ? "video" : "file"
   let media = null
   try { media = casPutBuffer(buffer, _mimeExt(mime), `${channel || "whatsapp"}:sent`) } catch (e) { console.error("[send-media] CAS:", e.message) }
-  const placeholder = kind === "image" ? "🖼 Imagen" : kind === "video" ? "📹 Video" : `📄 ${filename}`
+  const ph = placeholder || (kind === "image" ? "🖼 Imagen" : kind === "video" ? "📹 Video" : `📄 ${filename}`)
   let ins = {}
-  try { ins = dbInsertSent(key, channel || "whatsapp", placeholder, { media, mediaType: kind, filename: kind === "file" ? filename : null }) } catch (e) { console.error("[send-media] guardado local falló (archivo ya enviado):", e.message) }
+  try { ins = dbInsertSent(key, channel || "whatsapp", ph, { media, mediaType: kind, filename: kind === "file" ? filename : null }) } catch (e) { console.error("[send-media] guardado local falló (archivo ya enviado):", e.message) }
   return { ok: true, channel: channel || "whatsapp", media, mediaType: kind, ...ins }
 }
 
-// ENVIAR UN CONTACTO (vCard). WhatsApp y Telegram lo muestran como tarjeta de contacto, no como archivo suelto:
-// el destinatario lo agrega a su agenda con un toque. Se arma desde los datos que el hub YA tiene del contacto
-// (teléfonos y correos reales del hilo), así que no hay que escribir nada a mano.
+// ENVIAR UN CONTACTO (vCard), armado con los datos que el hub YA tiene del contacto — no hay que escribir nada.
+//
+// OJO con cómo llega: mautrix-whatsapp NO sabe mandar tarjetas de contacto nativas. Su conversor solo traduce
+// ContactMessage de WhatsApp HACIA Matrix (pkg/msgconv/wa-contact.go); en la dirección de salida, todo m.file
+// —incluido text/vcard— termina siendo un DocumentMessage, o sea un archivo. Verificado en v26.06.
+// Lo que sí podemos: mandarlo con LEYENDA (nombre + teléfono), así se lee de un vistazo sin abrir el .vcf, y el
+// número queda tocable en WhatsApp. El archivo sigue sirviendo para agregarlo a la agenda.
 // Escapado según RFC 6350: en un vCard la coma, el punto y coma y la barra son separadores — un apellido con coma
 // partía la tarjeta en dos campos y el nombre llegaba cortado.
 const vEsc = (s) => String(s || "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n")
@@ -230,7 +234,9 @@ export async function sendReplyContact(key, quien, { channel, target } = {}) {
   if (!phones.length && !emails.length) return { error: `no tengo teléfono ni correo de ${quien.name}` }
   const vcf = Buffer.from(buildVCard(quien), "utf8")
   const archivo = String(quien.name).replace(/[^\w\s.-]/g, "").trim().slice(0, 40) || "contacto"
-  return sendReplyMedia(key, vcf, { channel, target, mime: "text/vcard", filename: `${archivo}.vcf` })
+  const datos = [...phones.slice(0, 2).map((p) => "+" + String(p).replace(/\D/g, "")), ...emails.slice(0, 1)]
+  const caption = `👤 ${quien.name}${datos.length ? "\n" + datos.join("\n") : ""}`
+  return sendReplyMedia(key, vcf, { channel, target, mime: "text/vcard", filename: `${archivo}.vcf`, caption, placeholder: `👤 ${quien.name}` })
 }
 
 // ENVÍO DE STICKER: misma resolución de sala; manda un evento m.sticker (webp). El server ya convirtió la imagen a webp 512×512.
@@ -263,7 +269,7 @@ export async function forwardMessages(ids, key, { secretOn = false } = {}) {
   const rows = pedidos.map((id) => messageById(id, { secretOn })).filter(Boolean).sort((a, b) => (a.ts || 0) - (b.ts || 0))
   if (!rows.length) return { error: "No encontré los mensajes a reenviar." }
   // 🔒 Y CON el 2º PIN puesto tampoco: desbloquear es para LEER lo tuyo, no para sacarlo del hub. Reenviar manda el
-  // contenido a otra conversación —fuera del gateo— y desde ahí ya no hay vuelta atrás. Decisión de Alvaro (24-ago).
+  // contenido a otra conversación —fuera del gateo— y desde ahí ya no hay vuelta atrás. Decisión del dueño del hub.
   if (rows.some((m) => isSecretMsg(m))) return { error: "Este mensaje es de una línea oculta: no se puede reenviar." }
   let sent = 0, lastErr = null
   for (const m of rows) {

@@ -1,4 +1,4 @@
-// Watchdog de embeddings / Ollama (safety pedido por Alvaro). Cada corrida hace un embed de prueba que:
+// Watchdog de embeddings / Ollama (safety pedido por el dueño del hub). Cada corrida hace un embed de prueba que:
 //   (1) MANTIENE CALIENTE el modelo de embeddings → evita el cold-start que degradaba el RAG semántico del "segundo cerebro" a FTS.
 //   (2) chequea salud: si el embed falla N veces SEGUIDAS, reinicia Ollama (systemd local) para destrabarlo.
 // Lo corre el daemon cada ~5 min. Standalone (aislado como los otros crons). NO reinicia por un solo timeout (evita flapping).

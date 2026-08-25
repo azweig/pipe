@@ -1,7 +1,7 @@
 // REGLA DEL USUARIO: "WhatsApp/Telegram/etc NUNCA es spam". `bucketOf` la respeta en el detector estructural
 // (solo corre para emails puros) pero se la saltaba en la capa 2: el veredicto del LLM se aplicaba a TODOS los
-// canales. Resultado real: los canales de Telegram a los que Alvaro se suscribió a propósito (High Rollers,
-// Daily Drops, Stake Perú, VIP Notices) caían en spam y solo llegaba la notificación, nunca el mensaje.
+// canales. Resultado real: los canales de Telegram a los que el dueño del hub se suscribió a propósito caían
+// en spam y solo llegaba la notificación, nunca el mensaje.
 // Runner: node --test test/spam-channel-rule.mjs
 import "./_setup.mjs"
 import { test, before, after } from "node:test"

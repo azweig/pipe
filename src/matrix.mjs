@@ -146,14 +146,17 @@ export async function sendMatrixAudio(room, buffer, { mime = "audio/ogg", durati
 }
 
 // ENVÍO DE IMAGEN / VIDEO / ARCHIVO: sube al content-repo y manda m.image/m.video/m.file → los bridges lo entregan como adjunto.
-export async function sendMatrixMedia(room, buffer, { mime = "application/octet-stream", filename = "archivo", width = 0, height = 0 } = {}) {
+// `caption` (opcional): texto visible junto al archivo. Por MSC2530 va en `body` con el nombre real en `filename`;
+// el bridge de WhatsApp solo toma la leyenda cuando los dos campos existen y son DISTINTOS (si no, la ignora).
+export async function sendMatrixMedia(room, buffer, { mime = "application/octet-stream", filename = "archivo", width = 0, height = 0, caption = "" } = {}) {
   const token = await login()
   const mxc = await uploadMedia(token, buffer, mime, filename)
   if (!mxc) return { ok: false, error: "no se pudo subir el archivo al servidor Matrix" }
   const msgtype = /^image\//.test(mime) ? "m.image" : /^video\//.test(mime) ? "m.video" : "m.file"
   const info = { mimetype: mime, size: buffer.length }
   if (width && height) { info.w = width; info.h = height }
-  const content = { msgtype, body: filename, url: mxc, info }
+  const cap = String(caption || "").trim()
+  const content = cap && cap !== filename ? { msgtype, body: cap, filename, url: mxc, info } : { msgtype, body: filename, url: mxc, info }
   const r = await api("PUT", `/_matrix/client/v3/rooms/${encodeURIComponent(room)}/send/m.room.message/${Date.now()}${Math.random().toString(36).slice(2)}`, token, content)
   return { ok: !!(r && (r.event_id || r.eventId)), event: r?.event_id }
 }
