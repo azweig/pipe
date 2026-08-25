@@ -1858,7 +1858,7 @@ function renderConv() {
     <button id="aiBtn" onclick="aiMenu()" title="IA: sugerir respuesta / resumir chat / corrección" style="min-width:38px;height:38px;border-radius:50%;border:1.5px solid var(--accent);background:var(--bg2);font-size:15px;font-weight:800;color:var(--accent);cursor:pointer;flex-shrink:0">Ai</button>
     ${multi ? chanBtn : ""}<textarea id="msgInput" rows="1" aria-label="Escribí tu mensaje" placeholder="${tg.channel === "email" ? "Email…" : (window._covertOn ? "🕊️ Mensaje encubierto…" : "Mensaje…")}" autocomplete="off" spellcheck="${_spell}" oninput="growComposer(this)" onpaste="handlePaste(event)" style="flex:1;min-width:0;padding:9px 14px;border-radius:20px;border:1px solid var(--line);background:#fff;font-size:15px;resize:none;max-height:120px;overflow-y:auto;font-family:inherit;line-height:1.3;box-sizing:border-box" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}"></textarea>
     <button id="correctBtn" onclick="toggleCorrect()" title="${window._correctOn ? "Corregir con IA al enviar (tocá para enviar tal cual)" : "Enviar TAL CUAL, sin corregir (tocá para corregir)"}" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:${window._correctOn ? "var(--accent)" : "var(--bg2)"};color:${window._correctOn ? "#fff" : "var(--muted)"};font-size:16px;cursor:pointer;flex-shrink:0">✨</button>
-    ${tg.channel !== "email" ? `<input type="file" id="mediaInput" accept="image/*,video/*" multiple style="display:none" onchange="onMediaPick(this)"><input type="file" id="camInput" accept="image/*,video/*" capture="environment" style="display:none" onchange="onMediaPick(this)"><input type="file" id="stickerInput" accept="image/*" style="display:none" onchange="onStickerPick(this)"><button id="contactBtn" onclick="pickContacto()" title="Enviar un contacto" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:18px;cursor:pointer;flex-shrink:0">👤</button><button id="camBtn" onclick="pickCam()" title="Sacar una foto o video ahora" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:18px;cursor:pointer;flex-shrink:0;display:${_esMovil ? "block" : "none"}">📷</button><button id="attachBtn" onclick="pickMedia()" title="Enviar fotos o videos (podés elegir varios)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:18px;cursor:pointer;flex-shrink:0">📎</button><button id="stickerBtn" onclick="pickSticker()" title="Mandar una imagen como sticker" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:17px;cursor:pointer;flex-shrink:0">🩷</button><button id="micBtn" onclick="recVoice()" title="Nota de voz (manda el audio)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:19px;cursor:pointer;flex-shrink:0">🎤</button><button id="micAiBtn" onclick="recVoice(true)" title="Dictar con IA: hablás y te lo paso a texto (tal cual · corregido · mejorado)" style="min-width:44px;height:38px;border-radius:19px;border:1.5px solid var(--accent);background:var(--bg2);color:var(--accent);cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:1px;font-weight:800"><span style="font-size:16px">🎤</span><span style="font-size:10px">IA</span></button>` : ""}
+    ${tg.channel !== "email" ? `<input type="file" id="mediaInput" accept="image/*,video/*" multiple style="display:none" onchange="onMediaPick(this)"><input type="file" id="camInput" accept="image/*,video/*" capture="environment" style="display:none" onchange="onMediaPick(this)"><input type="file" id="stickerInput" accept="image/*" style="display:none" onchange="onStickerPick(this)"><button id="contactBtn" onclick="pickContacto()" title="Enviar un contacto" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:18px;cursor:pointer;flex-shrink:0">👤</button><button id="camBtn" onclick="pickCam()" title="Sacar una foto ahora" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:18px;cursor:pointer;flex-shrink:0">📷</button><button id="attachBtn" onclick="pickMedia()" title="Enviar fotos o videos (podés elegir varios)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:18px;cursor:pointer;flex-shrink:0">📎</button><button id="stickerBtn" onclick="pickSticker()" title="Mandar una imagen como sticker" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:17px;cursor:pointer;flex-shrink:0">🩷</button><button id="micBtn" onclick="recVoice()" title="Nota de voz (manda el audio)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:19px;cursor:pointer;flex-shrink:0">🎤</button><button id="micAiBtn" onclick="recVoice(true)" title="Dictar con IA: hablás y te lo paso a texto (tal cual · corregido · mejorado)" style="min-width:44px;height:38px;border-radius:19px;border:1.5px solid var(--accent);background:var(--bg2);color:var(--accent);cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:1px;font-weight:800"><span style="font-size:16px">🎤</span><span style="font-size:10px">IA</span></button>` : ""}
     <button id="sendBtn" onclick="sendMsg()" aria-label="Enviar mensaje" style="min-width:38px;height:38px;border-radius:50%;border:0;background:var(--accent);color:#fff;font-size:17px;cursor:pointer;flex-shrink:0">➤</button></div>`
   const composer = fwdSel ? fwdBar : (canSend ? `<div id="composer" style="position:fixed;bottom:82px;left:50%;transform:translateX(-50%);width:100%;max-width:480px;padding:8px 8px;background:var(--bg);border-top:1px solid var(--line);display:flex;flex-direction:column;align-items:stretch;z-index:26;box-sizing:border-box">${replyBar}${inputRow}</div>` : "")
   render(`<div class="screen" style="padding-top:6px;padding-bottom:${canSend || fwdSel ? "150px" : "20px"}">
@@ -2186,7 +2186,37 @@ window.pickMedia = () => document.getElementById("mediaInput")?.click()
 // CÁMARA directa: el input de galería lleva `multiple`, y con eso varios navegadores móviles dejan de ofrecer
 // "Tomar foto" en el menú del picker → no había forma de sacar una foto desde la web. Este input usa `capture`,
 // que abre la cámara de una.
-window.pickCam = () => document.getElementById("camInput")?.click()
+// 📷 En el celular alcanza con `capture` en el input. En la computadora ese atributo lo ignora el navegador —
+// por eso el botón estaba escondido y no había forma de sacar una foto desde la web. Acá abrimos la webcam.
+window.pickCam = () => { if (_esMovil) return document.getElementById("camInput")?.click(); abrirCamara() }
+var _camStream = null // var a propósito: _camStop puede correr desde closeSheet antes de que esta línea se evalúe
+// declaración (no const): closeSheet la llama y puede correr antes de que este bloque se inicialice
+function _camStop() { try { (_camStream || { getTracks: () => [] }).getTracks().forEach((t) => t.stop()) } catch {} ; _camStream = null }
+async function abrirCamara() {
+  if (!navigator.mediaDevices?.getUserMedia) return alert("Este navegador no da acceso a la cámara.")
+  openSheet(`<h2 style="margin:0 0 4px">Sacar una foto</h2><div class="sub" id="camMsg" style="margin:0 0 12px">Pidiendo permiso de cámara…</div>
+    <video id="camVid" autoplay playsinline muted style="width:100%;border-radius:12px;background:#000;display:none"></video>
+    <div class="row" style="gap:8px;margin-top:12px"><button class="btn ghost" style="flex:1" onclick="cerrarCamara()">Cancelar</button>
+      <button class="btn" style="flex:1" id="camShot" onclick="sacarFoto()" disabled>Sacar foto</button></div>`)
+  try { _camStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 } }, audio: false }) }
+  catch (e) { const m = document.getElementById("camMsg"); if (m) m.textContent = e && e.name === "NotAllowedError" ? "No diste permiso de cámara. Habilitalo en el candado de la barra de direcciones." : "No pude abrir la cámara: " + ((e && e.message) || ""); return }
+  const v = document.getElementById("camVid"); if (!v) return _camStop() // cerraron el sheet mientras pedía permiso
+  v.srcObject = _camStream; v.style.display = "block"
+  const m = document.getElementById("camMsg"); if (m) m.textContent = "Cuando estés listo, tocá Sacar foto."
+  const b = document.getElementById("camShot"); if (b) b.disabled = false
+}
+window.cerrarCamara = () => { _camStop(); closeSheet() }
+window.sacarFoto = () => {
+  const v = document.getElementById("camVid")
+  if (!v || !v.videoWidth) return alert("La cámara todavía no está lista.")
+  const c = document.createElement("canvas"); c.width = v.videoWidth; c.height = v.videoHeight
+  c.getContext("2d").drawImage(v, 0, 0, c.width, c.height)
+  c.toBlob((blob) => {
+    _camStop(); closeSheet()
+    if (!blob) return alert("No pude capturar la imagen.")
+    handleMediaChoice([new File([blob], `foto-${Date.now()}.jpg`, { type: "image/jpeg" })])
+  }, "image/jpeg", 0.9)
+}
 
 // ENVIAR UN CONTACTO: elegís a alguien que el hub ya conoce y se manda como tarjeta (vCard), no como archivo suelto
 // — del otro lado se agrega a la agenda con un toque. Los datos los arma el SERVER con lo que ya tiene del contacto.
@@ -3578,6 +3608,7 @@ window.openSheet = (html) => {
 }
 window.closeSheet = () => {
   if (!document.querySelector(".modal")) return
+  _camStop() // si el sheet era la cámara, apagarla (si no, la luz queda prendida)
   document.querySelectorAll(".modal").forEach((m) => m.remove())
   if (_sheetReturn?.focus) { try { _sheetReturn.focus() } catch {} ; _sheetReturn = null }
 }
