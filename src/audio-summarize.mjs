@@ -46,12 +46,21 @@ export async function summarizeBatch(rows) {
       if (!text || text.length < 2) { setMessageSummary(r.id, "(sin voz clara)"); clear(r.id); continue }
       // 🔒 la transcripción de una nota de voz tuya es dato máximamente privado: cadena sensible (local salvo escape explícito),
       // igual que graphify o learn. Antes salía por la cadena por defecto, o sea nube primero.
-      const sum = (await llm(audioSummaryPrompt(text), { area: "summarize", temperature: 0.2, task: "audio-summary", feature: "audio-summary", chain: smartChain({ sensitive: true, feature: "audio-summary" }) })).trim().replace(/^["']+|["']+$/g, "")
-      setMessageSummary(r.id, (sum || "(sin resumen)").slice(0, 600)); done++; clear(r.id)
+      // Resumir puede fallar (motor local por CPU que expira, sin cupo…) y eso NO invalida la transcripción, que ya
+      // la tenemos. Antes el fallo caía al catch de abajo y el mensaje terminaba marcado "(no se pudo transcribir)":
+      // mentira, y encima te dejaba sin lo único útil. Si no hay resumen, guardamos LO QUE DIJERON.
+      let sum = ""
+      try {
+        sum = (await llm(audioSummaryPrompt(text), { area: "summarize", temperature: 0.2, task: "audio-summary", feature: "audio-summary", chain: smartChain({ sensitive: true, feature: "audio-summary" }) })).trim().replace(/^["']+|["']+$/g, "")
+      } catch (e) {
+        console.error("[audio-summary]", r.id, "transcribió OK pero no pude resumir:", e.message)
+        setMessageSummary(r.id, text.slice(0, 600)); done++; clear(r.id); continue // la transcripción cruda vale más que un error
+      }
+      setMessageSummary(r.id, (sum || text).slice(0, 600)); done++; clear(r.id)
     } catch (e) {
       const n = (fails[r.id] || 0) + 1; fails[r.id] = n; dirty = true
       console.error("[audio-summary]", r.id, `intento ${n}/3:`, e.message)
-      if (n >= 3) { setMessageSummary(r.id, "(no se pudo transcribir)"); delete fails[r.id] } // dead-letter → sale del SELECT
+      if (n >= 3) { setMessageSummary(r.id, "(no se pudo transcribir)"); delete fails[r.id] } // dead-letter → sale del SELECT. Ahora solo llega acá si falló la TRANSCRIPCIÓN de verdad (el fallo de resumen se maneja arriba)
     }
   }
   if (dirty) setMeta("audio_summary_fails", JSON.stringify(fails))
