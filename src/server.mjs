@@ -1170,6 +1170,14 @@ server.on("error", (e) => {
   process.exit(1)
 })
 
+// KEEP-ALIVE — la causa de los 502 esporádicos. Node cierra las conexiones inactivas a los 5s (su default) pero
+// Caddy las reutiliza hasta 2 min: cuando Caddy manda un pedido por una conexión que Node acaba de cerrar, el
+// proxy devuelve 502. Por eso aparecían en CUALQUIER endpoint, sin dejar rastro del lado del server (el pedido
+// nunca llegaba a la app) y con el proceso perfectamente vivo. La regla es que el de arriba aguante MÁS que el
+// de abajo: 185s > los 2 min de Caddy, y headersTimeout por encima de keepAliveTimeout.
+server.keepAliveTimeout = Number(process.env.KEEPALIVE_MS || 185000)
+server.headersTimeout = server.keepAliveTimeout + 5000
+
 server.listen(PORT, process.env.HOST || "127.0.0.1", () => {
   console.log(`\n🧠 pipe web → http://localhost:${PORT}\n`)
   try { maintenance.ensureStats(); brain.listThreads({ limit: 600 }); setTimeout(() => { try { brain.coachData() } catch {} }, 2000) } catch (e) { console.error("warm:", e.message) } // auto-sanar stats + calentar bandeja + coach (para que Coach/IA abran instantáneo)
