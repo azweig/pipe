@@ -5,6 +5,23 @@ import { myNumbers, myEmails } from "./hub.mjs"
 const jf = (f) => (existsSync(`./data/${f}`) ? JSON.parse(readFileSync(`./data/${f}`, "utf8")) : null)
 // agenda del teléfono: número → nombre. Unifica el histórico (número) con el bridge/email (nombre).
 let _cm = null, _cmM = 0
+// ¿este nombre está guardado en tu agenda contra un TELÉFONO de verdad? Es la autoridad para decidir que alguien
+// es su propia persona y no el "nombre largo" de otro.
+//
+// Ojo con el detalle que importa: un mismo contacto aparece dos veces, con su número Y con su LID (el id interno
+// de WhatsApp, de 14-15 dígitos). un contacto guardado contra un LID es la MISMA persona que la del número, así que
+// tiene que poder seguir uniéndose. En cambio un nombre guardado contra un número propio es otra persona. Mirar solo "¿está en la agenda?" partía en dos la ficha del Alberto verdadero.
+const esLid = (d) => d.length >= 14 // los teléfonos reales no llegan a 14 dígitos ni con código de país
+export function telefonoGuardadoDe(nombre) {
+  const n = String(nombre || "").trim().toLowerCase()
+  if (!n) return null
+  for (const [k, v] of Object.entries(contactsMap())) {
+    if (String(v || "").trim().toLowerCase() !== n) continue
+    const d = String(k).replace(/[^\d]/g, "")
+    if (d.length >= 8 && !esLid(d)) return d
+  }
+  return null
+}
 function contactsMap() { const f = "./data/contacts-map.json"; if (!existsSync(f)) return {}; const m = statSync(f).mtimeMs; if (_cm && m === _cmM) return _cm; _cm = JSON.parse(readFileSync(f, "utf8")); _cmM = m; return _cm }
 // nombre de agenda de un número SOLO si es ÚNICO — MISMO guard de homónimo que safeName() en identity-repo. Debe usarse en TODO
 // keyeo por nombre de computeThread para que ingest y resolve-identities COINCIDAN. Antes computeThread usaba contactsMap()[num] crudo

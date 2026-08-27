@@ -1,6 +1,7 @@
 // threads-repo — lecturas de conversación (resúmenes de bandeja, mensajes por hilo, paginado, no-leídos, media).
 // Cuerpos movidos verbatim desde db.mjs; `db` = alias de handle() de db-core.
 import { handle as db } from "./db-core.mjs"
+import { waGroups } from "./brain/kernel/contacts.mjs"
 import { owner } from "./hub.mjs"
 import { isSecretSelfNote, secretSelfClause, secretThreadKeys, isSecretRow , secretGate} from "./secret.mjs"
 
@@ -80,6 +81,20 @@ export function searchThreadKeys(q, { limit = 60 } = {}) {
       }
     } catch { /* MATCH inválido → alcanza con lo que dio el LIKE */ }
   }
+  // NOMBRE DEL GRUPO: hasta acá solo se miró la CLAVE del hilo y el nombre del REMITENTE. En un grupo de WhatsApp
+  // la clave es `whatsapp:<creador>-<ts>@g.us` y los remitentes son números crudos: el título del grupo
+  // no aparece en ninguno de los dos, así que buscarlo no devolvía nada y el grupo era ilocalizable si además
+  // había quedado fuera de la ventana por recencia.
+  try {
+    const g = waGroups()
+    for (const [jid, nombre] of Object.entries(g)) {
+      if (!String(nombre || "").toLowerCase().includes(raw.toLowerCase())) continue
+      const k = "whatsapp:" + jid
+      if (keys.has(k)) continue
+      const row = d.prepare("SELECT last_ts FROM thread_stats WHERE thread=?").get(k)
+      if (row) keys.set(k, row.last_ts || 0)
+    }
+  } catch { /* sin mapa de grupos: la búsqueda sigue funcionando como antes */ }
   return [...keys.entries()].sort((a, b) => (b[1] || 0) - (a[1] || 0)).slice(0, limit).map(([k]) => k)
 }
 

@@ -8,7 +8,7 @@ import { peopleNodes, companyNodes, cardFor, fm } from "./kernel/vault.mjs"
 import { j } from "./kernel/jsonl.mjs"
 import { existsSync, readFileSync, writeFileSync } from "fs"
 import { investigateProfiles } from "../apify.mjs" // enriquecimiento social (Apify BYOK multi-cuenta, anónimo)
-import { phoneOf, MY_NUMBERS, nameExtends } from "../thread.mjs"
+import { phoneOf, MY_NUMBERS, nameExtends, telefonoGuardadoDe } from "../thread.mjs"
 import { ownerFirst, company } from "../hub.mjs"
 import { llm } from "../llm.mjs"
 import { threadTargets } from "./reply.mjs" // contactProfile compone los destinos del contacto (hoisted, llamada en runtime)
@@ -265,14 +265,22 @@ export async function personCard(nameOrKey, { force = false } = {}) {
   // (ej "Carlos Mendoza" del calendario → hilo "Carlos" con 20k msgs). Match por prefijo de primer nombre o ≥2 tokens.
   if (!t || (t.count || 0) === 0) {
     const reqN = norm(nameOrKey), reqTok = reqN.split(/\s+/).filter((x) => x.length > 2)
-    if (reqTok.length) {
+    // GUARDA DE HOMÓNIMO: si el nombre pedido está guardado en tu agenda contra un TELÉFONO propio, es su propia
+    // persona y no el "nombre completo" de nadie. Pasa cuando guardaste a alguien como "Ana Colegio Padres Cuotas": nameExtends()
+    // lo da por la versión con apellido de "Ana" —porque empieza igual— y su ficha termina con los teléfonos,
+    // el correo y la bio de la otra Ana.
+    // Contra un LID sí se une: ese registro es la MISMA persona que la del número.
+    if (reqTok.length && !telefonoGuardadoDe(nameOrKey)) {
       const cand = threads.filter((x) => !x.group && x.canon && (x.count || 0) > 5).map((x) => {
         const cn = norm(x.canon), ct = cn.split(/\s+/).filter((y) => y.length > 2)
         // superset REAL (con apellido), nunca dos nombres de pila idénticos → homónimos NO se fusionan (caso Diego Ramírez vs Diego hermano)
         const prefix = nameExtends(reqN, cn)
         return { x, prefix, overlap: ct.filter((y) => reqTok.includes(y)).length }
       }).filter((c) => c.prefix || c.overlap >= 2).sort((a, b) => (b.prefix - a.prefix) || (b.overlap - a.overlap) || ((b.x.count || 0) - (a.x.count || 0)))
-      if (cand[0]) { t = cand[0].x; setMeta("personalias:" + reqN, t.canon) } // aprender el alias para la próxima
+      // ambiguo = no adivinar: si más de un contacto encaja por prefijo, elegir "el primero" es una moneda al aire
+      // y el error se CACHEA como alias aprendido, así que se vuelve permanente.
+      const porPrefijo = cand.filter((c) => c.prefix).length
+      if (cand[0] && porPrefijo <= 1) { t = cand[0].x; setMeta("personalias:" + reqN, t.canon) } // aprender el alias para la próxima
     }
   }
   if (t && (t.count || 0) > 0) { const idKey = t.canon || t.name || t.key; try { const card = await buildPersonCard(idKey, t); card.key = card.key || t.key; setMeta("personcard:" + norm(idKey), JSON.stringify(card)); return enrichCard(card) } catch (e) { if (process.env.LLM_DEBUG) console.error("[personCard] buildPersonCard falló:", e.message) } }
