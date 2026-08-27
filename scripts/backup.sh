@@ -104,6 +104,10 @@ if [ -n "${BACKUP_RCLONE_REMOTE:-}" ] && command -v rclone >/dev/null; then
 #     script avisa y sigue: no es un error. Sube solo el bundle CIFRADO, no la media.
 if [ -f auth/google-backup-token.json ]; then
   node scripts/backup-drive.mjs || echo "  ⚠️  no pude subir a Drive (sigue el backup local)"
+  # 5d. LA MEDIA (data/cas): el bundle de arriba NO la incluye, así que sin esto el CAS quedaba con RPO infinito —
+  #     un restore sabía qué archivos debería haber (cas.db va en el bundle) y no tenía ninguno. Va por lotes e
+  #     incremental: el CAS es inmutable, así que a diario solo sube lo nuevo (segundos, no los 60 GB).
+  node scripts/backup-media.mjs || echo "  ⚠️  no pude subir la media a Drive (el bundle sí subió)"
 fi
 
 else
