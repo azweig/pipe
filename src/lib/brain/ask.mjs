@@ -121,7 +121,46 @@ RESPUESTA:`
 
 // ── ROUTER-SEARCH: barato primero (facetas), fallback al RAG completo (ask) ──
 // Es lo que llama el "robotito" de la bandeja. Ahorra tokens: BUSCAR = 0 tokens; PREGUNTA = síntesis chica con contexto ya filtrado.
+// ¿Es un pedido de BUSCAR MENSAJES, y no una pregunta? "busca cualquier mensaje que diga F12" no se contesta con
+// una síntesis: se contesta con los mensajes. Antes caía en el camino de respuesta y devolvía un resumen inútil
+// ("te enviaste mensajes con F12 en varias fechas") en vez de mostrarte los 102 que existen.
+const VERBOS_BUSCAR = /\b(busc(a|á|ame|arme)|mostr(ame|á)|mu[eé]strame|encontr(a|á)|encuentra|dame|list(a|á)me?|hay alg[uú]n)\b/i
+const PIDE_MENSAJES = /\b(mensaje|mensajes|chat|chats|texto|whatsapp|mail|correo|dij[eo]|diga|dice|contenga|escrib[ií])\b/i
+export function intentoBuscarTexto(q) {
+  const t = String(q || "")
+  if (!VERBOS_BUSCAR.test(t) || !PIDE_MENSAJES.test(t)) return null
+  // el término: primero entre comillas, si no lo que sigue a "diga/dice/contenga/con la palabra"
+  const comillas = t.match(/["'“”«»]([^"'“”«»]{2,60})["'“”«»]/)
+  let termino = comillas ? comillas[1] : (t.match(/\b(?:diga|dice|dijo|contenga|con la palabra|sobre)\s+([^\s,.?!]{2,40})/i)?.[1] || "")
+  if (!termino) {
+    // último recurso: la palabra más "rara" (con dígitos o mayúsculas), que es lo que uno busca literalmente
+    const cand = t.split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 2 && !VERBOS_BUSCAR.test(w) && !PIDE_MENSAJES.test(w))
+    termino = cand.find((w) => /\d/.test(w) || /^[A-Z0-9]{2,}$/.test(w)) || cand.sort((a, b) => b.length - a.length)[0] || ""
+  }
+  if (!termino) return null
+  // "que me haya enviado a mí mismo" / "mis notas" → solo lo tuyo
+  const soloMios = /\ba\s*m[ií]\s*mismo\b|\bmis notas\b|\bme envi[eé]\b|\bme mand[eé]\b/i.test(t)
+  return { termino: termino.replace(/^["'“”«»]|["'“”«»]$/g, ""), soloMios }
+}
+
 export async function routerSearch(question) {
+  // BUSCAR MENSAJES es distinto de PREGUNTAR: va primero y no gasta un solo token.
+  const buscar = intentoBuscarTexto(question)
+  if (buscar) {
+    let hide2 = new Set(), isSec2 = () => false
+    try { const S = await import("../secret.mjs"); hide2 = S.secretThreadKeys(); isSec2 = S.isSecretMsg } catch {}
+    const crudos = dbSearch(buscar.termino, { limit: 120, byRank: false }).filter((m) => !hide2.has(m.thread) && !isSec2(m))
+    const mios = crudos.filter((m) => m.dir === "out" || m.thread === "self")
+    // si pediste "a mí mismo" y no hay ninguno, NO devolvemos vacío: mostramos los demás y lo decimos. Un "no hay"
+    // cuando en realidad hay 102 en otros chats es la peor respuesta posible.
+    const usar = buscar.soloMios ? (mios.length ? mios : crudos) : crudos
+    const aviso = buscar.soloMios && !mios.length && crudos.length ? `No encontré ninguno que hayas enviado vos, pero hay ${crudos.length} donde aparece "${buscar.termino}".` : ""
+    return {
+      mode: "buscar", engine: "texto", type: "mensajes", tokens: 0, termino: buscar.termino, aviso,
+      total: usar.length,
+      results: usar.slice(0, 60).map((m) => ({ id: m.id, key: m.thread, name: m.name, ts: m.ts, channel: m.channel, dir: m.dir, text: cleanMsg(m.text || "").slice(0, 300) })),
+    }
+  }
   let r = activateGraph(question), engine = "grafo"       // v2: activación por difusión sobre el grafo ponderado
   if (!r.confident) { r = routeFacets(question); engine = "facetas" } // v1: presencia de facetas (fallback)
   if (!r.confident) { const a = await ask(question); return { mode: "rag", type: "answer", ...a, matched: r.matched } } // sin nodo claro → RAG de siempre (no perdemos recall)

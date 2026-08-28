@@ -64,9 +64,24 @@ export async function docTexto(media, filename = "") {
     else if (esOcr(ext)) { if (!ocrEnabled()) err = "OCR apagado"; else texto = await ocrCas(media, { timeoutMs: 240000 }) }
     else err = "formato no soportado: " + (ext || "?")
   } catch (e) { err = e.message }
-  texto = String(texto || "").slice(0, MAX_CHARS)
+  texto = arreglarOcr(String(texto || "")).slice(0, MAX_CHARS)
   guardarCache(media, texto, texto ? null : err || "sin texto")
   return texto
+}
+
+// ARREGLOS DE OCR. Los PDF escaneados salen con confusiones típicas (I↔H↔1↔l, C↔G) y en documentos peruanos eso
+// pega justo en las siglas que importan: "IGV" leído como "HGV" hace que una respuesta sobre impuestos se vea mal
+// aunque el monto esté bien. Solo palabras COMPLETAS y una lista corta: corregir de más arruina el texto original.
+const OCR_FIX = [
+  [/\b[H1lI][GC6]V\b/g, "IGV"],
+  [/\bR[UV][CG]\b/g, "RUC"],
+  [/\bS\s*[\/1|]\s*\.?\s*(?=\d)/g, "S/ "],
+  [/\bS\.?A\.?[CG]\b\.?/g, "S.A.C."],
+]
+function arreglarOcr(t) {
+  let out = String(t || "")
+  for (const [re, a] of OCR_FIX) out = out.replace(re, a)
+  return out
 }
 
 // PREBÚSQUEDA: elige qué documentos vale la pena abrir, SIN abrirlos. Puntúa por dónde aparecen las palabras de la

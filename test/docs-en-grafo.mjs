@@ -59,3 +59,12 @@ test("los dos caminos usan el recorte útil", () => {
 test("un candidato mucho más flojo que el mejor se descarta (gasta prompt y mete ruido)", () => {
   assert.match(DOC, /if \(mejor >= 10 && c\.p < mejor \* 0\.5\) continue/)
 })
+
+test("se corrigen las confusiones de OCR que pegan en las siglas peruanas", () => {
+  // un PDF escaneado devuelve "HGV" por "IGV": el monto está bien pero la respuesta se ve mal. Solo palabras
+  // COMPLETAS y lista corta — corregir de más arruina el texto original.
+  assert.match(DOC, /const OCR_FIX = \[/)
+  assert.match(DOC, /"IGV"/)
+  assert.match(DOC, /"RUC"/)
+  assert.match(DOC, /texto = arreglarOcr\(/)
+})

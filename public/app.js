@@ -1708,6 +1708,17 @@ window.aiSearchRun = async () => {
   if (!r) { box.innerHTML = `<div class="ibx-aians"><div class="ai-body">No pude buscar eso ahora — probá de nuevo.</div></div>`; return }
   const chip = r.mode === "facets" ? `<span class="ai-mode fast">⚡ ${esc(r.engine || "facetas")} · 0 tokens</span>` : `<span class="ai-mode">🧠 IA · RAG</span>`
   const srcChips = (r.threads || []).slice(0, 5).map((t) => `<span class="ai-src" onclick="go('#conv/${enck(t.key)}')" title="${esc(t.summary || "")}">${esc(t.name || t.key)}${t.path && t.path.length ? ` <i>· ${esc(t.path.join(" → "))}</i>` : ""}</span>`).join("")
+  // BUSCAR MENSAJES: te pedí los mensajes, no un resumen. Se muestran tal cual, con su fecha y quién los escribió.
+  if (r.type === "mensajes") {
+    const rows = (r.results || []).map((m) => `<div class="ai-res" onclick="go('#conv/${enck(m.key)}')">
+      <div class="ai-thumb ai-doc">${m.dir === "out" ? "↗" : "↘"}</div>
+      <div class="ai-res-tx"><b>${esc(String(m.text || "").slice(0, 140))}</b><span>${esc(m.name || "")} · ${ago(m.ts)}</span></div></div>`).join("")
+    const n = r.total || 0
+    box.innerHTML = `<div class="ibx-aians"><div class="ai-head">${IC_ROBOT}<span>${n} mensaje${n === 1 ? "" : "s"} con “${esc(r.termino || "")}”</span><span class="ai-mode fast">⚡ búsqueda · 0 tokens</span></div>
+      ${r.aviso ? `<div class="ai-body">${esc(r.aviso)}</div>` : ""}
+      ${rows || '<div class="ai-body">No encontré ninguno.</div>'}</div>`
+    return
+  }
   if (r.type === "find") { // "memes de messi", "documentación de globex" → resultados directos, sin síntesis
     const rows = (r.results || []).map((m) => {
       const label = m.filename || m.text || m.mediaType || "archivo"
