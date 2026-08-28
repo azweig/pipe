@@ -102,6 +102,17 @@ export function searchThreadKeys(q, { limit = 60 } = {}) {
 // más recientes, y con miles de conversaciones casi todas quedan afuera de esa ventana: un chat de hace unos meses
 // existía con cientos de mensajes y la app decía "no encontré chat con esa persona".
 // En un DM la clave ES el nombre canónico, así que esto resuelve el caso normal.
+// Con qué remitente (ghost de Matrix) escribe alguien en los grupos. Para quien NO tiene chat 1:1 es el único
+// rastro de su identidad — y de ahí sale el LID que el bridge sabe traducir a teléfono.
+export function senderPorNombre(nombre) {
+  const n = String(nombre || "").trim()
+  if (!n) return null
+  try {
+    const r = db().prepare("SELECT sender, COUNT(*) c FROM messages WHERE name=? AND sender IS NOT NULL AND sender<>'' GROUP BY sender ORDER BY c DESC LIMIT 1").get(n)
+    return (r && r.sender) || null
+  } catch { return null }
+}
+
 export function threadPorClave(clave) {
   const k = String(clave || "").trim()
   if (!k) return null

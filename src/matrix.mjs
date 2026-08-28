@@ -26,6 +26,23 @@ async function mautrixDb() {
   if (!existsSync(MAUTRIX_WA_DB)) { _mautrixDb = false; return null }
   try { const Database = (await import("better-sqlite3")).default; _mautrixDb = new Database(MAUTRIX_WA_DB, { readonly: true }); return _mautrixDb } catch { _mautrixDb = false; return null }
 }
+// LID → TELÉFONO. En grupos grandes WhatsApp ya no expone el número: manda un LID (identificador interno). El hub
+// veía "solo aparece en grupos y no tengo su número" y no te dejaba abrirle chat… teniendo el dato al lado: el
+// bridge mantiene whatsmeow_lid_map con miles de equivalencias. Esto lo usa.
+const _lidPn = new Map()
+export async function lidToPhone(lid) {
+  const l = String(lid || "").replace(/[^\d]/g, "")
+  if (!l) return null
+  if (_lidPn.has(l)) return _lidPn.get(l)
+  let pn = null
+  try {
+    const db = await mautrixDb()
+    if (db) { const r = db.prepare("SELECT pn FROM whatsmeow_lid_map WHERE lid=? OR lid=? LIMIT 1").get(l, l + "@lid"); pn = r && String(r.pn || "").replace(/[^\d]/g, "") || null }
+  } catch { /* base del bridge ocupada: no cacheamos el fallo, se reintenta */ return null }
+  _lidPn.set(l, pn)
+  return pn
+}
+
 const _roomKind = new Map() // mxid → 'dm'|'group' (cache; el tipo de sala no cambia)
 async function portalIsGroup(roomId) {
   if (_roomKind.has(roomId)) return _roomKind.get(roomId) === "group"

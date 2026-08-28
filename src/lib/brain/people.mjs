@@ -1,7 +1,7 @@
 // brain/people — PERSONAS: perfil de contacto, resolución (resolvePerson/personCard, superficie del bug de homónimos),
 // ficha+timeline unificada (personView), tarjetas pre-generadas (bio/temas/stats/en común) y fusión de hilos.
 // resolvePerson/personView son export function HOISTED (schedule/meetings los importan por la fachada). Pesado: vault+contacts+db.
-import { threadStats, threadMediaCount, threadChannelCounts, mergeThreads as dbMergeThreads, getMeta, setMeta, groupMembershipRows, threadCountFirstLast, threadChannelActivity, threadDirTimeline, threadInboundSenders, threadTextRowids, messagesByRowids, threadPorClave } from "../db.mjs"
+import { threadStats, threadMediaCount, threadChannelCounts, mergeThreads as dbMergeThreads, getMeta, setMeta, groupMembershipRows, threadCountFirstLast, threadChannelActivity, threadDirTimeline, threadInboundSenders, threadTextRowids, messagesByRowids, threadPorClave, senderPorNombre } from "../db.mjs"
 import { jidOfKey, canonOfKey, isContainerJid, norm, stripWA, initials, channelId, threadKind, numOf, plural, dedupEvents, isSelfThread, isOwnerName } from "./kernel/keys.mjs"
 import { contactName, photoFor, avatarMap, aliases, idmap, nameToCanonMap, jf, waGroups } from "./kernel/contacts.mjs"
 import { peopleNodes, companyNodes, cardFor, fm } from "./kernel/vault.mjs"
@@ -239,6 +239,16 @@ function enrichCard(card) {
 }
 
 // lectura RÁPIDA de la tarjeta de persona. Top pre-generadas; la cola larga se genera y CACHEA en la 1ra vista (nunca lenta 2 veces).
+// Con qué identidad escribe esta persona en los grupos. En grupos grandes es un ghost con LID, no un número.
+function grupoSenderDe(nombre) {
+  const n = String(nombre || "").trim()
+  if (!n) return null
+  try {
+    const r = senderPorNombre(n)
+    return r || null
+  } catch { return null }
+}
+
 export async function personCard(nameOrKey, { force = false } = {}) {
   const { listThreads } = await import("./inbox.mjs") // inbox ya es su propio módulo (M4b); people→inbox no tiene ciclo
   const norm = (s) => String(s || "").trim().toLowerCase()
@@ -296,7 +306,20 @@ export async function personCard(nameOrKey, { force = false } = {}) {
   if (t && (t.count || 0) > 0) { const idKey = t.canon || t.name || t.key; try { const card = await buildPersonCard(idKey, t); card.key = card.key || t.key; setMeta("personcard:" + norm(idKey), JSON.stringify(card)); return enrichCard(card) } catch (e) { if (process.env.LLM_DEBUG) console.error("[personCard] buildPersonCard falló:", e.message) } }
   const pv = personView(eff) // último recurso (grupos, o nombre sin hilo) — lo que se pueda al toque, sin bio
   const tl = pv.timeline || []
-  return enrichCard({ canon: pv.canon, name: pv.name, role: pv.role, tags: pv.tags, orgs: pv.orgs, bio: "", topics: [], shared: { groups: [], people: [] }, stats: { messages: tl.length, respMin: null, firstTs: tl[0]?.ts || 0, lastTs: tl[tl.length - 1]?.ts || 0 }, channels: (pv.byChannel || []).map((c) => ({ channel: c.channel, n: c.n, last: 0 })), links: pv.links || [], photo: null, group: pv.group, pending: true })
+  // SOLO APARECE EN GRUPOS: en grupos grandes WhatsApp ya no manda el número, manda un LID. El hub decía "no tengo
+  // su número" y te dejaba sin poder escribirle… teniendo el dato al lado: el bridge guarda la equivalencia
+  // LID→teléfono. Sin esto, cualquiera a quien conociste en un grupo grande es inalcanzable desde Pipe.
+  let telGrupo = null
+  try {
+    const ghost = grupoSenderDe(eff)
+    const lid = ghost && String(ghost).match(/lid-(\d+)/)?.[1]
+    if (lid) { const { lidToPhone } = await import("../../matrix.mjs"); telGrupo = await lidToPhone(lid) }
+    else if (ghost) { const d = String(ghost).match(/whatsapp_(\d{8,15})/)?.[1]; if (d) telGrupo = d } // ghost por número
+    // 🔒 si ese número pertenece a una línea oculta, NO lo devolvemos: pedir la ficha por nombre esquivaría el 2º PIN
+    // y el teléfono sería el oráculo (preguntás un nombre y el número confirma que la persona existe y está oculta).
+    if (telGrupo) { const oc = secretThreadKeys(); if (oc.has("whatsapp:" + telGrupo + "@s.whatsapp.net") || oc.has(telGrupo) || oc.has(String(pv.name || ""))) telGrupo = null }
+  } catch { /* sin bridge disponible: seguimos sin teléfono, como antes */ }
+  return enrichCard({ ...(telGrupo ? { contacts: { phones: [telGrupo], emails: [] } } : {}), canon: pv.canon, name: pv.name, role: pv.role, tags: pv.tags, orgs: pv.orgs, bio: "", topics: [], shared: { groups: [], people: [] }, stats: { messages: tl.length, respMin: null, firstTs: tl[0]?.ts || 0, lastTs: tl[tl.length - 1]?.ts || 0 }, channels: (pv.byChannel || []).map((c) => ({ channel: c.channel, n: c.n, last: 0 })), links: pv.links || [], photo: null, group: pv.group, pending: true })
 }
 
 // fusiona hilos: mueve <sources[]> al hilo <target>. Base del botón "es la misma persona".
