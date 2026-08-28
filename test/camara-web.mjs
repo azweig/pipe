@@ -9,11 +9,11 @@ import { readFileSync } from "node:fs"
 
 const APP = readFileSync("public/app.js", "utf8")
 
-test("el botón de cámara ya no se esconde en escritorio", () => {
-  const i = APP.indexOf('id="camBtn"')
-  assert.ok(i > 0, "no encontré el botón de cámara")
-  const btn = APP.slice(i, APP.indexOf("</button>", i))
-  assert.ok(!/display:\$\{_esMovil/.test(btn), "volvió a esconderse en escritorio")
+test("la cámara está disponible en escritorio (afuera o en el menú ⋯), nunca escondida por plataforma", () => {
+  // el botón dejó de tener id fijo: ahora es una acción del compositor, y sale afuera o dentro de "⋯" según cuánto
+  // la uses. Lo que NO puede volver es esconderla por ser escritorio, que era el bug original.
+  assert.match(APP, /\{ id: "cam", icono: "📷", label: "Sacar una foto"/)
+  assert.ok(!/display:\$\{_esMovil \? "block" : "none"\}[^`]*📷/.test(APP), "volvió a esconderse en escritorio")
 })
 
 test("en celular usa el input con `capture`; en escritorio abre la webcam", () => {

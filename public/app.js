@@ -1833,6 +1833,45 @@ function convBubble(it) {
   const on = fwdSel.has(it.id) // en modo selección: checkbox + toca para (de)seleccionar
   return `<div class="row" style="gap:8px;align-items:center;margin:2px 0;cursor:pointer;border-radius:12px;${on ? "background:color-mix(in srgb, var(--accent) 12%, transparent)" : ""}" onclick='toggleSel(${escj(it.id)})'><span style="font-size:19px;flex-shrink:0">${on ? "☑️" : "⬜"}</span><div style="flex:1;min-width:0;pointer-events:none">${bubble}</div></div>`
 }
+// ACCIONES DEL COMPOSITOR — eran 6 botones en fila y el input quedaba aplastado. Ahora salen afuera solo las DOS
+// que MÁS usás (contadas de verdad, no elegidas por mí) y el resto va a "…". Enviar y el corrector no entran acá:
+// enviar es obvio y el corrector cambia lo que se manda, así que tiene que estar siempre a la vista.
+const COMP_ACCIONES = [
+  // `fn` es una función de verdad (no un string que después se evalúa): las flechas resuelven al llamarse, así que
+  // no importa que pickMedia y compañía se definan más abajo en el archivo.
+  { id: "attach", icono: "📎", label: "Fotos y videos", fn: () => pickMedia() },
+  { id: "mic", icono: "🎤", label: "Nota de voz", fn: () => recVoice() },
+  { id: "cam", icono: "📷", label: "Sacar una foto", fn: () => pickCam() },
+  { id: "contacto", icono: "👤", label: "Enviar un contacto", fn: () => pickContacto() },
+  { id: "sticker", icono: "🩷", label: "Mandar un sticker", fn: () => pickSticker() },
+  { id: "micIA", icono: "🎙️", label: "Dictar con IA", fn: () => recVoice(true) },
+]
+const usoComposer = () => { try { return JSON.parse(localStorage.getItem("compUso") || "{}") } catch { return {} } }
+// se llama desde cada acción: así "los dos más usados" son los tuyos, y cambian con el tiempo
+window.marcarUso = (id) => { try { const u = usoComposer(); u[id] = (u[id] || 0) + 1; localStorage.setItem("compUso", JSON.stringify(u)) } catch {} }
+function accionesComposer() {
+  const u = usoComposer()
+  // desempate estable: 📎 y 🎤 primero mientras no haya historial, que es lo que usa cualquiera al principio
+  const orden = [...COMP_ACCIONES].sort((a, b) => (u[b.id] || 0) - (u[a.id] || 0) || COMP_ACCIONES.indexOf(a) - COMP_ACCIONES.indexOf(b))
+  const fuera = orden.slice(0, 2), dentro = orden.slice(2)
+  const redondo = "min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:18px;cursor:pointer;flex-shrink:0"
+  const btn = (a) => `<button id="cb-${a.id}" onclick="accComp(${escj(a.id)})" title="${esc(a.label)}" style="${redondo}">${a.icono}</button>`
+  window._compMas = dentro
+  return fuera.map(btn).join("") + (dentro.length ? `<button id="masBtn" onclick="masAcciones()" title="Más acciones" style="${redondo};font-size:16px">⋯</button>` : "")
+}
+// Despachador: el onclick lleva SOLO el id (escapado). Interpolar la función dentro de la string del handler es
+// justo el patrón que el guardián de XSS prohíbe, y con razón — acá los datos son constantes, pero el idioma malo
+// se copia a lugares donde no lo son.
+window.accComp = (id) => {
+  const a = COMP_ACCIONES.find((x) => x.id === id); if (!a) return
+  marcarUso(id)
+  try { a.fn() } catch (e) { console.error("[composer]", id, e.message) }
+}
+window.masAcciones = () => {
+  const items = (window._compMas || []).map((a) => `<button class="btn ghost" style="width:100%;margin-bottom:8px;display:flex;align-items:center;gap:10px;justify-content:flex-start" onclick="closeSheet();accComp(${escj(a.id)})"><span style="font-size:19px">${a.icono}</span>${esc(a.label)}</button>`).join("")
+  openSheet(`<h2 style="margin:0 0 4px">Más acciones</h2><div class="sub" style="margin:0 0 12px">Las que más usás quedan afuera solas.</div>${items}`)
+}
+
 function renderConv() {
   const d = convState
   // Lo que todavía está en la cola se re-inyecta acá. Cualquier recarga del hilo reemplaza `items` con lo que trae
@@ -1881,7 +1920,7 @@ function renderConv() {
     <button id="aiBtn" onclick="aiMenu()" title="IA: sugerir respuesta / resumir chat / corrección" style="min-width:38px;height:38px;border-radius:50%;border:1.5px solid var(--accent);background:var(--bg2);font-size:15px;font-weight:800;color:var(--accent);cursor:pointer;flex-shrink:0">Ai</button>
     ${multi ? chanBtn : ""}<textarea id="msgInput" rows="1" aria-label="Escribí tu mensaje" placeholder="${tg.channel === "email" ? "Email…" : (window._covertOn ? "🕊️ Mensaje encubierto…" : "Mensaje…")}" autocomplete="off" spellcheck="${_spell}" oninput="growComposer(this)" onpaste="handlePaste(event)" style="flex:1;min-width:0;padding:9px 14px;border-radius:20px;border:1px solid var(--line);background:#fff;font-size:15px;resize:none;max-height:120px;overflow-y:auto;font-family:inherit;line-height:1.3;box-sizing:border-box" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}"></textarea>
     <button id="correctBtn" onclick="toggleCorrect()" title="${window._correctOn ? "Corregir con IA al enviar (tocá para enviar tal cual)" : "Enviar TAL CUAL, sin corregir (tocá para corregir)"}" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:${window._correctOn ? "var(--accent)" : "var(--bg2)"};color:${window._correctOn ? "#fff" : "var(--muted)"};font-size:16px;cursor:pointer;flex-shrink:0">✨</button>
-    ${tg.channel !== "email" ? `<input type="file" id="mediaInput" accept="image/*,video/*" multiple style="display:none" onchange="onMediaPick(this)"><input type="file" id="camInput" accept="image/*,video/*" capture="environment" style="display:none" onchange="onMediaPick(this)"><input type="file" id="stickerInput" accept="image/*" style="display:none" onchange="onStickerPick(this)"><button id="contactBtn" onclick="pickContacto()" title="Enviar un contacto" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:18px;cursor:pointer;flex-shrink:0">👤</button><button id="camBtn" onclick="pickCam()" title="Sacar una foto ahora" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:18px;cursor:pointer;flex-shrink:0">📷</button><button id="attachBtn" onclick="pickMedia()" title="Enviar fotos o videos (podés elegir varios)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:18px;cursor:pointer;flex-shrink:0">📎</button><button id="stickerBtn" onclick="pickSticker()" title="Mandar una imagen como sticker" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:17px;cursor:pointer;flex-shrink:0">🩷</button><button id="micBtn" onclick="recVoice()" title="Nota de voz (manda el audio)" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);font-size:19px;cursor:pointer;flex-shrink:0">🎤</button><button id="micAiBtn" onclick="recVoice(true)" title="Dictar con IA: hablás y te lo paso a texto (tal cual · corregido · mejorado)" style="min-width:44px;height:38px;border-radius:19px;border:1.5px solid var(--accent);background:var(--bg2);color:var(--accent);cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:1px;font-weight:800"><span style="font-size:16px">🎤</span><span style="font-size:10px">IA</span></button>` : ""}
+    ${tg.channel !== "email" ? `<input type="file" id="mediaInput" accept="image/*,video/*" multiple style="display:none" onchange="onMediaPick(this)"><input type="file" id="camInput" accept="image/*,video/*" capture="environment" style="display:none" onchange="onMediaPick(this)"><input type="file" id="stickerInput" accept="image/*" style="display:none" onchange="onStickerPick(this)">${accionesComposer()}` : ""}
     <button id="sendBtn" onclick="sendMsg()" aria-label="Enviar mensaje" style="min-width:38px;height:38px;border-radius:50%;border:0;background:var(--accent);color:#fff;font-size:17px;cursor:pointer;flex-shrink:0">➤</button></div>`
   const composer = fwdSel ? fwdBar : (canSend ? `<div id="composer" style="position:fixed;bottom:82px;left:50%;transform:translateX(-50%);width:100%;max-width:480px;padding:8px 8px;background:var(--bg);border-top:1px solid var(--line);display:flex;flex-direction:column;align-items:stretch;z-index:26;box-sizing:border-box">${replyBar}${inputRow}</div>` : "")
   render(`<div class="screen" style="padding-top:6px;padding-bottom:${canSend || fwdSel ? "150px" : "20px"}">
