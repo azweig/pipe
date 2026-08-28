@@ -825,6 +825,8 @@ const server = createServer(async (req, res) => {
         return json(res, r && r.error ? 400 : 200, r)
       }
       // ── Grupos de la bandeja (auto editables + custom) ──
+      // ficha de un grupo de WhatsApp: quién habla más, de qué se habla y cuánto participás. 🔒 nunca de un hilo oculto.
+      if (path === "/api/group") { const k = q.key || ""; if (!k || (!secretOn && secret.secretThreadKeys().has(k))) return json(res, 200, { error: "no encuentro ese grupo" }); return json(res, 200, brain.grupoCard(k)) }
       if (path === "/api/groups") return json(res, 200, { groups: groups.listGroups(), contactGroups: groups.contactGroupsMap() })
       if (path === "/api/groups/save" && req.method === "POST") return json(res, 200, groups.saveGroup(await body(req)))
       if (path === "/api/groups/delete" && req.method === "POST") return json(res, 200, groups.deleteGroup((await body(req)).id))

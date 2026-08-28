@@ -106,6 +106,34 @@ export function searchThreadKeys(q, { limit = 60 } = {}) {
 // rastro de su identidad — y de ahí sale el LID que el bridge sabe traducir a teléfono.
 // Marca un mensaje ya guardado como respuesta a una historia. Se hace DESPUÉS de enviar: el envío usa el camino
 // normal (que ya sabe resolver salas, cifrar y registrar), y acá solo se le pone la etiqueta.
+// FICHA DE GRUPO: quién habla más, cuánto participás vos y desde cuándo. Todo sale de los mensajes con SQL — sin
+// IA y sin costo, que es lo que permite mostrarlo al abrir el grupo en vez de tener que pre-generarlo.
+export function grupoStats(clave) {
+  const k = String(clave || "")
+  if (!k) return null
+  const d = db()
+  const tot = d.prepare("SELECT COUNT(*) n, MIN(ts) primero, MAX(ts) ultimo FROM messages WHERE thread=?").get(k)
+  if (!tot || !tot.n) return null
+  const mios = d.prepare("SELECT COUNT(*) n, MAX(ts) ultimo FROM messages WHERE thread=? AND dir='out'").get(k)
+  // los que más hablan: por nombre, que es como los ve el usuario (un mismo número puede cambiar de nombre, y al
+  // revés dos números de la misma persona deben sumar bajo su nombre)
+  const top = d.prepare(`SELECT name, COUNT(*) n, MAX(ts) ultimo FROM messages
+    WHERE thread=? AND dir='in' AND name IS NOT NULL AND name<>'' GROUP BY name ORDER BY n DESC LIMIT 10`).all(k)
+  const personas = d.prepare("SELECT COUNT(DISTINCT name) n FROM messages WHERE thread=? AND dir='in' AND name IS NOT NULL AND name<>''").get(k)
+  return { total: tot.n, primero: tot.primero, ultimo: tot.ultimo, mios: mios.n || 0, mioUltimo: mios.ultimo || 0, personas: personas.n || 0, top }
+}
+
+// temas ya extraídos por el enriquecedor (397 de 675 grupos los tienen). Si no están, la ficha los omite en vez de
+// inventarlos: un tema equivocado es peor que ninguno.
+export function grupoTemas(clave) {
+  try {
+    const r = db().prepare("SELECT keywords, tags, summary FROM conversations WHERE thread=?").get(String(clave || ""))
+    if (!r) return { temas: [], resumen: "" }
+    const j = (v) => { try { const a = JSON.parse(v || "[]"); return Array.isArray(a) ? a.filter(Boolean).map(String) : [] } catch { return [] } }
+    return { temas: [...new Set([...j(r.tags), ...j(r.keywords)])].slice(0, 10), resumen: String(r.summary || "") }
+  } catch { return { temas: [], resumen: "" } }
+}
+
 export function marcarComoHistoria(id) {
   if (!id) return 0
   return withRetry(() => db().prepare("UPDATE messages SET tag='historia' WHERE id=?").run(String(id))).changes

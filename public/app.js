@@ -3003,6 +3003,9 @@ async function viewPersonScreen(nameOrKey) {
     <div class="sub">Este contacto incluye una línea protegida por tu 2º PIN. Desbloqueala con el botón <b>PIN</b> de la bandeja para ver su ficha, sus pendientes y poder resumirlo.</div></div>`, ST.tab)
   const nm = p.name || decodeURIComponent(nameOrKey), ini = esc(_ini(nm))
   window._personKey = nameOrKey // para refrescar este perfil tras configurar el modo encubierto
+  // FICHA DE GRUPO: quién habla más, de qué se habla y cuánto participás. Los grupos no tenían nada de esto —
+  // entrabas y solo veías mensajes, sin saber si es un grupo donde hablás o uno que solo mirás.
+  const gc = (p.key && p.isGroup) ? await api("/api/group?key=" + enck(p.key)).catch(() => null) : null
   const cov = (p.key && !p.isGroup) ? await api("/api/covert/config?key=" + enck(p.key)).catch(() => null) : null // estado del modo encubierto de este contacto
   const ap = (p.key && !p.isGroup) ? await api("/api/autopilot/config?key=" + enck(p.key)).catch(() => null) : null // estado del piloto automático
   const covLbl = cov?.styles?.find((s) => s.id === cov.style)?.label || cov?.style || ""
@@ -3047,6 +3050,16 @@ async function viewPersonScreen(nameOrKey) {
     <div class="pr-stats">${stat(respTxt, "responde", "good")}${stat(enComun || "—", "en común")}${stat(relDur(p.stats?.firstTs), "se conocen")}</div>
     ${(p.topics || []).length ? `<div class="mtg-card"><div class="mtg-eyebrow">De qué hablan</div>${p.topics.map((t) => `<div class="pr-topic"><span class="pr-recent-dot"></span><span>${esc(t)}</span></div>`).join("")}</div>` : ""}
     ${(p.groupMembers && p.groupMembers.length) ? `<div class="mtg-card"><div class="mtg-eyebrow">Miembros del grupo · ${p.groupMembers.length}</div><div class="pr-chips">${p.groupMembers.map((m) => `<span class="pr-chip" style="cursor:pointer" onclick="viewPerson('${enck(m.name)}')">${esc(m.name)}${m.n > 1 ? ` <b>·${m.n}</b>` : ""}</span>`).join("")}</div></div>` : ""}
+    ${gc && !gc.error ? `<div class="mtg-card"><div class="mtg-eyebrow">📊 Cómo se mueve este grupo</div>
+      <div class="sub" style="margin:6px 0 12px">${gc.total.toLocaleString("es-PE")} mensajes · ${gc.personas} personas · desde ${new Date(gc.primero).getFullYear()}</div>
+      <div class="pr-common"><span class="pr-common-l">Vos</span><div class="sub" style="flex:1">${gc.yo.n.toLocaleString("es-PE")} mensajes (${gc.yo.pct}%) · ${esc(gc.yo.perfil)}${gc.yo.puesto ? ` · puesto ${gc.yo.puesto}` : ""}</div></div>
+      ${(gc.temas || []).length ? `<div class="pr-common"><span class="pr-common-l">Temas</span><div class="pr-chips">${gc.temas.slice(0, 8).map((t) => `<span class="pr-chip">${esc(t)}</span>`).join("")}</div></div>` : ""}
+      <div class="pr-common-l" style="margin:12px 0 6px">Quiénes hablan más</div>
+      ${(gc.top || []).slice(0, 8).map((t) => `<div class="row" style="gap:8px;align-items:center;margin-bottom:6px">
+        <div style="flex:0 0 40%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">${esc(t.nombre)}</div>
+        <div style="flex:1;height:7px;background:var(--bg2);border-radius:4px;overflow:hidden"><div style="width:${Math.max(2, t.pct)}%;height:100%;background:var(--accent)"></div></div>
+        <div class="tiny muted" style="flex:0 0 auto;min-width:52px;text-align:right">${t.pct}%</div></div>`).join("")}
+    </div>` : ""}
     ${(people.length || groups.length) ? `<div class="mtg-card"><div class="mtg-eyebrow">En común</div>
       ${groups.length ? `<div class="pr-common"><span class="pr-common-l">Grupos</span><div class="pr-chips">${groups.map((g, i) => `<span class="pr-chip grp" style="cursor:pointer" onclick="grpCardSheet(${i})">👥 ${esc(g.name)}${(g.members || []).length ? ` <b>·${g.members.length}</b>` : ""}</span>`).join("")}</div></div>` : ""}
       ${people.length ? `<div class="pr-common"><span class="pr-common-l">Personas</span><div class="pr-chips">${people.map((pp) => `<span class="pr-chip" onclick="viewPerson('${enck(pp.name)}')">${esc(pp.name)}${pp.shared > 1 ? ` <b>·${pp.shared}</b>` : ""}</span>`).join("")}</div></div>` : ""}

@@ -1,7 +1,7 @@
 // brain/people — PERSONAS: perfil de contacto, resolución (resolvePerson/personCard, superficie del bug de homónimos),
 // ficha+timeline unificada (personView), tarjetas pre-generadas (bio/temas/stats/en común) y fusión de hilos.
 // resolvePerson/personView son export function HOISTED (schedule/meetings los importan por la fachada). Pesado: vault+contacts+db.
-import { threadStats, threadMediaCount, threadChannelCounts, mergeThreads as dbMergeThreads, getMeta, setMeta, groupMembershipRows, threadCountFirstLast, threadChannelActivity, threadDirTimeline, threadInboundSenders, threadTextRowids, messagesByRowids, threadPorClave, senderPorNombre } from "../db.mjs"
+import { threadStats, threadMediaCount, threadChannelCounts, mergeThreads as dbMergeThreads, getMeta, setMeta, groupMembershipRows, threadCountFirstLast, threadChannelActivity, threadDirTimeline, threadInboundSenders, threadTextRowids, messagesByRowids, threadPorClave, senderPorNombre, grupoStats, grupoTemas } from "../db.mjs"
 import { jidOfKey, canonOfKey, isContainerJid, norm, stripWA, initials, channelId, threadKind, numOf, plural, dedupEvents, isSelfThread, isOwnerName } from "./kernel/keys.mjs"
 import { contactName, photoFor, avatarMap, aliases, idmap, nameToCanonMap, jf, waGroups } from "./kernel/contacts.mjs"
 import { peopleNodes, companyNodes, cardFor, fm } from "./kernel/vault.mjs"
@@ -247,6 +247,47 @@ function grupoSenderDe(nombre) {
     const r = senderPorNombre(n)
     return r || null
   } catch { return null }
+}
+
+// FICHA DE GRUPO — el equivalente de la ficha de persona, para grupos: quién habla más, de qué se habla y cuánto
+// participás vos. Los grupos no tenían nada de esto: entrabas y solo veías la lista de mensajes, sin idea de si es
+// un grupo donde hablás o uno que solo mirás.
+//
+// Se calcula al vuelo con SQL (sin IA, sin costo) salvo los temas, que ya los dejó el enriquecedor. Si un grupo no
+// los tiene, se omiten: un tema inventado es peor que ninguno.
+export function grupoCard(key) {
+  const st = grupoStats(key)
+  if (!st) return { error: "no encuentro ese grupo" }
+  const { temas, resumen } = grupoTemas(key)
+  const pct = (n) => (st.total ? Math.round((n / st.total) * 1000) / 10 : 0)
+  // el `name` de un mensaje de grupo suele ser el número crudo: lo pasamos por la agenda, que es como los ves en
+  // WhatsApp. Sin esto la lista de "quién habla más" es una columna de teléfonos, ilegible.
+  const lindo = (n) => {
+    const raw = stripWA(String(n || "")).trim()
+    if (!/^\+?\d[\d\s-]{6,}$/.test(raw)) return raw // ya es un nombre
+    const d = raw.replace(/\D/g, "")
+    return contactName(d) || contactName(d + "@s.whatsapp.net") || "+" + d
+  }
+  // dos entradas del mismo contacto (dos números suyos, o número y nombre) tienen que sumar, no competir
+  const porNombre = new Map()
+  for (const t of st.top || []) {
+    const nm = lindo(t.name)
+    const prev = porNombre.get(nm)
+    if (prev) { prev.n += t.n; prev.ultimo = Math.max(prev.ultimo, t.ultimo) } else porNombre.set(nm, { nombre: nm, n: t.n, ultimo: t.ultimo })
+  }
+  const top = [...porNombre.values()].sort((a, b) => b.n - a.n).map((t) => ({ ...t, pct: pct(t.n) }))
+  // dónde caés vos entre los que hablan: es la respuesta a "¿participo o solo miro?"
+  const puesto = [...top.map((t) => t.n), st.mios].sort((a, b) => b - a).indexOf(st.mios) + 1
+  const miPct = pct(st.mios)
+  return {
+    key, total: st.total, personas: st.personas, primero: st.primero, ultimo: st.ultimo,
+    top, temas, resumen,
+    yo: {
+      n: st.mios, pct: miPct, puesto, ultimo: st.mioUltimo,
+      // etiqueta honesta en vez de un número suelto: 0% no es lo mismo que "escribo poco"
+      perfil: st.mios === 0 ? "solo lees" : miPct < 2 ? "casi no escribes" : miPct < 10 ? "participas poco" : miPct < 25 ? "participas" : "sos de los que más habla",
+    },
+  }
 }
 
 export async function personCard(nameOrKey, { force = false } = {}) {
