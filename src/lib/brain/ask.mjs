@@ -68,8 +68,25 @@ export async function retrieveContext(question, { limit = 14, semantic: useSeman
   for (const it of semantic) { if (seen.has(it.id) || !visibleSem(it)) continue; seen.add(it.id); ctxItems.push({ ts: it.ts, label: it.kind === "note" ? "🧠 " + it.ref : it.ref, text: it.text }) }
   try { for (const r of dbSearch(question, { limit: 22, byRank: true })) { const k = "fts:" + r.id; if (seen.has(k) || secretKeys.has(r.thread) || isSecret(r)) continue; seen.add(k); ctxItems.push({ ts: r.ts, label: `${r.channel} ${stripWA(r.grp || r.name || "")}`, text: cleanMsg(r.text) }) } } catch {}
   try { for (const r of dbSearchBody(question, { limit: 8 })) { const k = "body:" + r.thread + ":" + r.ts; if (seen.has(k) || secretKeys.has(r.thread) || isSecret({ ...r, channel: "email" })) continue; seen.add(k); ctxItems.push({ ts: r.ts, label: `email ${stripWA(r.name || "")}`, text: cleanMsg(String(r.snip || "").replace(/<[^>]+>/g, " ")) }) } } catch {}
+  // 4) ADJUNTOS: contratos, adendas, facturas, planillas. El texto vive DENTRO del archivo, así que ninguna de las
+  // búsquedas de arriba lo ve — el cerebro contestaba "no hay información" teniendo el dato en un PDF. Primero una
+  // PREBÚSQUEDA barata (nombre de archivo + mensaje + hilo) elige unos pocos candidatos; recién sobre esos se
+  // extrae, y queda cacheado. Van al final y marcados `doc` para que el prompt les dé más espacio que a un chat.
+  try {
+    const { docsRelevantes } = await import("../doc-text.mjs")
+    const fuera = (c) => secretKeys.has(c.thread) || isSecret(c)
+    for (const d of await docsRelevantes(question, { limit: 3, excluir: fuera })) {
+      const k = "doc:" + d.media
+      if (seen.has(k)) continue
+      seen.add(k)
+      ctxItems.push({ ts: d.ts, label: `📄 ${d.filename || "documento"}`, text: d.texto, doc: true })
+    }
+  } catch { /* sin extracción disponible: el cerebro responde como antes */ }
   ctxItems.sort((a, b) => (a.ts || 0) - (b.ts || 0))
-  return { items: ctxItems.slice(0, limit), semanticOk }
+  // los documentos NO entran en el recorte por `limit`: son pocos, caros de traer y suelen ser LA respuesta
+  const docs = ctxItems.filter((x) => x.doc)
+  const resto = ctxItems.filter((x) => !x.doc).slice(0, limit)
+  return { items: [...resto, ...docs].sort((a, b) => (a.ts || 0) - (b.ts || 0)), semanticOk }
 }
 
 // `localOnly`: la pregunta viene de una línea SECRETA → el modelo que razona sobre tu historial tiene que ser local.
@@ -79,7 +96,9 @@ export async function ask(question, { localOnly = false } = {}) {
   const fmt = (ts) => new Date(ts).toISOString().slice(0, 16).replace("T", " ")
   const { items: ctxItems, semanticOk } = await retrieveContext(question, { limit: 28 })
   if (!semanticOk) console.warn("[ask] RAG semántico no disponible (Ollama caído) → respondo solo por búsqueda de palabras (FTS)") // #29: ya no es silencioso
-  const ctx = ctxItems.map((e) => `- (${e.label}, ${fmt(e.ts).slice(0, 10)}) ${(e.text || "").replace(/\s+/g, " ").slice(0, 200)}`).join("\n")
+  // 200 caracteres alcanzan para una línea de chat, pero cortarían un contrato justo antes del monto: a los
+  // documentos les damos 3.000.
+  const ctx = ctxItems.map((e) => `- (${e.label}, ${fmt(e.ts).slice(0, 10)}) ${(e.text || "").replace(/\s+/g, " ").slice(0, e.doc ? 3000 : 200)}`).join("\n")
   // TODO LOCAL: respuesta con modelo chico/rápido en el server (privado). Prompt claro para que el modelo chico no se pierda.
   const prompt = `Sos el asistente personal de ${ownerFirst()}. Abajo hay FRAGMENTOS reales de sus mensajes y notas.
 Respondé la PREGUNTA en 1 a 4 frases claras, en español, usando SOLO esos fragmentos.

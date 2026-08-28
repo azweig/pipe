@@ -8,7 +8,7 @@ import Database from "better-sqlite3"
 // (CREATE IF NOT EXISTS + PRAGMA table_info para migraciones). Corre igual sobre archivo o ':memory:'.
 // Versión del esquema de abajo. ⚠️ SI TOCÁS initSchema, SUBÍ ESTE NÚMERO: si no, las bases que ya existen se
 // saltean la migración y quedan viejas en silencio. `test/schema-version.mjs` falla si te olvidás.
-export const SCHEMA_V = 2
+export const SCHEMA_V = 3
 
 export function initSchema(h) {
   // ATAJO: abrir una base YA inicializada no debe tomar WRITE-LOCK. Todo lo de abajo (CREATE IF NOT EXISTS, ALTER,
@@ -41,6 +41,9 @@ export function initSchema(h) {
     -- de que el mensaje saliera, el reintento encuentra su id acá y devuelve el resultado viejo en vez de mandar otra vez.
     CREATE TABLE IF NOT EXISTS sent_ids (id TEXT PRIMARY KEY, ts INTEGER, done INTEGER DEFAULT 0, result TEXT);
     CREATE INDEX IF NOT EXISTS idx_sent_ids_ts ON sent_ids(ts);
+    -- texto extraído de los adjuntos (OCR para pdf/imagen, zip+XML para docx/xlsx). Clave = ruta del CAS, así el
+    -- mismo contrato reenviado cinco veces se extrae UNA. La columna err marca lo que no se pudo, para no reintentar en vano.
+    CREATE TABLE IF NOT EXISTS doc_text (media TEXT PRIMARY KEY, texto TEXT, chars INTEGER, ts INTEGER, err TEXT);
     CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, text TEXT, thread TEXT, name TEXT, due TEXT, ts INTEGER, done INTEGER DEFAULT 0, created INTEGER);
     CREATE TABLE IF NOT EXISTS promesas (id TEXT PRIMARY KEY, text TEXT, thread TEXT, name TEXT, due TEXT, ts INTEGER, done INTEGER DEFAULT 0, created INTEGER);
     CREATE TABLE IF NOT EXISTS clips (id TEXT PRIMARY KEY, ts INTEGER, kind TEXT, url TEXT, title TEXT, para TEXT, done INTEGER DEFAULT 0, created INTEGER);

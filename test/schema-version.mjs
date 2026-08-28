@@ -10,7 +10,7 @@ import { createHash } from "node:crypto"
 import { SCHEMA_V } from "../src/lib/db-core.mjs"
 
 // huella del CUERPO de initSchema (sin comentarios ni espacios) → cambia si cambia el esquema
-const HUELLAS = { 1: "43f27fb7a7ed9315", 2: "806b6a10d2c5435e" } // v2: tabla sent_ids (idempotencia de envíos)
+const HUELLAS = { 1: "43f27fb7a7ed9315", 2: "806b6a10d2c5435e", 3: "eb7b216dbc9291f5" } // v2: sent_ids (idempotencia) · v3: doc_text (texto de adjuntos)
 
 test("si cambia initSchema, hay que subir SCHEMA_V (y anotar su huella acá)", () => {
   const s = readFileSync("src/lib/db-core.mjs", "utf8")
