@@ -722,7 +722,7 @@ const server = createServer(async (req, res) => {
         let text = b.text
         if (b.covert) { try { text = brain.encodeCovertFor(b.key, b.text) } catch (e) { releaseSend(b.msgId); return json(res, 400, { error: e.message }) } }
         let r
-        try { r = await brain.sendReply(b.key, text, { channel: b.channel, target: b.target }) }
+        try { r = await brain.sendReply(b.key, text, { channel: b.channel, target: b.target, historiaDe: b.historiaDe || "" }) }
         catch (e) { releaseSend(b.msgId); throw e } // falló de verdad → soltamos la reserva o el reintento esperaría eternamente
         if (r && r.error) { releaseSend(b.msgId); return json(res, 400, r) }
         finishSend(b.msgId, r)

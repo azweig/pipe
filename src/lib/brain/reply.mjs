@@ -2,7 +2,7 @@
 // wrong-recipient es EL fallo temido → threadTargets (destinos + default) está characterizado en test/brain-reply.mjs.
 // threadTargets / sendReply* son export function HOISTED: schedule/meetings/otros los importan por la fachada (brain.mjs).
 import { isSecretMsg } from "../secret.mjs" // reenviar saca el mensaje del hub: los de línea oculta nunca salen
-import { insertSent as dbInsertSent, threadMessagesTail as dbThreadMsgs, whatsappRoomsOf, roomInboundSenders, emailAddressesOf, lastInboundJid, lastEmailByAddress, lastEmailInThread, lastUnipileJid, lastWhatsappRoom, lastHistoricJid, messageById, directPeersOf } from "../db.mjs"
+import { insertSent as dbInsertSent, threadMessagesTail as dbThreadMsgs, whatsappRoomsOf, roomInboundSenders, emailAddressesOf, lastInboundJid, lastEmailByAddress, lastEmailInThread, lastUnipileJid, lastWhatsappRoom, lastHistoricJid, messageById, directPeersOf, threadPorClave, senderPorNombre, marcarComoHistoria} from "../db.mjs"
 import { readFileSync } from "fs"
 import { join } from "path"
 import { getSlackToken, getSignal } from "../integrations.mjs" // config Slack/Signal conectada desde la Consola (cifrada) — para que los senders la vean, no solo el .env
@@ -86,7 +86,27 @@ export function threadTargets(key) {
 }
 
 // COMPOSITOR: responde al hilo. Con {channel,target} manda a ese destino puntual; sin él, auto (última sala / email del key).
-export async function sendReply(key, text, { channel, target } = {}) {
+// ¿A qué chat le mando la respuesta a una historia? Primero su hilo propio (si ya le hablaste), y si no, el número
+// que sale de su identidad en el bridge — el mismo camino que hace contactable a quien solo aparece en grupos.
+async function resolverHiloDe(nombre) {
+  const limpio = String(nombre || "").replace(/ \(WA\)$/, "").trim()
+  if (!limpio) return null
+  for (const cand of [limpio, nombre]) {
+    const row = threadPorClave(cand)
+    if (row && (row.count || 0) > 0) return { key: row.thread, channel: "whatsapp" }
+  }
+  const sender = senderPorNombre(nombre) || senderPorNombre(limpio)
+  if (!sender) return null
+  let num = String(sender).match(/whatsapp_(\d{8,15})/)?.[1] || String(sender).match(/^(\d{8,15})/)?.[1]
+  // en estados de gente que solo conocés por grupos grandes el remitente es un LID, no un número
+  if (!num) {
+    const lid = String(sender).match(/lid-(\d+)/)?.[1]
+    if (lid) { try { const { lidToPhone } = await import("../../matrix.mjs"); num = await lidToPhone(lid) } catch { /* sin bridge: sin número */ } }
+  }
+  return num ? { key: "whatsapp:" + num + "@s.whatsapp.net", channel: "whatsapp" } : null
+}
+
+export async function sendReply(key, text, { channel, target, historiaDe = "" } = {}) {
   text = String(text || "").trim()
   if (!text) return { error: "mensaje vacío" }
   // "Mis Notas": escribir en el hilo propio GUARDA una nota, no manda nada. Salvo que el caller nombre una sala
@@ -94,6 +114,23 @@ export async function sendReply(key, text, { channel, target } = {}) {
   // — sin esta excepción sus respuestas se guardaban como notas y nunca llegaban al teléfono.
   const selfToRoom = key === "self" && channel === "whatsapp" && /^![^:]+:/.test(String(target || ""))
   if (key === "self" && !selfToRoom) return { ok: true, channel: "note", ...guardarEnviado("self", "note", text) }
+  // HISTORIAS (estados de WhatsApp). Dos cosas, y las dos importan:
+  //  · Responder un estado NO es escribir en el hilo de historias: en WhatsApp le llega como MENSAJE PRIVADO a quien
+  //    lo publicó. Sin esto, mandar en ese hilo apuntaba a la sala de estados — o sea, ibas a PUBLICAR UN ESTADO tuyo
+  //    a todos tus contactos creyendo que le contestabas a una persona.
+  //  · La respuesta se guarda en el chat de ESA persona (donde le sirve al historial) con tag "historia", para poder
+  //    distinguirla de una conversación normal: la dijiste sobre algo que publicó, no en medio de una charla.
+  if (/status@broadcast/.test(String(key))) {
+    const quien = String(historiaDe || "").trim()
+    if (!quien) return { error: "Elegí a qué historia estás respondiendo: tocá el mensaje y respondé desde ahí." }
+    const destino = await resolverHiloDe(quien)
+    if (!destino) return { error: `No sé a quién mandarle esto: no encuentro el chat de ${quien}.` }
+    const r = await sendReply(destino.key, text, { channel: destino.channel || "whatsapp", target: destino.target })
+    if (r && r.error) return r
+    // el envío ya salió por el camino normal (que lo guardó sin tag) → lo marcamos como respuesta a historia
+    try { marcarComoHistoria(r.id) } catch (e) { console.error("[historia] no pude etiquetar:", e.message) }
+    return { ...r, historia: true, para: quien }
+  }
   // destino EXPLÍCITO elegido por el usuario
   if (channel === "email" && target) {
     const last = lastEmailByAddress(target) || lastEmailInThread(key)

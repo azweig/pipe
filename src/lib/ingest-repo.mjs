@@ -6,8 +6,8 @@ import { casTrash, casRestore } from "./cas.mjs"
 
 // ── ingest ──
 const insertStmt = () => db().prepare(`INSERT OR IGNORE INTO messages
-  (id, channel, account, thread, jid, sender, name, text, ts, dir, grp, media, mediaType, filename, unread, body, attachments)
-  VALUES (@id, @channel, @account, @thread, @jid, @sender, @name, @text, @ts, @dir, @grp, @media, @mediaType, @filename, @unread, @body, @attachments)`)
+  (id, channel, account, thread, jid, sender, name, text, ts, dir, grp, media, mediaType, filename, unread, body, attachments, tag)
+  VALUES (@id, @channel, @account, @thread, @jid, @sender, @name, @text, @ts, @dir, @grp, @media, @mediaType, @filename, @unread, @body, @attachments, @tag)`)
 
 const getStat = () => db().prepare("SELECT channels FROM thread_stats WHERE thread=?")
 const upsertStat = () => db().prepare(`INSERT INTO thread_stats(thread,last_ts,count,unread,channels) VALUES(@thread,@ts,1,@unread,@channels)
@@ -40,7 +40,7 @@ export function insertSent(thread, channel, text, extra = {}) {
   // .immediate: sin esto la transacción arranca DIFERIDA y al subir a escritura SQLite devuelve SQLITE_BUSY_SNAPSHOT,
   // que NO se resuelve esperando (el busy_timeout no aplica) → el reintento de arriba pagaba de más y a veces perdía.
   return withRetry(() => db().transaction(() => {
-    insertStmt().run(normalizeRec({ id, channel, account: "sent", thread, jid: "", sender: "me", name: owner(), text, ts, dir: "out", unread: 0, media: extra.media || null, mediaType: extra.mediaType || null, filename: extra.filename || null }))
+    insertStmt().run(normalizeRec({ id, channel, account: "sent", thread, jid: "", sender: "me", name: owner(), text, ts, dir: "out", unread: 0, media: extra.media || null, mediaType: extra.mediaType || null, filename: extra.filename || null, tag: extra.tag || null }))
     db().prepare("UPDATE thread_stats SET count=count+1, last_ts=MAX(last_ts,?) WHERE thread=?").run(ts, thread)
     return { id, ts, media: extra.media || null, mediaType: extra.mediaType || null }
   }).immediate())
@@ -71,6 +71,7 @@ function normalizeRec(r) {
     grp: r.grp || r.group || null, media: r.media || null, mediaType: r.mediaType || null, filename: r.filename || null, unread: r.unread ? 1 : 0,
     body: r.body || null, // cuerpo completo del email (HTML) para el visor
     attachments: r.attachments || null, // JSON [{name,cas,mime,size}] de adjuntos de email
+    tag: r.tag || null, // clase del mensaje cuando no es una conversación normal (hoy: "historia")
   }
 }
 

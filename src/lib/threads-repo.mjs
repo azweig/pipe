@@ -1,6 +1,6 @@
 // threads-repo — lecturas de conversación (resúmenes de bandeja, mensajes por hilo, paginado, no-leídos, media).
 // Cuerpos movidos verbatim desde db.mjs; `db` = alias de handle() de db-core.
-import { handle as db } from "./db-core.mjs"
+import { handle as db, withRetry } from "./db-core.mjs"
 import { waGroups } from "./brain/kernel/contacts.mjs"
 import { owner } from "./hub.mjs"
 import { isSecretSelfNote, secretSelfClause, secretThreadKeys, isSecretRow , secretGate} from "./secret.mjs"
@@ -104,6 +104,13 @@ export function searchThreadKeys(q, { limit = 60 } = {}) {
 // En un DM la clave ES el nombre canónico, así que esto resuelve el caso normal.
 // Con qué remitente (ghost de Matrix) escribe alguien en los grupos. Para quien NO tiene chat 1:1 es el único
 // rastro de su identidad — y de ahí sale el LID que el bridge sabe traducir a teléfono.
+// Marca un mensaje ya guardado como respuesta a una historia. Se hace DESPUÉS de enviar: el envío usa el camino
+// normal (que ya sabe resolver salas, cifrar y registrar), y acá solo se le pone la etiqueta.
+export function marcarComoHistoria(id) {
+  if (!id) return 0
+  return withRetry(() => db().prepare("UPDATE messages SET tag='historia' WHERE id=?").run(String(id))).changes
+}
+
 export function senderPorNombre(nombre) {
   const n = String(nombre || "").trim()
   if (!n) return null

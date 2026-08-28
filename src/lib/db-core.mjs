@@ -8,7 +8,7 @@ import Database from "better-sqlite3"
 // (CREATE IF NOT EXISTS + PRAGMA table_info para migraciones). Corre igual sobre archivo o ':memory:'.
 // Versión del esquema de abajo. ⚠️ SI TOCÁS initSchema, SUBÍ ESTE NÚMERO: si no, las bases que ya existen se
 // saltean la migración y quedan viejas en silencio. `test/schema-version.mjs` falla si te olvidás.
-export const SCHEMA_V = 3
+export const SCHEMA_V = 4
 
 export function initSchema(h) {
   // ATAJO: abrir una base YA inicializada no debe tomar WRITE-LOCK. Todo lo de abajo (CREATE IF NOT EXISTS, ALTER,
@@ -126,6 +126,10 @@ export function initSchema(h) {
     if (!cols.includes("cita")) h.exec(`ALTER TABLE ${t} ADD COLUMN cita TEXT`)
   }
   // resumen por hilo (derivado) — recrear si el esquema cambió
+  // `tag`: marca de qué CLASE es el mensaje cuando no es una conversación normal. Hoy: "historia" (respuesta a un
+  // estado de WhatsApp). Va como columna y no dentro del texto para que se pueda filtrar y mostrar distinto sin
+  // ensuciar lo que escribiste.
+  try { const mc = h.prepare("PRAGMA table_info(messages)").all().map((c) => c.name); if (!mc.includes("tag")) h.exec("ALTER TABLE messages ADD COLUMN tag TEXT") } catch {}
   const cols = h.prepare("PRAGMA table_info(thread_stats)").all().map((c) => c.name)
   if (!cols.includes("channels") || !cols.includes("nsenders")) h.exec("DROP TABLE IF EXISTS thread_stats")
   h.exec(`CREATE TABLE IF NOT EXISTS thread_stats (thread TEXT PRIMARY KEY, last_ts INTEGER, count INTEGER, unread INTEGER, channels TEXT, nsenders INTEGER DEFAULT 0);
@@ -210,7 +214,7 @@ export function resetDb(path = ":memory:") {
 // ── seed de fixtures para tests ──────────────────────────────────────────────
 // Inserta filas de `messages` (dispara el trigger de FTS por esquema). NO mantiene thread_stats:
 // eso lo hace insertMany/rebuildStats del ingest-repo (Wave 1). Suficiente para caracterizar lecturas.
-const SEED_COLS = ["id", "channel", "account", "thread", "jid", "sender", "name", "text", "ts", "dir", "grp", "media", "mediaType", "filename", "unread", "body", "summary", "attachments", "rev"]
+const SEED_COLS = ["id", "channel", "account", "thread", "jid", "sender", "name", "text", "ts", "dir", "grp", "media", "mediaType", "filename", "unread", "body", "summary", "attachments", "rev", "tag"]
 function normSeed(r) {
   const ts = r.ts ?? 0
   return {
@@ -218,7 +222,7 @@ function normSeed(r) {
     channel: r.channel || "", account: r.account || "", thread: r.thread || "", jid: r.jid || "",
     sender: r.sender || "", name: r.name || "", text: r.text || "", ts, dir: r.dir || "in",
     grp: r.grp ?? null, media: r.media ?? null, mediaType: r.mediaType ?? null, filename: r.filename ?? null,
-    unread: r.unread ? 1 : 0, body: r.body ?? null, summary: r.summary ?? null, attachments: r.attachments ?? null,
+    unread: r.unread ? 1 : 0, body: r.body ?? null, summary: r.summary ?? null, attachments: r.attachments ?? null, tag: r.tag ?? null,
     rev: r.rev ?? 0, // el trigger de sync-rev la re-stampa en el INSERT; el seed provee un valor para el guard de cobertura de columnas
   }
 }
