@@ -8,7 +8,7 @@ import { join, basename } from "path"
 import { execFile } from "child_process"
 import { promisify } from "util"
 import { tmpdir } from "os"
-import { threadsSummary as dbThreads, searchThreadKeys as dbSearchThreadKeys, repliedThreads, getBody as dbGetBody, getAttachments as dbGetAttachments, threadMediaGallery, threadPage as dbThreadPage, threadCount as dbThreadCount, threadMessagesTail as dbThreadMsgs, threadSince as dbThreadSince, threadUnreadCount as dbUnreadCount, search as dbSearch, threadMessagesSinceAll, threadDelta as dbThreadDelta, threadMaxRev as dbThreadMaxRev } from "../db.mjs"
+import { threadsSummary as dbThreads, searchThreadKeys as dbSearchThreadKeys, repliedThreads, getBody as dbGetBody, getAttachments as dbGetAttachments, threadMediaGallery, threadPage as dbThreadPage, threadCount as dbThreadCount, threadMessagesTail as dbThreadMsgs, threadSince as dbThreadSince, threadUnreadCount as dbUnreadCount, search as dbSearch, threadMessagesSinceAll, threadDelta as dbThreadDelta, threadMaxRev as dbThreadMaxRev, threadPorClave as dbThreadPorClave} from "../db.mjs"
 import { autopilotSentIds, listAutopilot, getAutopilot, listEscalations, clearEscalation } from "./autopilot.mjs" // 🤖 tag de mensajes/contactos del piloto automático
 import { secretThreadKeys, isSecretMsg } from "../secret.mjs" // 🔒 cuentas/números secretos (excluir de bandeja/búsqueda; filtrar por-mensaje en el hilo)
 import { jidOfKey, canonOfKey, numOf, initials, stripWA, norm, plural, isContainerJid } from "./kernel/keys.mjs"
@@ -40,6 +40,14 @@ export function invalidateThreads() { _ltCache = { ts: 0 } } // llamar tras envi
 // con miles de hilos, un contacto con el que hablás seguido pero no esta semana quedaba afuera y no había forma de
 // llegar a él (el buscador de las apps filtra lo que ya está cargado). Con q, el server resuelve las claves por índice
 // y el armado de la fila es EXACTAMENTE el mismo → misma foto, mismos buckets, mismos filtros de privacidad.
+// Busca un hilo por su clave exacta, sin pasar por la ventana de recientes. Existe porque decidir "esto no existe"
+// mirando solo los N más recientes ya rompió varias cosas: chats viejos que la app juraba inexistentes y, peor,
+// conversaciones nuevas creadas en paralelo a una que ya estaba.
+export function hiloPorClave(clave) {
+  const row = dbThreadPorClave(clave)
+  return row ? { key: row.thread, name: row.thread, count: row.count || 0, last: row.last_ts || 0 } : null
+}
+
 export function listThreads({ limit = 200, q = "" } = {}, { cache = true } = {}) {
   if (q) cache = false // una búsqueda no debe pisar ni leer el cache de la bandeja
   if (cache && _ltCache.data && _ltCache.limit === limit && Date.now() - _ltCache.ts < 15000) return _ltCache.data // 15s: la ingesta es cada 15s, no hace falta recomputar el inbox más seguido

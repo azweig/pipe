@@ -702,7 +702,10 @@ const server = createServer(async (req, res) => {
         const r = brain.resolverDestino(b.destino, b.channel)
         if (r.error) return json(res, 400, r)
         // si ya existe conversación con ese destino, se devuelve tal cual (nombre real incluido) en vez de una "nueva"
-        const previo = brain.listThreads({ limit: 400 }).find((t) => t.key === r.key)
+        // MISMO LÍMITE QUE ROMPIÓ OTRAS COSAS: buscar solo entre los 400 recientes hacía que, con miles de hilos, un
+        // chat viejo no se "encontrara" y se abriera una conversación NUEVA en paralelo a la que ya existía.
+        // Preguntamos por la clave exacta a la base y usamos la ventana solo para enriquecer el nombre.
+        const previo = brain.listThreads({ limit: 400 }).find((t) => t.key === r.key) || brain.hiloPorClave(r.key)
         // Un hilo secreto tiene que responder IGUAL que uno que no existe. La versión anterior omitía `existe`, y esa
         // diferencia bastaba para enumerar los contactos ocultos escribiendo números en la hoja, con el 1er PIN nomás.
         if (!secretOn && secretoPorNombre(r.key)) return json(res, 200, { ...r, existe: false })
