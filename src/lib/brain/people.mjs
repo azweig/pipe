@@ -1,7 +1,7 @@
 // brain/people — PERSONAS: perfil de contacto, resolución (resolvePerson/personCard, superficie del bug de homónimos),
 // ficha+timeline unificada (personView), tarjetas pre-generadas (bio/temas/stats/en común) y fusión de hilos.
 // resolvePerson/personView son export function HOISTED (schedule/meetings los importan por la fachada). Pesado: vault+contacts+db.
-import { threadStats, threadMediaCount, threadChannelCounts, mergeThreads as dbMergeThreads, getMeta, setMeta, groupMembershipRows, threadCountFirstLast, threadChannelActivity, threadDirTimeline, threadInboundSenders, threadTextRowids, messagesByRowids } from "../db.mjs"
+import { threadStats, threadMediaCount, threadChannelCounts, mergeThreads as dbMergeThreads, getMeta, setMeta, groupMembershipRows, threadCountFirstLast, threadChannelActivity, threadDirTimeline, threadInboundSenders, threadTextRowids, messagesByRowids, threadPorClave } from "../db.mjs"
 import { jidOfKey, canonOfKey, isContainerJid, norm, stripWA, initials, channelId, threadKind, numOf, plural, dedupEvents, isSelfThread, isOwnerName } from "./kernel/keys.mjs"
 import { contactName, photoFor, avatarMap, aliases, idmap, nameToCanonMap, jf, waGroups } from "./kernel/contacts.mjs"
 import { peopleNodes, companyNodes, cardFor, fm } from "./kernel/vault.mjs"
@@ -261,6 +261,16 @@ export async function personCard(nameOrKey, { force = false } = {}) {
   let t = threads.find((x) => x.canon && (norm(x.canon) === want || norm(x.canon) === norm(eff)))
     || threads.find((x) => (norm(x.name) === want || norm(x.name) === norm(nameOrKey)) && (x.count || 0) > 0)
     || threads.find((x) => x.key && (x.key === nameOrKey || x.key === eff))
+  // FUERA DE LA VENTANA: `threads` son los 600 hilos MÁS RECIENTES, y con miles de conversaciones casi todas quedan
+  // afuera. Un chat de hace unos meses existía con cientos de mensajes y la app decía "no encontré chat con esa
+  // persona" — y peor, el fallback de abajo lo mandaba a fusionarse con un homónimo. Antes de inventar nada,
+  // preguntamos por la clave exacta a la base: en un DM la clave ES el nombre canónico.
+  if (!t || (t.count || 0) === 0) {
+    for (const cand of [nameOrKey, eff, canon].filter(Boolean)) {
+      const row = threadPorClave(cand)
+      if (row && (row.count || 0) > 0) { t = { key: row.thread, canon: row.thread, name: row.thread, count: row.count, last: row.last_ts }; break }
+    }
+  }
   // FALLBACK por NOMBRE: el nombre pedido no tiene hilo propio pero SÍ existe el chat de la misma persona bajo otro nombre
   // (ej "Carlos Mendoza" del calendario → hilo "Carlos" con 20k msgs). Match por prefijo de primer nombre o ≥2 tokens.
   if (!t || (t.count || 0) === 0) {

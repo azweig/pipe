@@ -98,6 +98,16 @@ export function searchThreadKeys(q, { limit = 60 } = {}) {
   return [...keys.entries()].sort((a, b) => (b[1] || 0) - (a[1] || 0)).slice(0, limit).map(([k]) => k)
 }
 
+// Busca un hilo por su CLAVE exacta, directo en la base. Hace falta porque las vistas trabajan sobre los N hilos
+// más recientes, y con miles de conversaciones casi todas quedan afuera de esa ventana: un chat de hace unos meses
+// existía con cientos de mensajes y la app decía "no encontré chat con esa persona".
+// En un DM la clave ES el nombre canónico, así que esto resuelve el caso normal.
+export function threadPorClave(clave) {
+  const k = String(clave || "").trim()
+  if (!k) return null
+  try { return db().prepare("SELECT thread, last_ts, count, unread, channels, nsenders FROM thread_stats WHERE thread=? OR thread=? LIMIT 1").get(k, "whatsapp:" + k) || null } catch { return null }
+}
+
 export function threadsSummary({ limit = 200, keys = null } = {}) {
   // top-N hilos desde thread_stats (índice, instantáneo). Sin subqueries pesados por hilo.
   // Con `keys` se piden hilos PUNTUALES (búsqueda) en vez de la ventana por recencia — el resto del armado es idéntico.
