@@ -40,3 +40,22 @@ test("un documento que MENCIONA lo que preguntás pesa más que uno que solo lo 
   assert.match(DOC, /if \(r\._porContenido\) p \+= 12/)
   assert.match(DOC, /if \(fn\.includes\(t\)\) p \+= 10/)
 })
+
+// EL RECORTE CORTABA LA RESPUESTA POR LA MITAD. En una adenda real el primer monto estaba en el carácter 2469 y el
+// segundo en el 2670: el corte a 2500 dejó afuera la mitad de la respuesta, y salió incompleta sin que nada avisara.
+test("los documentos no se cortan a ciegas por el principio", () => {
+  assert.match(DOC, /export function recortarUtil\(texto, pregunta = "", tope = 8000\)/)
+  // conserva el principio (de qué contrato se trata) Y los tramos con cifras o con lo que preguntaste
+  assert.match(DOC, /const cabeza = t\.slice\(0, Math\.floor\(tope \* 0\.4\)\)/)
+  assert.match(DOC, /\\\$\|S\/\|USD\|EUR/)
+  assert.ok(!/\.slice\(0, 2500\)/.test(ASK), "ningún camino puede volver al corte fijo a 2500")
+})
+
+test("los dos caminos usan el recorte útil", () => {
+  const usos = [...ASK.matchAll(/recortarUtil\(/g)].length
+  assert.ok(usos >= 2, `retrieveContext y routerSearch; encontré ${usos}`)
+})
+
+test("un candidato mucho más flojo que el mejor se descarta (gasta prompt y mete ruido)", () => {
+  assert.match(DOC, /if \(mejor >= 10 && c\.p < mejor \* 0\.5\) continue/)
+})

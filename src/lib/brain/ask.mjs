@@ -98,7 +98,10 @@ export async function ask(question, { localOnly = false } = {}) {
   if (!semanticOk) console.warn("[ask] RAG semántico no disponible (Ollama caído) → respondo solo por búsqueda de palabras (FTS)") // #29: ya no es silencioso
   // 200 caracteres alcanzan para una línea de chat, pero cortarían un contrato justo antes del monto: a los
   // documentos les damos 3.000.
-  const ctx = ctxItems.map((e) => `- (${e.label}, ${fmt(e.ts).slice(0, 10)}) ${(e.text || "").replace(/\s+/g, " ").slice(0, e.doc ? 3000 : 200)}`).join("\n")
+  // los documentos NO se cortan a ciegas: en un contrato los montos suelen estar repartidos y un corte por el
+  // principio deja afuera la mitad de la respuesta sin que nada avise.
+  const { recortarUtil } = await import("../doc-text.mjs")
+  const ctx = ctxItems.map((e) => `- (${e.label}, ${fmt(e.ts).slice(0, 10)}) ${(e.doc ? recortarUtil(e.text || "", question, 6000) : String(e.text || "").slice(0, 200)).replace(/\s+/g, " ")}`).join("\n")
   // TODO LOCAL: respuesta con modelo chico/rápido en el server (privado). Prompt claro para que el modelo chico no se pierda.
   const prompt = `Sos el asistente personal de ${ownerFirst()}. Abajo hay FRAGMENTOS reales de sus mensajes y notas.
 Respondé la PREGUNTA en 1 a 4 frases claras, en español, usando SOLO esos fragmentos.
@@ -160,7 +163,8 @@ export async function routerSearch(question) {
   try {
     const { docsRelevantes } = await import("../doc-text.mjs")
     for (const d of await docsRelevantes(question, { limit: 2, excluir: (c) => hide.has(c.thread) || isSecret(c) })) {
-      docLines.push(`- (documento: ${d.filename || "adjunto"}) ${d.texto.replace(/\s+/g, " ").slice(0, 2500)}`)
+      const { recortarUtil } = await import("../doc-text.mjs")
+      docLines.push(`- (documento: ${d.filename || "adjunto"}) ${recortarUtil(d.texto, question, 6000).replace(/\s+/g, " ")}`)
     }
   } catch { /* sin extracción: el grafo responde como antes */ }
   const ctx = srcThreads.slice(0, 4).map((s) => `• ${s.name}: ${s.summary}`).filter(Boolean).join("\n") + "\n\nMENSAJES:\n" + msgLines.slice(0, 16).join("\n") + (docLines.length ? "\n\nDOCUMENTOS:\n" + docLines.join("\n") : "")

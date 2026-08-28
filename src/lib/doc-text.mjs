@@ -110,11 +110,40 @@ export function candidatos(pregunta, { limit = 4 } = {}) {
   return [...porMedia.values()].sort((a, b) => b.p - a.p || (b.ts || 0) - (a.ts || 0)).slice(0, limit)
 }
 
+// RECORTE ÚTIL. Un contrato no entra entero en el prompt, pero cortar por el principio es exactamente lo que
+// falló: en una adenda real el primer monto estaba en el carácter 2469 y el segundo en el 2670, así que un corte
+// en 2500 dejó afuera la mitad de la respuesta — y la respuesta salió incompleta sin que nada avisara.
+//
+// En vez de truncar a ciegas: si el texto excede el tope, se conserva el principio (dice de qué contrato se trata
+// y entre quiénes) y además los tramos que contienen CIFRAS o las palabras de la pregunta, que es donde vive lo que
+// se está preguntando.
+export function recortarUtil(texto, pregunta = "", tope = 8000) {
+  const t = String(texto || "")
+  if (t.length <= tope) return t
+  const cabeza = t.slice(0, Math.floor(tope * 0.4))
+  const tokens = String(pregunta).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((x) => x.length >= 4)
+  const interesante = new RegExp(`(\\$|S/|USD|EUR|\\d[\\d.,]{3,}${tokens.length ? "|" + tokens.map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") : ""})`, "i")
+  const tramos = []
+  let usado = cabeza.length
+  // ventanas alrededor de cada coincidencia, saltando lo que ya entró en la cabeza
+  for (const m of t.slice(cabeza.length).matchAll(/[^\n.]{0,160}[^\n.]*/g)) {
+    const frag = m[0]
+    if (!frag.trim() || !interesante.test(frag)) continue
+    if (usado + frag.length > tope) break
+    tramos.push(frag.trim()); usado += frag.length
+  }
+  return tramos.length ? cabeza + "\n…\n" + tramos.join(" … ") : t.slice(0, tope)
+}
+
 // Prebúsqueda + extracción de los elegidos. Es lo que consume el cerebro.
 export async function docsRelevantes(pregunta, { limit = 4, excluir = () => false } = {}) {
   const out = []
-  for (const c of candidatos(pregunta, { limit: limit * 2 })) {
+  const cands = candidatos(pregunta, { limit: limit * 2 })
+  const mejor = cands.length ? cands[0].p : 0
+  for (const c of cands) {
     if (out.length >= limit) break
+    // un candidato mucho más flojo que el mejor no aporta: gasta prompt y mete ruido en la respuesta
+    if (mejor >= 10 && c.p < mejor * 0.5) continue
     if (excluir(c)) continue // hilos/mensajes secretos: nunca salen del gate
     const texto = await docTexto(c.media, c.filename).catch(() => "")
     if (texto && texto.length > 40) out.push({ ...c, texto })
