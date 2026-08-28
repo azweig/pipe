@@ -108,7 +108,11 @@ export function listThreads({ limit = 200, q = "" } = {}, { cache = true } = {})
     if (kind === "self") { name = "Mis Notas"; avatar = "📝" }
     else if (kind === "group") {
       // casos especiales de WhatsApp que NO son grupos de verdad → nombre propio en vez del genérico "Grupo · N personas"
-      if (/status@broadcast/.test(jid)) { name = "Historias de WhatsApp"; avatar = "📸" }
+      // OJO: hay que mirar la CLAVE del hilo, no el jid. El jid de este hilo es la sala de Matrix (!xxx:dominio),
+      // así que probar /status@broadcast/ contra él NUNCA daba verdadero: las historias caían al `else` de abajo y
+      // tomaban el nombre de quien publicó ÚLTIMO. Por eso un contacto aparecía como conversación propia, con una
+      // sola historia adentro y sin ningún historial — no era una conversación, eran las historias mal rotuladas.
+      if (/status@broadcast/.test(jid) || /status@broadcast/.test(r.key || "")) { name = "Historias de WhatsApp"; avatar = "📸" }
       else if (/@newsletter/.test(jid)) { name = r.grp || grpNames[jid] || "Canal de WhatsApp"; avatar = "📢" }
       else { name = r.grp || grpNames[jid] || `Grupo · ${plural(r.nsenders || 2, "persona")}`; avatar = "👥" }
     }
