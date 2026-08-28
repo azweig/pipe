@@ -60,9 +60,17 @@ async function portalGroupJid(roomId) {
 const _isStatus = new Map()
 async function portalIsStatus(roomId) {
   if (_isStatus.has(roomId)) return _isStatus.get(roomId)
-  let v = false
-  try { const db = await mautrixDb(); const p = db && db.prepare("SELECT id FROM portal WHERE mxid=? LIMIT 1").get(roomId); v = !!(p && p.id === "status@broadcast") } catch {}
-  _isStatus.set(roomId, v); return v
+  let v = false, pudeMirar = false
+  try {
+    const db = await mautrixDb()
+    if (db) { const p = db.prepare("SELECT id FROM portal WHERE mxid=? LIMIT 1").get(roomId); v = !!(p && p.id === "status@broadcast"); pudeMirar = true }
+  } catch { /* base del bridge ocupada o ausente: NO sabemos, no es que no sea status */ }
+  // Cachear SOLO cuando pudimos mirar. Antes un fallo transitorio (la base del bridge trabada) guardaba `false`
+  // PARA SIEMPRE, y desde ahí las historias de esa sala se guardaban como conversación normal, bajo el id crudo de
+  // la sala. Resultado: dos hilos para el mismo lugar y un contacto apareciendo en la bandeja con una historia
+  // adentro en vez de sus mensajes reales.
+  if (pudeMirar) _isStatus.set(roomId, v)
+  return v
 }
 const USER = process.env.MATRIX_USER || "admin"
 const DOMAIN = process.env.MATRIX_DOMAIN || "localhost" // server_name de Synapse; setealo en .env (MATRIX_DOMAIN)
