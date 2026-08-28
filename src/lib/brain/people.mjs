@@ -268,10 +268,22 @@ export function grupoCard(key) {
     const d = raw.replace(/\D/g, "")
     return contactName(d) || contactName(d + "@s.whatsapp.net") || "+" + d
   }
-  // dos entradas del mismo contacto (dos números suyos, o número y nombre) tienen que sumar, no competir
+  // MISMA PERSONA, DOS NOMBRES. En un grupo el mismo contacto puede aparecer con su nombre corto y con el largo
+  // ("Ana" y "Ana Pérez" pueden ser una sola: uno viene del número y el otro del LID). Sin unificarlos el
+  // ranking miente — parten sus mensajes en dos filas y ninguna refleja cuánto habla de verdad.
+  const n2c = nameToCanonMap(), alias = contactAliases()
+  // ORDEN IMPORTANTE: el alias aprendido va PRIMERO. nameToCanonMap devuelve el nombre a sí mismo cuando ese nombre
+  // ya es un nodo del grafo (devuelve "Ana Pérez" → "Ana Pérez"), así que si se consulta antes cortocircuita
+  // y nunca se entera de que es la misma persona que "Alberto".
+  const canonizar = (nm) => {
+    const k = String(nm || "").trim().toLowerCase()
+    const uno = getMeta("personalias:" + k) || alias[k] || nm
+    const k2 = String(uno).trim().toLowerCase()
+    return n2c[k2] || uno
+  }
   const porNombre = new Map()
   for (const t of st.top || []) {
-    const nm = lindo(t.name)
+    const nm = canonizar(lindo(t.name))
     const prev = porNombre.get(nm)
     if (prev) { prev.n += t.n; prev.ultimo = Math.max(prev.ultimo, t.ultimo) } else porNombre.set(nm, { nombre: nm, n: t.n, ultimo: t.ultimo })
   }

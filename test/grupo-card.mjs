@@ -21,14 +21,14 @@ test("quién habla más y tu participación salen de SQL, no de la IA", () => {
 
 test("los números se pasan por la agenda (si no, la lista es una columna de teléfonos)", () => {
   const i = PEOPLE.indexOf("export function grupoCard")
-  const fn = PEOPLE.slice(i, i + 1800)
+  const fn = PEOPLE.slice(i, i + 2400)
   assert.match(fn, /contactName\(d\)/)
   assert.match(fn, /porNombre/, "dos números de la misma persona tienen que sumar, no competir")
 })
 
 test("tu participación se dice con palabras, no solo con un número", () => {
   const i = PEOPLE.indexOf("export function grupoCard")
-  const fn = PEOPLE.slice(i, i + 2200)
+  const fn = PEOPLE.slice(i, i + 3200)
   assert.match(fn, /perfil: st\.mios === 0 \? "solo lees"/, "0% no es lo mismo que 'escribo poco'")
   assert.match(fn, /puesto/)
 })
@@ -48,4 +48,15 @@ test("la web la pide solo para grupos y la pinta con barras", () => {
   assert.match(APP, /p\.isGroup\) \? await api\("\/api\/group\?key="/)
   assert.match(APP, /Cómo se mueve este grupo/)
   assert.match(APP, /width:\$\{Math\.max\(2, t\.pct\)\}%/)
+})
+
+test("la misma persona con dos nombres SUMA, no compite (o el ranking miente)", () => {
+  const i = PEOPLE.indexOf("export function grupoCard")
+  const fn = PEOPLE.slice(i, i + 2400)
+  assert.match(fn, /const canonizar = \(nm\)/)
+  // el alias aprendido va PRIMERO: nameToCanonMap devuelve el nombre a sí mismo cuando ya es nodo del grafo, y
+  // consultarlo antes cortocircuita la unificación.
+  const iAlias = fn.indexOf('getMeta("personalias:" + k)')
+  const iN2c = fn.indexOf("n2c[k2]")
+  assert.ok(iAlias > 0 && iN2c > iAlias, "personalias tiene que consultarse antes que nameToCanonMap")
 })
