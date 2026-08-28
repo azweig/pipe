@@ -1183,7 +1183,7 @@ server.headersTimeout = server.keepAliveTimeout + 5000
 
 server.listen(PORT, process.env.HOST || "127.0.0.1", () => {
   console.log(`\n🧠 pipe web → http://localhost:${PORT}\n`)
-  try { maintenance.ensureStats(); brain.listThreads({ limit: 600 }); setTimeout(() => { try { brain.coachData() } catch {} }, 2000) } catch (e) { console.error("warm:", e.message) } // auto-sanar stats + calentar bandeja + coach (para que Coach/IA abran instantáneo)
+  try { maintenance.ensureStats(); maintenance.repararHistorias(); brain.listThreads({ limit: 600 }); setTimeout(() => { try { brain.coachData() } catch {} }, 2000) } catch (e) { console.error("warm:", e.message) } // auto-sanar stats + calentar bandeja + coach (para que Coach/IA abran instantáneo)
 })
 // mantenimiento periódico (ensureStats + fixGroupLeaks) MOVIDO al cron maintain.mjs del daemon → ya NO bloquea el event loop del
 // HTTP (~3s cada 30 min). Acá queda solo el ensureStats del warm-up de arriba (una vez al boot, sin usuarios todavía = sin freeze).

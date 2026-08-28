@@ -57,20 +57,38 @@ async function portalGroupJid(roomId) {
   _portalJid.set(roomId, jid); return jid
 }
 // ¿la sala es el WhatsApp Status Broadcast (estados/historias)? → sus mensajes NUNCA son una conversación; van a un hilo oculto, no por remitente.
+// Saber si una sala es la de estados NO puede depender de una consulta en vivo a la base del bridge: esa base se
+// traba (hay contención real) y cada fallo mandaba una historia al hilo equivocado, creando una "conversación"
+// falsa con el nombre de quien publicó. Y no alcanza con dejar de cachear el fallo: el mensaje que llega JUSTO en
+// ese momento igual se archiva mal, y eso no se deshace solo.
+//
+// Por eso la respuesta se PERSISTE en disco apenas se averigua una vez. Una sala de estados lo es para siempre, así
+// que después de la primera consulta exitosa el bridge ya no hace falta y ningún lock puede desviar una historia.
+const STATUS_ROOMS = "./data/wa-status-rooms.json"
 const _isStatus = new Map()
+let _statusSet = null
+function statusPersistido() {
+  if (_statusSet) return _statusSet
+  try { _statusSet = new Set(JSON.parse(readFileSync(STATUS_ROOMS, "utf8"))) } catch { _statusSet = new Set() }
+  return _statusSet
+}
+function recordarStatus(roomId) {
+  const set = statusPersistido()
+  if (set.has(roomId)) return
+  set.add(roomId)
+  try { writeFileSync(STATUS_ROOMS, JSON.stringify([...set], null, 1)) } catch { /* solo perdemos la memoria entre reinicios */ }
+}
 async function portalIsStatus(roomId) {
+  if (statusPersistido().has(roomId)) return true   // ya lo sabemos: ninguna traba de base puede cambiarlo
   if (_isStatus.has(roomId)) return _isStatus.get(roomId)
   let v = false, pudeMirar = false
   try {
     const db = await mautrixDb()
     if (db) { const p = db.prepare("SELECT id FROM portal WHERE mxid=? LIMIT 1").get(roomId); v = !!(p && p.id === "status@broadcast"); pudeMirar = true }
-  } catch { /* base del bridge ocupada o ausente: NO sabemos, no es que no sea status */ }
-  // Cachear SOLO cuando pudimos mirar. Antes un fallo transitorio (la base del bridge trabada) guardaba `false`
-  // PARA SIEMPRE, y desde ahí las historias de esa sala se guardaban como conversación normal, bajo el id crudo de
-  // la sala. Resultado: dos hilos para el mismo lugar y un contacto apareciendo en la bandeja con una historia
-  // adentro en vez de sus mensajes reales.
-  if (pudeMirar) _isStatus.set(roomId, v)
-  return v
+  } catch { /* base del bridge ocupada o ausente: NO sabemos, que es distinto de "no es status" */ }
+  if (v) { recordarStatus(roomId); return true }
+  if (pudeMirar) _isStatus.set(roomId, false) // negativo solo en memoria: una sala nueva puede pasar a ser conocida
+  return false
 }
 const USER = process.env.MATRIX_USER || "admin"
 const DOMAIN = process.env.MATRIX_DOMAIN || "localhost" // server_name de Synapse; setealo en .env (MATRIX_DOMAIN)

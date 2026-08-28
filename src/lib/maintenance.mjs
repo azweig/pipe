@@ -3,7 +3,7 @@
 import { rebuildStats } from "./db.mjs"
 // Acceso DIRECTO al handle (excepción marcada al seam): SQL de mantenimiento/reparación admin, in-process (misma conexión del server).
 // No se fuerza a named queries por ser reparación puntual; el handle no sale de la capa de datos.
-import { handle } from "./db-core.mjs"
+import { handle, withRetry } from "./db-core.mjs"
 
 // AUTO-SANADO: si thread_stats quedó vacío (race/interrupción de un rebuild) pero hay mensajes → reconstruir.
 // Evita que la bandeja aparezca vacía. Corre al arrancar y en el mantenimiento periódico.
@@ -20,6 +20,33 @@ export function ensureStats() {
 
 // Corrector de HILOS-FANTASMA: mensajes de grupo (grp seteado) que quedaron en un hilo que NO es del grupo
 // (DM falso por número, o hilo de persona) → moverlos al hilo real del grupo (@g.us / !room). Recomputa solo lo afectado.
+// HISTORIAS QUE SE VOLVIERON "CONVERSACIONES". Si una historia se archiva mal (la base del bridge estaba trabada
+// y no se pudo confirmar que la sala era la de estados), queda un hilo falso con el nombre de quien publicó: en la
+// bandeja parece una conversación y adentro tiene una historia en vez de los mensajes de esa persona.
+//
+// La firma es inequívoca y no depende de ningún nombre: un mensaje cuyo `jid` es una sala de estados pero cuyo hilo
+// NO es el de historias. Se corrige solo, en cada arranque, sin listas de contactos ni casos particulares.
+// OJO: hay una sala de estados POR NÚMERO vinculado — recorrerlas todas, mirar solo la primera no encuentra nada.
+export function repararHistorias() {
+  const d = handle()
+  let movidos = 0
+  try {
+    const salas = d.prepare("SELECT DISTINCT jid FROM messages WHERE thread='whatsapp:status@broadcast' AND jid LIKE '!%'").all().map((r) => r.jid)
+    for (const jid of salas) {
+      const sueltos = d.prepare("SELECT DISTINCT thread FROM messages WHERE jid=? AND thread<>'whatsapp:status@broadcast'").all(jid).map((r) => r.thread)
+      if (!sueltos.length) continue
+      withRetry(() => d.transaction(() => {
+        for (const t of sueltos) {
+          movidos += d.prepare("UPDATE messages SET thread='whatsapp:status@broadcast' WHERE jid=? AND thread=?").run(jid, t).changes
+          d.prepare("DELETE FROM thread_stats WHERE thread=?").run(t) // el hilo falso desaparece de la bandeja
+        }
+      }).immediate())
+    }
+    if (movidos) console.log(`🧹 historias: ${movidos} mensajes devueltos a "Historias de WhatsApp" (estaban como conversaciones falsas)`)
+  } catch (e) { console.error("[maintenance] repararHistorias:", e.message) }
+  return movidos
+}
+
 export function fixGroupLeaks() {
   const d = handle() // acceso admin marcado (ver import)
   // 1) limpiar etiquetas grp ESPURIAS: en DMs el reader a veces puso grp = el push-name del contacto ("Alberto (WA)") o "WhatsApp Status Broadcast".
