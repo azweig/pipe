@@ -47,6 +47,33 @@ export function repararHistorias() {
   return movidos
 }
 
+// LOS MENSAJES DEL AUTO-TEST NO SON CORRESPONDENCIA. El test de envío se manda a vos mismo cada 12 h para detectar
+// que un canal dejó de enviar; una vez comprobado, su resultado vive en meta['selftest'] y el mensaje en sí no
+// aporta nada — pero se quedaba en la bandeja como si fuera un correo de verdad. Había 391 acumulados.
+//
+// Se borran los que ya pasaron su ventana de verificación (10 min): tiempo de sobra para que el lector los vea y
+// confirme la entrega, y suficiente para que no te los cruces en la bandeja.
+// Sin el nombre del producto adentro: los mensajes viejos decían "comms-hub self-test" y los nuevos "pipe
+// self-test". Atarse al nombre dejó 108 sin borrar en la primera pasada.
+const FIRMAS = ["🔧 % self-test %", "Auto-test de envío de %", "Re: % self-test —%", "%- self-test — Auto-test%"]
+export function purgeSelfTest(ventanaMs = 10 * 60000) {
+  const d = handle()
+  const corte = Date.now() - ventanaMs
+  let n = 0
+  try {
+    withRetry(() => d.transaction(() => {
+      for (const f of FIRMAS) {
+        n += d.prepare("DELETE FROM messages WHERE ts < ? AND (text LIKE ? OR body LIKE ?)").run(corte, f, f).changes
+      }
+    }).immediate())
+    if (n) {
+      console.log(`🧹 auto-test: ${n} mensajes de prueba borrados de la bandeja`)
+      try { rebuildStats() } catch (e) { console.error("[maintenance] stats tras purgar selftest:", e.message) } // si no, el hilo sigue mostrando la prueba como último mensaje
+    }
+  } catch (e) { console.error("[maintenance] purgeSelfTest:", e.message) }
+  return n
+}
+
 export function fixGroupLeaks() {
   const d = handle() // acceso admin marcado (ver import)
   // 1) limpiar etiquetas grp ESPURIAS: en DMs el reader a veces puso grp = el push-name del contacto ("Alberto (WA)") o "WhatsApp Status Broadcast".

@@ -6,6 +6,8 @@ import { EventEmitter } from "events"
 import { appendFileSync, existsSync, mkdirSync, openSync, closeSync, statSync, renameSync, readdirSync, readFileSync } from "fs"
 import { loadEnv } from "./lib/env.mjs"
 import { smartChain } from "./lib/llm.mjs"
+import { getMeta } from "./lib/db.mjs"
+import * as maintenance from "./lib/maintenance.mjs"
 
 // cargar .env
 loadEnv()
@@ -466,7 +468,15 @@ setTimeout(runLearn, 150000) // primer aprendizaje a los ~2.5 min (después de g
 setInterval(runLearn, 6 * 3600000) // el LLM refina el self-model del dueño cada 6h
 setTimeout(runHeartbeat, 5 * 60000) // primer chequeo de salud de canales a los 5 min
 setInterval(runHeartbeat, 3600000) // heartbeat por canal cada 1h: avisa si un canal dejó de recibir (fallo silencioso)
-setTimeout(runSelfTest, 6 * 60000) // primer auto-test de ENVÍO a los ~6 min del arranque
+// Solo testear si de verdad pasó la ventana. Antes corría a los 6 min de CADA arranque: con varios reinicios en un
+// día te llegaban decenas de mensajes de prueba a vos mismo. El resultado del último test vive en meta['selftest'].
+setTimeout(() => {
+  let ultimo = 0
+  try { ultimo = JSON.parse(getMeta("selftest") || "{}").ts || 0 } catch {}
+  if (Date.now() - ultimo >= SELFTEST_HOURS * 3600000) runSelfTest()
+  else log(`⏭️  auto-test: el último fue hace ${Math.round((Date.now() - ultimo) / 60000)} min, salteo`)
+}, 6 * 60000)
+setInterval(() => { try { maintenance.purgeSelfTest() } catch {} }, 5 * 60000) // saca de la bandeja los mensajes de prueba ya verificados
 setInterval(runSelfTest, SELFTEST_HOURS * 3600000) // auto-test de envío (a vos mismo) por canal cada 12h: detecta el fallo "recibe pero no envía"
 setTimeout(runRsvp, 6 * 60000) // primer chequeo de RSVP a los 6 min
 setInterval(runRsvp, 30 * 60000) // recordatorios de reunión (confirmación pendiente + "empieza pronto") cada 30 min
