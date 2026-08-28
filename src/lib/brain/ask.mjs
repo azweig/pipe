@@ -153,7 +153,17 @@ export async function routerSearch(question) {
   // FTS sobre cuerpos de email: encuentra montos/fechas por la PREGUNTA aunque estén en un body no ruteado (ej: la deuda)
   for (const m of dbSearchBody(question, { limit: 4 })) { if (hide.has(m.thread) || isSecret({ ...m, channel: "email" })) continue; const s = stripB(m.snip).replace(/\s+/g, " ").slice(0, 240); if (s) { msgLines.push(`- (${fmt(m.ts)}, ${m.name || "email"}) ${s}`); if (m.thread && !srcThreads.find((x) => x.key === m.thread)) srcThreads.push({ key: m.thread, name: nameOf(m.thread), summary: cmap[m.thread]?.summary || "", score: 0 }) } } // 🔒
   if (msgLines.length < 4) for (const t of threads.slice(0, 2)) for (const m of dbRecentInThread(t, { limit: 5 })) { if (!isSecret({ ...m, thread: t })) msgLines.push(line(m)) } // 🔒 (threads ya sin 100%-secretos; filtra parciales)
-  const ctx = srcThreads.slice(0, 4).map((s) => `• ${s.name}: ${s.summary}`).filter(Boolean).join("\n") + "\n\nMENSAJES:\n" + msgLines.slice(0, 16).join("\n")
+  // ADJUNTOS: este camino (el del grafo) armaba su contexto solo con mensajes y cuerpos de email, así que un dato
+  // que vive DENTRO de un contrato o una factura le era invisible — y es el camino que se usa cuando la pregunta
+  // menciona a alguien conocido, o sea justo las preguntas sobre plata y acuerdos.
+  let docLines = []
+  try {
+    const { docsRelevantes } = await import("../doc-text.mjs")
+    for (const d of await docsRelevantes(question, { limit: 2, excluir: (c) => hide.has(c.thread) || isSecret(c) })) {
+      docLines.push(`- (documento: ${d.filename || "adjunto"}) ${d.texto.replace(/\s+/g, " ").slice(0, 2500)}`)
+    }
+  } catch { /* sin extracción: el grafo responde como antes */ }
+  const ctx = srcThreads.slice(0, 4).map((s) => `• ${s.name}: ${s.summary}`).filter(Boolean).join("\n") + "\n\nMENSAJES:\n" + msgLines.slice(0, 16).join("\n") + (docLines.length ? "\n\nDOCUMENTOS:\n" + docLines.join("\n") : "")
   const prompt = `Sos el asistente personal de ${ownerFirst()}. Abajo hay RESÚMENES y MENSAJES reales de sus conversaciones más relevantes para la pregunta.
 Respondé en 1 a 4 frases, en español, usando SOLO eso. Nombrá personas, proyectos y montos concretos. Si no alcanza, decí qué falta. NO inventes.
 

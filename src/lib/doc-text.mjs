@@ -83,10 +83,25 @@ export function candidatos(pregunta, { limit = 4 } = {}) {
       WHERE mediaType IN ('document','file') AND media IS NOT NULL AND media<>'' AND (${like})
       ORDER BY ts DESC LIMIT 60`).all(...args)
   } catch { return [] }
+  // TAMBIÉN por CONTENIDO ya extraído. La prebúsqueda por nombre de archivo tiene un límite de origen: no puede
+  // encontrar lo que está DENTRO de un documento que todavía no abrió. Pero lo ya extraído queda en doc_text, así
+  // que se busca ahí — y la búsqueda mejora sola a medida que se extraen más. (Caso real: la contraparte de un
+  // contrato aparece en el cuerpo del PDF y en ninguna otra parte.)
+  try {
+    const likeTxt = tokens.map(() => "texto LIKE ?").join(" AND ") // TODOS los tokens: si no, "san" trae cualquier cosa
+    const yaExtra = db().prepare(`SELECT media FROM doc_text WHERE texto IS NOT NULL AND texto<>'' AND (${likeTxt}) LIMIT 20`).all(...tokens.map((t) => `%${t}%`))
+    if (yaExtra.length) {
+      const medias = yaExtra.map((r) => r.media)
+      const extra = db().prepare(`SELECT id, media, filename, text, thread, name, ts FROM messages
+        WHERE media IN (${medias.map(() => "?").join(",")}) GROUP BY media ORDER BY ts DESC`).all(...medias)
+      for (const r of extra) if (!filas.some((f) => f.media === r.media)) filas.push({ ...r, _porContenido: true })
+    }
+  } catch { /* sin doc_text todavía: seguimos solo con el nombre */ }
   const puntuar = (r) => {
     const fn = String(r.filename || "").toLowerCase(), tx = String(r.text || "").toLowerCase(), th = String(r.thread || "").toLowerCase()
     let p = 0
     for (const t of tokens) { if (fn.includes(t)) p += 10; if (tx.includes(t)) p += 3; if (th.includes(t)) p += 2 }
+    if (r._porContenido) p += 12 // el texto del documento MENCIONA lo que preguntás: es la señal más fuerte que hay
     return p
   }
   // dedup por ruta del CAS: el mismo contrato reenviado 5 veces es UN documento, no cinco candidatos
