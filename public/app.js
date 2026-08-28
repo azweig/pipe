@@ -1500,6 +1500,17 @@ let inboxRows = [] // hilos cargados (para filtrar en vivo sin refetch)
 // firma barata del estado de la bandeja → el auto-refresh no repinta el DOM si nada cambió (evita churn/flicker cada 25s)
 const threadsSig = (rows) => (rows || []).length + ":" + ((rows || [])[0]?.ts || 0) + ":" + ((rows || [])[0]?.key || "") + ":" + (rows || []).reduce((a, t) => a + (t.unseen ? 1 : 0), 0)
 let _threadsSig = ""
+// PRÓXIMA REUNIÓN: tener la agenda no sirve de nada si hay que ir a buscarla. Lo que uno quiere saber sin abrir
+// nada es cuánto falta. Se pide aparte para no atrasar la bandeja; si no hay nada, no ocupa espacio.
+async function pintarProximaReunion() {
+  const el = document.getElementById("proxReu"); if (!el) return
+  const r = await api("/api/next-meeting").catch(() => null)
+  if (!r || r.none) { el.innerHTML = ""; return }
+  const urgente = r.enCurso || r.faltanMin <= 30
+  el.innerHTML = `<div class="prox-reu${urgente ? " ya" : ""}" onclick="go('#calendario')" title="Ver la agenda">
+    <span>🗓️</span><span class="pr-t">${esc(r.title)}</span><span class="pr-w">${r.enCurso ? "ahora" : esc(r.cuando)}</span></div>`
+}
+
 async function viewMensajes() {
   render(skel(6), "mensajes")
   const g = await api("/api/groups").catch(() => null); ST.groups = (g && g.groups) || ST.groups || []; ST.contactGroups = (g && g.contactGroups) || ST.contactGroups || {}
@@ -1568,6 +1579,7 @@ function paintMensajes(rows) {
     <button class="pill on" style="flex-shrink:0;padding:9px 16px${mergeSel.size >= 2 ? "" : ";opacity:.5"}" ${mergeSel.size >= 2 ? 'onclick="doMergeSelected()"' : "disabled"}>🔗 Unir (${mergeSel.size})</button></div>` : ""
   render(`<div class="screen inbox"${mergeSel ? ' style="padding-bottom:96px"' : ""}>
     <div class="ibx-head"><h1>Bandeja</h1><div class="row" style="gap:6px;padding:0;background:none;box-shadow:none">${window._secretBtn()}<button class="esp-btn" onclick="mergeMode()" title="Unir contactos duplicados (la misma persona en varios hilos)">${mergeSel ? "✕ Unir" : "🔗 Unir"}</button><button class="esp-btn" onclick="nuevaConversacion()" title="Escribirle a alguien que todavía no te escribió">✎ Nuevo</button><button class="esp-btn" onclick="groupsSheet()">🗂 Grupos</button></div></div>
+    <div id="proxReu"></div>
     <div class="ibx-search${q ? " has-q" : ""}${_aiSearch ? " ai" : ""}">
       <span class="ibx-si">${SVG.search}</span>
       <input id="ibxq" value="${esc(q)}" placeholder="${_aiSearch ? "Preguntá con IA: “¿qué acordé con Juan?”" : "Buscar por nombre, teléfono o email…"}" autocomplete="off" autocapitalize="off" spellcheck="false" oninput="onInboxSearch(this.value)" onkeydown="onSearchKey(event)">
@@ -1582,6 +1594,7 @@ function paintMensajes(rows) {
     <div id="thmore" style="height:1px"></div>
   </div>${mergeBar}`, "mensajes")
   renderInboxList()
+  void pintarProximaReunion() // no bloquea la bandeja: si la agenda tarda, la lista ya está pintada
   // swipe horizontal entre tabs de categoría (izq = siguiente, der = anterior)
   const tabIds = TABS.map((t) => t[0]), ci = tabIds.indexOf(curCat)
   onSwipe(document.querySelector(".inbox"), () => { if (ci < tabIds.length - 1) setCat(tabIds[ci + 1]) }, () => { if (ci > 0) setCat(tabIds[ci - 1]) })

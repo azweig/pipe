@@ -252,6 +252,48 @@ export function resolveAttendee(a) {
 // PRE-GENERA la tarjeta de cada evento próximo (categoría, asistentes+roles, objetivo, prep con IA). Corre en cron / al sincronizar calendario.
 
 // AGREGADOR de la vista de calendario (día/semana) con KPIs reales — barato, se calcula en vivo
+// PRÓXIMA REUNIÓN + cuánto falta. Tener la agenda no sirve de nada si hay que ir a buscarla: lo que uno quiere
+// saber, sin abrir nada, es cuánto tiempo le queda. Mira los próximos 14 días y devuelve la primera que no empezó.
+export function proximaReunion(ahora = Date.now()) {
+  const dias = []
+  for (let i = 0; i < 14; i++) dias.push(new Date(ahora + i * 86400000).toISOString().slice(0, 10))
+  let mejor = null
+  for (const d of dias) {
+    let ev = []
+    try { ev = (calendarData("dia", d) || {}).events || [] } catch { continue }
+    for (const e of ev) {
+      const ini = e.startMs || 0
+      if (!ini || ini <= ahora) continue
+      if (!mejor || ini < mejor.startMs) mejor = e
+    }
+    if (mejor) break // el primer día con algo futuro ya trae la más próxima
+  }
+  if (!mejor) return null
+  const faltanMin = Math.round((mejor.startMs - ahora) / 60000)
+  return {
+    id: mejor.id, title: mejor.title, startMs: mejor.startMs, endMs: mejor.endMs || 0,
+    cat: mejor.cat || "", faltanMin,
+    // texto listo para mostrar: "en 25 min", "en 3 h 10", "mañana 09:00", "el vie 09:00"
+    cuando: textoFalta(faltanMin, mejor.startMs),
+    enCurso: !!(mejor.endMs && mejor.endMs > ahora && mejor.startMs <= ahora),
+  }
+}
+function textoFalta(min, startMs) {
+  if (min < 1) return "ahora"
+  if (min < 60) return `en ${min} min`
+  if (min < 12 * 60) { const h = Math.floor(min / 60), m = min % 60; return `en ${h} h${m ? " " + m : ""}` }
+  // TODO en la zona del usuario, no la del servidor. El server está en Europa y el mismo evento se veía a las
+  // 16:00 en vez de las 09:00. Y "mañana" se decide por DÍA DE CALENDARIO, no por horas: faltando 40 h decía
+  // "mañana" cuando en realidad era pasado.
+  const z = tz()
+  const hora = new Date(startMs).toLocaleTimeString("es-PE", { timeZone: z, hour: "2-digit", minute: "2-digit", hour12: false })
+  const dia = (ms) => new Date(ms).toLocaleDateString("en-CA", { timeZone: z })
+  const hoy = dia(Date.now()), manana = dia(Date.now() + 86400000), cuando = dia(startMs)
+  if (cuando === hoy) return `hoy ${hora}`
+  if (cuando === manana) return `mañana ${hora}`
+  return `el ${new Date(startMs).toLocaleDateString("es-PE", { timeZone: z, weekday: "short", day: "numeric" })} ${hora}`
+}
+
 export function calendarData(view = "dia", dateISO) {
   const ag = agenda(), objetivos = jf("objetivos.json") || []
   const OFF = tzOffset(), p2 = (n) => String(n).padStart(2, "0")

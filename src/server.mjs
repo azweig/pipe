@@ -502,6 +502,8 @@ const server = createServer(async (req, res) => {
       if (path === "/api/push/test" && req.method === "POST") return json(res, 200, await push.sendPush({ title: "pipe.one ✅", body: "Notificaciones activadas — te avisaré de lo importante.", url: "/" }))
       if (path === "/api/agenda") return json(res, 200, brain.agenda())
       if (path === "/api/calendar") return json(res, 200, brain.calendarData(q.view || "dia", q.date || ""))
+      // cuánto falta para la próxima reunión — lo consultan las tres apps para mostrarlo sin abrir la agenda
+      if (path === "/api/next-meeting") return json(res, 200, brain.proximaReunion() || { none: true })
       if (path === "/api/calendar/regen" && req.method === "POST") { spawn(process.execPath, ["src/calendar-prep.mjs"], { detached: true, stdio: "ignore" }).unref(); return json(res, 200, { ok: true }) }
       if (path === "/api/directory") return json(res, 200, brain.directory())
       if (path === "/api/search") { const b = await body(req); return json(res, 200, brain.searchMessages(b.q || q.q || "")) }
@@ -726,6 +728,7 @@ const server = createServer(async (req, res) => {
         catch (e) { releaseSend(b.msgId); throw e } // falló de verdad → soltamos la reserva o el reintento esperaría eternamente
         if (r && r.error) { releaseSend(b.msgId); return json(res, 400, r) }
         finishSend(b.msgId, r)
+        try { if (b.key) setNotSpam(b.key) } catch {} // le respondiste: no hay señal más clara de que no es spam
         brain.invalidateThreads() // la bandeja refleja tu envío YA (antes tardaba hasta el TTL del cache)
         return json(res, 200, b.covert ? { ...r, cover: text } : r) // covert: devolvemos el texto tapadera para "ver original"
       } // covert: cifra→texto tapadera antes de mandar; devuelve el poema para "ver original". invalidateThreads → la bandeja refleja tu envío YA (antes tardaba hasta el TTL del cache)
@@ -859,7 +862,10 @@ const server = createServer(async (req, res) => {
       if (path === "/api/thread/sync") return json(res, 200, brain.threadSyncPage(q.key || "", +q.before || 0, { limit: Math.min(1500, +q.limit || 800) })) // backfill de texto completo hacia atrás
       if (path === "/api/thread/suggest-reply") return json(res, 200, await brain.suggestReply(q.key || "", { localOnly: secretoPorNombre(q.key) })) // borrador IA para el input (no envía)
       if (path === "/api/thread/summarize") return json(res, 200, await brain.summarizeChat(q.key || "", q.range || "all", ws)) // resumen guardado como nota IA
-      if (path === "/api/thread/seen" && req.method === "POST") { const b = await body(req); return json(res, 200, { lastSeen: ws.markSeen(b.key, b.ts) }) }
+      // ABRIR un hilo es la señal más honesta de que NO es spam: te tomaste el trabajo de leerlo. Un correo real
+      // que el clasificador mandó a spam (pasó con una invitación de verdad mezclada con el marketing del mismo
+      // dominio) se rescata solo la primera vez que lo abrís, sin que tengas que buscar ningún botón.
+      if (path === "/api/thread/seen" && req.method === "POST") { const b = await body(req); if (b.key) { try { setNotSpam(b.key) } catch {} } return json(res, 200, { lastSeen: ws.markSeen(b.key, b.ts) }) }
       if (path === "/api/thread/schedule") return json(res, 200, await brain.scheduleIntent(q.key || "")) // calendarizador por chat: ¿hay intención de agendar?
       if (path === "/api/schedule/create" && req.method === "POST") { const b = await body(req); const r = await brain.createSchedule(b); return json(res, r?.error ? 400 : 200, r) }
       if (path === "/api/schedule/delete" && req.method === "POST") { const b = await body(req); const r = await brain.cancelSchedule(b); return json(res, r?.error ? 400 : 200, r) }

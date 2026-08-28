@@ -357,6 +357,11 @@ h2{font-size:20px;font-weight:700;letter-spacing:-.3px;margin:0}
 .ibx-head h1{font-size:30px;font-weight:800;letter-spacing:-.6px;margin:0}
 .esp-btn{display:flex;align-items:center;gap:6px;background:#ecedfe;color:var(--accent);border:none;border-radius:12px;padding:9px 14px;font-size:14px;font-weight:700;cursor:pointer}
 .esp-btn:active{transform:scale(.96)}
+/* Próxima reunión: banda discreta arriba de la bandeja; se pone en acento cuando ya casi empieza */
+.prox-reu{display:flex;align-items:center;gap:8px;margin:0 0 10px;padding:8px 11px;border-radius:10px;background:var(--bg2);border:1px solid var(--line);cursor:pointer;font-size:13px}
+.prox-reu .pr-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prox-reu .pr-w{flex:0 0 auto;font-weight:700;color:var(--accent)}
+.prox-reu.ya{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
 .ibx-search{position:relative;margin-bottom:12px;display:flex;align-items:center}
 .ibx-search input{width:100%;border:1.5px solid transparent;background:var(--bg2);border-radius:14px;padding:13px 40px 13px 42px;font-size:15px;color:var(--ink);transition:border-color .15s,background .15s}
 .ibx-search input::placeholder{color:var(--muted2)}
