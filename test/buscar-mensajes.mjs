@@ -30,10 +30,13 @@ test("una PREGUNTA no se confunde con una búsqueda", () => {
 })
 
 test("va ANTES del grafo y no gasta tokens", () => {
+  // ⚠️ nada de ventanas de N caracteres: cada línea nueva en routerSearch las desbordaba y la prueba fallaba
+  // sin que hubiera ninguna regresión. Se corta en el próximo export, que sí es el final de la función.
   const i = ASK.indexOf("export async function routerSearch")
-  const fn = ASK.slice(i, i + 3200)
+  const j = ASK.indexOf("\nexport ", i + 10)
+  const fn = ASK.slice(i, j > 0 ? j : ASK.length)
   const iBuscar = fn.indexOf("const buscar = intentoBuscarTexto(question)")
-  const iGrafo = fn.indexOf("activateGraph(question)")
+  const iGrafo = fn.indexOf("activateGraph(consulta)")
   assert.ok(iBuscar > 0 && iBuscar < iGrafo, "la búsqueda se resuelve antes de activar el grafo")
   assert.match(fn, /tokens: 0/)
 })

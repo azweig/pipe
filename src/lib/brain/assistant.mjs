@@ -15,8 +15,8 @@ import { transcribeMedia } from "../voice.mjs" // Whisper LOCAL (GPU box): la no
 import { casReadBuffer } from "../cas.mjs"
 import { harden, UNTRUSTED_NOTE } from "../safety.mjs"
 import { ownerFirst } from "../hub.mjs"
-import { ask, routerSearch } from "./ask.mjs"
-import { jarvisGuardar } from "../db.mjs" // lo que preguntás por WhatsApp entra a la MISMA charla que la de la app
+import { ask, routerSearch, humanizarIds } from "./ask.mjs"
+import { jarvisGuardar, jarvisHistorial } from "../db.mjs" // lo que preguntás por WhatsApp entra a la MISMA charla que la de la app
 import { sendReply } from "./reply.mjs"
 import { selfNotesSince, selfNotesSinceAll, selfNotesHiddenCount, isSecretSelfRow } from "../db.mjs" // trae AMBAS direcciones del hilo propio y ya excluye las notas de canal secreto
 
@@ -66,7 +66,10 @@ export function classify(text) {
   if (ONLY_URL.test(t)) return { answer: false, reason: "es un link guardado" }
   if (t.length < 8) return { answer: false, reason: "muy corto" }
   if (t.length > 1500) return { answer: false, reason: "muy largo — parece una nota o algo pegado" }
-  const q = t.endsWith("?") || /\?\s*$/.test(t)
+  // El "?" no siempre va al final: "…es mío o de ellos ?cuál fue el último mensaje" venía con el signo en el medio
+  // y se descartaba como "no parece una pregunta" — la pregunta se perdía sin dejar rastro. Vale en cualquier parte,
+  // salvo que sea parte de una URL (query string).
+  const q = /\?/.test(t.replace(/https?:\/\/\S+/gi, ""))
   if (q || WORDS.test(t) || ASKS.test(t)) {
     // "…me dijo que cuándo llegaba" es una nota CONTANDO algo, no una pregunta para mí.
     if (!q && /(^|\P{L})(me dijo|me dijeron|dijo que|comentó|avisó|recordar que|nota:|pendiente:)/iu.test(t)) return { answer: false, reason: "parece una nota sobre lo que dijo otro" }
@@ -102,7 +105,7 @@ export const looksEmptyAnswer = (t) => { const x = String(t || "").trim(); retur
 // Messi?" es de interés público — bloquearla dejaba al asistente ciego justo cuando más servía. Lo que sí se cuida:
 //   · el modelo que redacta es local → tu contexto personal no viaja a una nube,
 //   · y si la PREGUNTA en sí es personal ("¿qué le respondo a Juan por la deuda?"), no se busca nada afuera.
-export async function answerQuestion(question, { web = true, localOnly = false } = {}) {
+export async function answerQuestion(question, { web = true, localOnly = false, historial = [] } = {}) {
   const personalQ = PERSONAL.test(String(question || "")) // pregunta sobre SUS cosas → no sale a ningún buscador
   if (isSmallTalk(question)) return { text: "Acá estoy. Preguntame lo que necesites — busco en tus conversaciones y en internet.", smallTalk: true, usedWeb: false, ownMatches: 0 }
   // El MODELO local tiene que valer para todo el camino, no solo para la síntesis final: ask() arma su propia cadena con
@@ -112,7 +115,7 @@ export async function answerQuestion(question, { web = true, localOnly = false }
   // le preguntás por WhatsApp merece la misma capacidad que lo que preguntás en la app — si no, la misma pregunta
   // se contesta distinta según por dónde la hagas.
   let own = { answer: "", matches: 0 }
-  if (!localOnly) { try { const rs = await routerSearch(question); if (rs?.answer) own = { answer: rs.answer, matches: rs.matches || 0 } } catch { /* caemos al RAG */ } }
+  if (!localOnly) { try { const rs = await routerSearch(question, { historial }); if (rs?.answer) own = { answer: rs.answer, matches: rs.matches || 0 } } catch { /* caemos al RAG */ } }
   if (!own.answer) own = await ask(question, { localOnly }).catch(() => ({ answer: "", matches: 0 }))
   // Si el paso sobre TUS datos no encontró nada, suele devolver una NEGATIVA ("no hay información sobre…").
   // Pasarla como contexto contagia al modelo final, que repite la negativa incluso en preguntas de conocimiento
@@ -143,7 +146,11 @@ Respondé en español, directo y breve (WhatsApp): 1 a 5 frases, sin relleno ni 
 Cómo responder según la pregunta:
 · Si es sobre SUS cosas (sus conversaciones, deudas, reuniones, contactos): usá SOLO los datos de abajo. Si no alcanzan, decí qué falta. NUNCA inventes un dato suyo.
 · Si es de conocimiento general o del mundo: respondé con lo que sabés, aunque los datos de abajo no digan nada. Si el dato pudo cambiar (precios, cargos, noticias) y no hay resultado web, aclaralo en pocas palabras.
-Si usás un resultado web, cerrá con la fuente entre paréntesis.`)
+Si usás un resultado web, cerrá con la fuente entre paréntesis.
+
+Dos reglas que se te olvidan:
+· SÍ tenés acceso a sus correos, WhatsApp, agenda y adjuntos — están abajo. Si no encontraste algo decí "no lo encontré", nunca "no tengo acceso".
+· Nombrá a las personas por su nombre. Si en los datos ves un número o un jid (algo con arroba y sufijo de WhatsApp), no lo copies en la respuesta.`)
   const prompt = `PREGUNTA: ${question}
 
 DATOS SUYOS (de su propio historial):
@@ -166,6 +173,7 @@ RESPUESTA:`
     const second = await call(retry, sys2)
     if (second && !looksEmptyAnswer(second)) out = second
   }
+  out = humanizarIds(out) // cinturón y tirantes: el prompt lo pide, esto lo garantiza
   return { text: out, usedWeb: useWeb && !!webCtx, usedNews: !!curCtx, ownMatches: own.matches || 0, localOnly }
 }
 
@@ -217,25 +225,35 @@ export async function runAssistant() {
 
   let answered = 0
   let since = st.since
+  // Antes se avanzaba `since` ANTES de contestar y se cortaba con un break: si el modelo fallaba o el envío
+  // rebotaba, la pregunta quedaba consumida y no volvía nunca. Y si mandabas dos preguntas seguidas, la segunda
+  // se comía igual. Ahora `since` sube solo cuando la pregunta quedó resuelta (contestada o descartada a
+  // propósito), y se atienden varias por corrida hasta el tope.
+  const TOPE_POR_CORRIDA = 3
+  const resuelto = (m) => { since = Math.max(since, m.ts || 0) }
   for (const m of fresh) {
-    since = Math.max(since, m.ts || 0)
+    if (answered >= TOPE_POR_CORRIDA) break // el daemon vuelve en 60s; evita ráfagas
+    if ((st.today || []).filter((x) => Date.now() - x < 86400000).length + answered >= cfg.maxPerDay) break
     // si mandaste una NOTA DE VOZ, primero se pasa a texto; después es una pregunta como cualquier otra
     let texto = m.text
     if (String(m.mediaType || "") === "audio") {
       const tr = await transcribeSelfAudio(m)
-      if (!tr) continue
+      if (!tr) continue // fallo transcribiendo: NO la marcamos resuelta, se reintenta al próximo turno
       texto = tr
       console.log(`[asistente] 🎤 transcripto: "${tr.slice(0, 60)}"`)
     }
     const c = classify(texto)
-    if (!c.answer) continue
+    if (!c.answer) { resuelto(m); continue } // no era una pregunta: descartada a propósito
     // Si vino de una línea secreta se responde con modelo LOCAL. OJO: eso NO es "sin internet" — la búsqueda web sigue
     // activa a propósito (ver la nota larga de answerQuestion: lo que sale a buscar es la PREGUNTA, no tus datos, y
     // bloquearla dejaba al asistente ciego justo cuando más servía). Este comentario decía lo contrario y era falso:
     // el texto que escribís en la línea secreta puede llegar al buscador si la pregunta no es personal.
     const secreta = cfg.secretOk && isSecretSelfRow(m)
-    const r = await answerQuestion(c.question, { web: cfg.web, localOnly: secreta }).catch(() => ({ text: "" }))
-    if (!r.text) continue
+    // El historial es lo que le da continuidad: sin esto "¿de emails?" no sabía de qué venías hablando.
+    let previo = []
+    try { previo = jarvisHistorial({ limit: 8 }) } catch {}
+    const r = await answerQuestion(c.question, { web: cfg.web, localOnly: secreta, historial: previo }).catch(() => ({ text: "" }))
+    if (!r.text) { console.log(`[asistente] ⏸ sin respuesta para "${String(texto).slice(0, 40)}" — la reintento`); continue }
     const out = MARK + r.text
     // 🎯 contestar EN LA SALA donde preguntaste. Sin el target, sendReply elige "la última sala del hilo": con tres
     // teléfonos la respuesta puede salir por el chat equivocado (y si esa sala es de otra línea, no llega nunca).
@@ -249,9 +267,12 @@ export async function runAssistant() {
     if (sent && !sent.error) {
       // UNA sola conversación con el asistente: si preguntás por WhatsApp queda registrado igual que si lo
       // hubieras preguntado en la app, y lo ves desde cualquier dispositivo.
-      try { jarvisGuardar("me", question, "whatsapp"); jarvisGuardar("ai", out, "whatsapp") } catch { /* la respuesta ya salió */ }
-      markSent(out); answered++; console.log(`[asistente] ✓${secreta ? " 🔒local" : ""}${m.mediaType === "audio" ? " 🎤" : ""} "${String(texto).slice(0, 40)}" → "${r.text.slice(0, 55)}"`) }
-    break // una por corrida: el daemon vuelve en 60s. Evita ráfagas si pegaste varias preguntas juntas.
+      // ⚠️ acá decía `question`, que no existe en este alcance: tiraba ReferenceError, el catch se lo comía y
+      // NADA de lo que preguntabas por WhatsApp quedaba guardado. Por eso el asistente nunca tenía contexto.
+      try { jarvisGuardar("me", c.question, "whatsapp"); jarvisGuardar("ai", r.text, "whatsapp") } catch { /* la respuesta ya salió */ }
+      resuelto(m); markSent(out); answered++
+      console.log(`[asistente] ✓${secreta ? " 🔒local" : ""}${m.mediaType === "audio" ? " 🎤" : ""} "${String(texto).slice(0, 40)}" → "${r.text.slice(0, 55)}"`)
+    } else console.log(`[asistente] ⏸ no pude enviar la respuesta a "${String(texto).slice(0, 40)}" — la reintento`)
   }
   save(STATE(), { ...load(STATE(), {}), since })
   return { answered }

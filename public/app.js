@@ -1717,7 +1717,7 @@ window.aiSearchRun = async () => {
   const q = (ST.q || "").trim(); const box = document.getElementById("ibxai"); if (!box) return
   if (!q) { box.innerHTML = ""; return }
   box.innerHTML = `<div class="ibx-aians"><div class="ai-row">${ORB}<b>Buscando…</b></div></div>`
-  const r = await post("/api/router-search", { q }).catch(() => null)
+  const r = await post("/api/router-search", { q, via: "web" }).catch(() => null)
   if (!r) { box.innerHTML = `<div class="ibx-aians"><div class="ai-body">No pude buscar eso ahora — probá de nuevo.</div></div>`; return }
   const chip = r.mode === "facets" ? `<span class="ai-mode fast">⚡ ${esc(r.engine || "facetas")} · 0 tokens</span>` : `<span class="ai-mode">🧠 IA · RAG</span>`
   const srcChips = (r.threads || []).slice(0, 5).map((t) => `<span class="ai-src" onclick="go('#conv/${enck(t.key)}')" title="${esc(t.summary || "")}">${esc(t.name || t.key)}${t.path && t.path.length ? ` <i>· ${esc(t.path.join(" → "))}</i>` : ""}</span>`).join("")

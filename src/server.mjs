@@ -517,7 +517,10 @@ const server = createServer(async (req, res) => {
         if (!pregunta) return json(res, 400, { error: "sin pregunta" })
         jarvisGuardar("me", pregunta, b.via || "app")
         let r = null
-        try { r = await brain.routerSearch(pregunta) } catch (e) { r = { answer: "", error: e.message } }
+        // el historial es lo que le da continuidad: sin esto cada pregunta se contestaba aislada y una repregunta
+        // ("¿y cuánto era?") devolvía cualquier cosa.
+        const previo = jarvisHistorial({ limit: 8 }).slice(0, -1) // sin la pregunta que acabamos de guardar
+        try { r = await brain.routerSearch(pregunta, { historial: previo }) } catch (e) { r = { answer: "", error: e.message } }
         // la búsqueda de mensajes no devuelve prosa: se resume en una línea para que la conversación se lea igual
         const texto = r?.answer || (r?.type === "mensajes" ? `Encontré ${r.total} mensaje${r.total === 1 ? "" : "s"} con “${r.termino}”.` : "") || "No pude responder eso."
         jarvisGuardar("ai", texto, b.via || "app", { engine: r?.engine, mode: r?.mode, total: r?.total })
@@ -525,7 +528,21 @@ const server = createServer(async (req, res) => {
       }
       if (path === "/api/jarvis") return json(res, 200, { items: jarvisHistorial({ limit: +q.limit || 80 }) })
       if (path === "/api/jarvis/clear" && req.method === "POST") return json(res, 200, { borrados: jarvisBorrar() })
-      if (path === "/api/router-search") { const b = await body(req); return json(res, 200, await brain.routerSearch(b.q || q.q || "")) } // robotito: facetas (0 tokens) → fallback RAG
+      // El buscador de la bandeja es la MISMA conversación que Jarvis: si no, preguntabas ahí y no quedaba nada,
+      // ni contexto para la repregunta. `efimero:true` lo deja fuera del historial (usos internos).
+      if (path === "/api/router-search") {
+        const b = await body(req)
+        const pregunta = String(b.q || q.q || "")
+        if (b.efimero) return json(res, 200, await brain.routerSearch(pregunta))
+        const previo = jarvisHistorial({ limit: 8 })
+        const r = await brain.routerSearch(pregunta, { historial: previo })
+        if (pregunta) {
+          jarvisGuardar("me", pregunta, b.via || "bandeja")
+          const texto = r?.answer || (r?.type === "mensajes" ? `Encontré ${r.total} mensaje${r.total === 1 ? "" : "s"} con “${r.termino}”.` : "")
+          if (texto) jarvisGuardar("ai", texto, b.via || "bandeja", { engine: r?.engine })
+        }
+        return json(res, 200, r)
+      } // robotito: facetas (0 tokens) → fallback RAG
       // 🔒 estos dos toman el contacto del CUERPO del POST (b.name), y el gate por-hilo de arriba solo mira el query
       // string → se lo salteaban enteros. Redactarle un borrador a alguien es leerle el historial, así que se chequea acá.
       // La respuesta es la MISMA que para un nombre que no existe: un "secret:true" sería un oráculo (preguntás un nombre

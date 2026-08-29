@@ -164,6 +164,19 @@ export function senderPorNombre(nombre) {
   } catch { return null }
 }
 
+// El REVERSO de senderPorNombre: de un número o jid al nombre con el que lo tenés agendado.
+// Sin esto las respuestas salían con el jid crudo ("<dígitos>@s.whatsapp.net") en vez de la persona: ilegible.
+export function nombrePorContacto(id) {
+  const d = String(id || "").replace(/\D/g, "")
+  if (d.length < 7) return null
+  try {
+    const r = db().prepare(
+      "SELECT name, COUNT(*) c FROM messages WHERE sender LIKE ? AND name IS NOT NULL AND name<>'' AND name NOT GLOB '*[0-9][0-9][0-9][0-9][0-9]*' GROUP BY name ORDER BY c DESC LIMIT 1"
+    ).get("%" + d + "%")
+    return (r && r.name) || null
+  } catch { return null }
+}
+
 export function threadPorClave(clave) {
   const k = String(clave || "").trim()
   if (!k) return null

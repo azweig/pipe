@@ -16,7 +16,7 @@ const DOC = readFileSync("src/lib/doc-text.mjs", "utf8")
 test("el camino del grafo también mira adjuntos", () => {
   const i = ASK.indexOf("export async function routerSearch")
   const fn = ASK.slice(i)
-  assert.match(fn, /docsRelevantes\(question/)
+  assert.match(fn, /docsRelevantes\(consulta/)
   assert.match(fn, /DOCUMENTOS:/)
 })
 

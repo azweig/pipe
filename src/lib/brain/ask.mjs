@@ -6,6 +6,7 @@ import { search as dbSearch, searchBody as dbSearchBody, conversationsByThreads 
 import { llm, smartChain } from "../llm.mjs"
 import { UNTRUSTED_NOTE } from "../safety.mjs"
 import { ownerFirst } from "../hub.mjs"
+import { nombrePorContacto } from "../threads-repo.mjs"
 import { stripWA } from "./kernel/keys.mjs"
 import { cleanMsg } from "./kernel/convo.mjs"
 
@@ -131,6 +132,49 @@ RESPUESTA:`
 
 // ── ROUTER-SEARCH: barato primero (facetas), fallback al RAG completo (ask) ──
 // Es lo que llama el "robotito" de la bandeja. Ahorra tokens: BUSCAR = 0 tokens; PREGUNTA = síntesis chica con contexto ya filtrado.
+// ¿ES UN SEGUIMIENTO DE LO ANTERIOR? "¿y cuánto era?" no se puede buscar literalmente: no dice de qué habla. Sin
+// esto cada pregunta se contestaba aislada, así que la segunda de una charla devolvía cualquier cosa.
+//
+// No se resuelve con otra llamada al modelo: se ARRASTRAN las palabras concretas del turno anterior a la búsqueda.
+// Barato, y suficiente para que el buscador encuentre lo mismo que la vez anterior.
+// OJO con la tilde: `[eé]l` matcheaba el ARTÍCULO "el". Con eso "qué me dijo Pablo sobre el contrato" pasaba por
+// seguimiento y se le pegaban las palabras del turno anterior — la búsqueda se iba a cualquier lado. Solo "él".
+const PRONOMBRES = /(\beso\b|\besa\b|\bese\b|\besos\b|\besas\b|\bah[ií]\b|\blo mismo\b|\bde eso\b|\bal respecto\b|\bél\b|\bella\b|\bles?\b)/i
+const ARRANQUE_SEGUIMIENTO = /^\s*(y|pero|entonces|ok|dale|listo|además|ademas|tambi[eé]n|tambien)\b/i
+export function esSeguimiento(q, hayHistorial) {
+  if (!hayHistorial) return false
+  const t = String(q || "").trim()
+  const palabras = t.split(/\s+/).filter(Boolean).length
+  if (ARRANQUE_SEGUIMIENTO.test(t)) return true
+  // Elipsis: "¿De emails?", "¿Y en el calendario?" — la pregunta arranca con preposición porque el sujeto quedó
+  // en el turno anterior. Sin esto se buscaba a ciegas en todo el historial (240s y una respuesta inservible).
+  if (/^\s*(y\s+)?(de|del|en|con|para|sobre|desde|entre)\b/i.test(t) && palabras <= 14) return true
+  if (PRONOMBRES.test(t) && palabras <= 12) return true
+  return palabras <= 4 // "¿y el monto?" — demasiado corta para buscarse sola
+}
+// Palabras con peso del turno anterior (nombres propios, cifras, términos largos): son las que hacen que la
+// búsqueda caiga en el mismo lugar que antes.
+// El recorte temporal también se hereda: "¿tengo algo importante de AYER?" → "¿de emails?" sigue hablando de ayer.
+// Sin esto la repregunta se abría a 7 días y devolvía cosas que la primera ya había descartado.
+export function ventanaHeredada(q, historial = []) {
+  const propia = ventanaTemporal(q)
+  if (propia.desde) return propia
+  // hacia atrás hasta el último turno que SÍ nombró un momento: "…de ayer?" → "¿de emails?" → "¿y de whatsapp?"
+  // sigue siendo sobre ayer, aunque el turno del medio no lo repita.
+  for (const m of historial.filter((x) => x.role === "me").slice(-4).reverse()) {
+    const v = ventanaTemporal(m.text)
+    if (v.desde) return v
+  }
+  return propia
+}
+
+export function expandirConHistorial(q, historial = []) {
+  const previos = historial.filter((m) => m.role === "me").slice(-2).map((m) => m.text).join(" ")
+  if (!previos) return q
+  const claves = [...new Set((previos.match(/[\p{Lu}][\p{L}]{2,}|\d[\d.,]{2,}|[\p{L}]{5,}/gu) || []))].slice(0, 6)
+  return claves.length ? `${q} ${claves.join(" ")}` : q
+}
+
 // ¿LA PREGUNTA HABLA DE UN MOMENTO? "¿hay alguna urgencia HOY?" traía mensajes de 2020 rankeados por relevancia:
 // la respuesta salía coherente y completamente inútil. Y tardaba minutos, porque el contexto se llenaba de años de
 // historial para una pregunta sobre las últimas horas.
@@ -148,7 +192,10 @@ function inicioDelDia(offsetDias = 0) {
 // respuesta ya la tenemos calculada en la bandeja (el ✦), así que se contesta con eso — exacto y sin tokens.
 const PIDE_PENDIENTES = [
   /\bnecesit[ae]n?\s+(mi\s+)?(asistencia|atenci[oó]n|respuesta)\b/i,
-  /\b(algo|alg[uú]n[ao]s?)\s+(urgente|urgencias?|importante|prioritario)\b/i,
+  // "algún MENSAJE importante", "algún CORREO urgente": el sustantivo va en el medio y antes no matcheaba,
+  // así que la pregunta caía al RAG genérico y contestaba cualquier cosa.
+  /\b(algo|alg[uú]n(?:[ao]s?)?)\s+(\w+\s+){0,2}(urgentes?|urgencias?|importantes?|prioritarios?|pendientes?)\b/i,
+  /\b(tengo|hay|queda[nb]?)\s+(\w+\s+){0,3}(para|por|sin)\s+(responder|contestar)\b/i,
   /\bqu[eé]\s+(tengo|me\s+falta)\s+(pendiente|por\s+responder|responder)\b/i,
   /\bhay\s+(algo|alguna\s+cosa)\s+(urgente|importante|pendiente)\b/i,
   /\bqu[eé]\s+(es\s+)?(lo\s+)?(m[aá]s\s+)?(urgente|importante)\b/i,
@@ -156,10 +203,27 @@ const PIDE_PENDIENTES = [
 ]
 export const pidePendientes = (q) => PIDE_PENDIENTES.some((re) => re.test(String(q || "")))
 
+// Los datos internos identifican a la gente por el jid del canal, no por su nombre. Eso no se le muestra a nadie:
+// se cambia por el nombre agendado, y si no hay nombre se recorta a los últimos 4 dígitos.
+export function humanizarIds(texto) {
+  let t = String(texto || "")
+  if (!/\d{7}/.test(t)) return t
+  const cache = new Map()
+  // OJO: NO tocar cualquier número largo. Un RUC (11 dígitos) o un monto son datos que el dueño pidió ver.
+  // Solo se reemplaza si es inequívocamente un contacto: trae sufijo de jid, o los dígitos resuelven a un nombre.
+  return t.replace(/\b(\d{7,16})(@[\w.]+)?\b/g, (full, num, suf) => {
+    if (!cache.has(num)) { let n = null; try { n = nombrePorContacto(num) } catch {} cache.set(num, n) }
+    const n = cache.get(num)
+    if (n) return n
+    return suf ? `un número terminado en ${num.slice(-4)}` : full
+  })
+}
+
 export function ventanaTemporal(q) {
   const t = String(q || "").toLowerCase()
-  if (/\bhoy\b|\beste momento\b|\bahora mismo\b|\ben el día\b/.test(t)) return { desde: inicioDelDia(0), etiqueta: "hoy" }
+  // "de ayer u hoy" nombra las dos: gana la ventana MÁS ANCHA, por eso ayer se evalúa primero.
   if (/\bayer\b/.test(t)) return { desde: inicioDelDia(1), etiqueta: "desde ayer" }
+  if (/\bhoy\b|\beste momento\b|\bahora mismo\b|\ben el día\b/.test(t)) return { desde: inicioDelDia(0), etiqueta: "hoy" }
   if (/\besta semana\b|\búltimos d[ií]as\b|\bultimos d[ií]as\b/.test(t)) return { desde: inicioDelDia(7), etiqueta: "esta semana" }
   if (/\beste mes\b|\búltimo mes\b|\bultimo mes\b/.test(t)) return { desde: inicioDelDia(30), etiqueta: "este mes" }
   // "nuevo/reciente/sin responder/pendiente" no nombran una fecha pero preguntan por lo de AHORA, no por el archivo
@@ -189,20 +253,30 @@ export function intentoBuscarTexto(q) {
   return { termino: termino.replace(/^["'“”«»]|["'“”«»]$/g, ""), soloMios }
 }
 
-export async function routerSearch(question) {
+export async function routerSearch(question, { historial = [] } = {}) {
+  // Con historial, una pregunta de seguimiento se busca CON las palabras del turno anterior: si no, "¿y cuánto
+  // era?" se busca literalmente y trae cualquier cosa.
+  const seguimiento = esSeguimiento(question, historial.length > 0)
+  const consulta = seguimiento ? expandirConHistorial(question, historial) : question
   // "¿QUÉ NECESITA MI ATENCIÓN?" se contesta con la señal ya calculada, no buscando la palabra "urgente".
-  if (pidePendientes(question)) {
+  if (pidePendientes(consulta)) {
     const { listThreads } = await import("./inbox.mjs")
-    const v = ventanaTemporal(question)
+    const v = seguimiento ? ventanaHeredada(question, historial) : ventanaTemporal(question)
     const desde = v.desde || Date.now() - 7 * 86400000 // sin fecha en la pregunta, la última semana
-    const imp = listThreads({ limit: 900 }).filter((t) => t.importante && (t.ts || 0) >= desde)
+    const canal = /\b(mails?|emails?|correos?|casilla|bandeja de entrada)\b/i.test(question) ? "email"
+      : /\bwhats?app\b/i.test(question) ? "whatsapp"
+      : /\btelegram\b/i.test(question) ? "telegram" : ""
+    const imp = listThreads({ limit: 900 })
+      .filter((t) => t.importante && (t.ts || 0) >= desde)
+      .filter((t) => !canal || String(t.channel || "").toLowerCase().includes(canal) || String(t.key || "").toLowerCase().startsWith(canal))
     // "en hoy" se lee mal: los adverbios van sin preposición y las duraciones con "en"
     const et = v.etiqueta || "los últimos 7 días"
     const cuando = /^(hoy|desde ayer)$/.test(et) ? et : `en ${et}`
+    const dondeTxt = canal === "email" ? " en tus correos" : canal ? ` en ${canal}` : ""
     const answer = imp.length
-      ? `Sí: ${imp.length} ${imp.length === 1 ? "conversación necesita" : "conversaciones necesitan"} tu respuesta ${cuando}.\n` +
-        imp.slice(0, 8).map((t) => `• ${t.name} — ${t.importanteRazon}`).join("\n")
-      : `No hay nada sin responder que parezca urgente ${cuando}.`
+      ? `Sí: ${imp.length} ${imp.length === 1 ? "conversación necesita" : "conversaciones necesitan"} tu respuesta ${cuando}${dondeTxt}.\n` +
+        imp.slice(0, 8).map((t) => `• ${humanizarIds(t.name)} — ${t.importanteRazon}`).join("\n")
+      : `No hay nada sin responder que parezca urgente ${cuando}${dondeTxt}.`
     return { mode: "pendientes", engine: "señales", type: "answer", tokens: 0, answer, total: imp.length,
       threads: imp.slice(0, 8).map((t) => ({ key: t.key, name: t.name, summary: t.importanteRazon || "" })) }
   }
@@ -223,9 +297,9 @@ export async function routerSearch(question) {
       results: usar.slice(0, 60).map((m) => ({ id: m.id, key: m.thread, name: m.name, ts: m.ts, channel: m.channel, dir: m.dir, text: cleanMsg(m.text || "").slice(0, 300) })),
     }
   }
-  let r = activateGraph(question), engine = "grafo"       // v2: activación por difusión sobre el grafo ponderado
-  if (!r.confident) { r = routeFacets(question); engine = "facetas" } // v1: presencia de facetas (fallback)
-  if (!r.confident) { const a = await ask(question); return { mode: "rag", type: "answer", ...a, matched: r.matched } } // sin nodo claro → RAG de siempre (no perdemos recall)
+  let r = activateGraph(consulta), engine = "grafo"       // v2: activación por difusión sobre el grafo ponderado
+  if (!r.confident) { r = routeFacets(consulta); engine = "facetas" } // v1: presencia de facetas (fallback)
+  if (!r.confident) { const a = await ask(consulta); return { mode: "rag", type: "answer", ...a, matched: r.matched } } // sin nodo claro → RAG de siempre (no perdemos recall)
   // 🔒 el router-search (0 tokens, sin gate aguas abajo) NO expone fuentes secretas: dropea hilos 100%-secretos del ranking y
   // filtra por-mensaje cada fuente (find/FTS/bodies/recientes) para hilos parciales.
   let hide = new Set(), isSecret = () => false; try { const S = await import("../secret.mjs"); hide = S.secretThreadKeys(); isSecret = S.isSecretMsg } catch {}
@@ -251,12 +325,12 @@ export async function routerSearch(question) {
   const line = (m) => `- (${fmt(m.ts)}, ${m.dir === "out" ? ownerFirst() : (m.name || "?")}) ${cleanMsg(m.text).replace(/\s+/g, " ").slice(0, 180)}`
   const seenId = new Set(), msgLines = []
   const ventG = ventanaTemporal(question)
-  for (const m of dbSearch(question, { limit: 14, byRank: true, desde: ventG.desde })) { if (seenId.has(m.id) || !m.text || hide.has(m.thread) || isSecret(m)) continue; seenId.add(m.id); msgLines.push(line(m)); if (m.thread && !srcThreads.find((s) => s.key === m.thread)) srcThreads.push({ key: m.thread, name: nameOf(m.thread), summary: cmap[m.thread]?.summary || "", score: 0 }) } // 🔒
+  for (const m of dbSearch(consulta, { limit: 14, byRank: true, desde: ventG.desde })) { if (seenId.has(m.id) || !m.text || hide.has(m.thread) || isSecret(m)) continue; seenId.add(m.id); msgLines.push(line(m)); if (m.thread && !srcThreads.find((s) => s.key === m.thread)) srcThreads.push({ key: m.thread, name: nameOf(m.thread), summary: cmap[m.thread]?.summary || "", score: 0 }) } // 🔒
   // cuerpos de email (montos/fechas, fuera del FTS) — términos = entidades matcheadas + expansión por co-ocurrencia del grafo (juan→deuda)
   const stripB = (h) => String(h || "").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#\d+;|&gt;|&lt;|&amp;/g, " ").replace(/\s+/g, " ").trim()
   for (const m of dbBodyMatch(threads.slice(0, 3), [...(r.matched || []), ...(r.expand || [])], { limit: 3 })) { if (hide.has(m.thread) || isSecret({ ...m, channel: "email" })) continue; const s = stripB(m.body).slice(0, 260); if (s) msgLines.push(`- (${fmt(m.ts)}, ${m.name || "email"}) ${s}`) } // 🔒
   // FTS sobre cuerpos de email: encuentra montos/fechas por la PREGUNTA aunque estén en un body no ruteado (ej: la deuda)
-  for (const m of dbSearchBody(question, { limit: 4 })) { if (hide.has(m.thread) || isSecret({ ...m, channel: "email" })) continue; const s = stripB(m.snip).replace(/\s+/g, " ").slice(0, 240); if (s) { msgLines.push(`- (${fmt(m.ts)}, ${m.name || "email"}) ${s}`); if (m.thread && !srcThreads.find((x) => x.key === m.thread)) srcThreads.push({ key: m.thread, name: nameOf(m.thread), summary: cmap[m.thread]?.summary || "", score: 0 }) } } // 🔒
+  for (const m of dbSearchBody(consulta, { limit: 4 })) { if (hide.has(m.thread) || isSecret({ ...m, channel: "email" })) continue; const s = stripB(m.snip).replace(/\s+/g, " ").slice(0, 240); if (s) { msgLines.push(`- (${fmt(m.ts)}, ${m.name || "email"}) ${s}`); if (m.thread && !srcThreads.find((x) => x.key === m.thread)) srcThreads.push({ key: m.thread, name: nameOf(m.thread), summary: cmap[m.thread]?.summary || "", score: 0 }) } } // 🔒
   if (msgLines.length < 4) for (const t of threads.slice(0, 2)) for (const m of dbRecentInThread(t, { limit: 5 })) { if (!isSecret({ ...m, thread: t })) msgLines.push(line(m)) } // 🔒 (threads ya sin 100%-secretos; filtra parciales)
   // ADJUNTOS: este camino (el del grafo) armaba su contexto solo con mensajes y cuerpos de email, así que un dato
   // que vive DENTRO de un contrato o una factura le era invisible — y es el camino que se usa cuando la pregunta
@@ -264,7 +338,7 @@ export async function routerSearch(question) {
   let docLines = []
   try {
     const { docsRelevantes } = await import("../doc-text.mjs")
-    for (const d of await docsRelevantes(question, { limit: 2, excluir: (c) => hide.has(c.thread) || isSecret(c) })) {
+    for (const d of await docsRelevantes(consulta, { limit: 2, excluir: (c) => hide.has(c.thread) || isSecret(c) })) {
       const { recortarUtil } = await import("../doc-text.mjs")
       docLines.push(`- (documento: ${d.filename || "adjunto"}) ${recortarUtil(d.texto, question, 6000).replace(/\s+/g, " ")}`)
     }
@@ -274,11 +348,11 @@ export async function routerSearch(question) {
   const prompt = `Sos el asistente personal de ${ownerFirst()}. Abajo hay RESÚMENES y MENSAJES reales de sus conversaciones más relevantes para la pregunta.${alcance}
 Respondé en 1 a 4 frases, en español, usando SOLO eso. Nombrá personas, proyectos y montos concretos. Si no alcanza, decí qué falta. NO inventes.
 
-PREGUNTA: ${question}
+${historial.length ? `CONVERSACIÓN PREVIA (para entender a qué se refiere):\n${historial.slice(-6).map((m) => `${m.role === "me" ? ownerFirst() : "vos"}: ${String(m.text).replace(/\s+/g, " ").slice(0, 220)}`).join("\n")}\n\n` : ""}PREGUNTA: ${question}
 
 ${ctx}
 
 RESPUESTA:`
-  const answer = await llm(prompt, { system: UNTRUSTED_NOTE, chain: process.env.LLM_CHAIN_ASK || "gemini,ollama", temperature: 0.2, task: "router", bypassCap: true }).then((s) => (s || "").trim()).catch(() => "")
+  const answer = await llm(prompt, { system: UNTRUSTED_NOTE, chain: process.env.LLM_CHAIN_ASK || "gemini,ollama", temperature: 0.2, task: "router", bypassCap: true }).then((s) => humanizarIds((s || "").trim())).catch(() => "")
   return { mode: "facets", engine, type: "answer", answer, matches: msgLines.length, matched: r.matched, threads: srcThreads.slice(0, 4) }
 }

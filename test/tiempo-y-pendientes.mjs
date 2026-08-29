@@ -57,8 +57,8 @@ test("una pregunta normal NO se confunde con un pedido de pendientes", () => {
 })
 
 test("los pendientes salen de la señal ya calculada, sin gastar tokens", () => {
-  const i = ASK.indexOf("if (pidePendientes(question))")
-  const fn = ASK.slice(i, i + 1200)
+  const i = ASK.indexOf("if (pidePendientes(consulta))")
+  const fn = ASK.slice(i, ASK.indexOf("\n  }", i) + 4) // la rama entera, no una ventana de N caracteres
   assert.match(fn, /t\.importante/)
   assert.match(fn, /tokens: 0/)
   assert.match(fn, /No hay nada sin responder/, "cuando no hay, se dice claro")
