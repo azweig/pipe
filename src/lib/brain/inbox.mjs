@@ -23,6 +23,7 @@ import { llm, smartChain, geminiMultimodal, geminiUploadFile } from "../llm.mjs"
 import { MY_EMAILS } from "../thread.mjs"
 import { isSpam, llmSpam, notSpam } from "../spam.mjs"
 import { ocrCas, ocrEnabled } from "../ocr.mjs"
+import { evaluarImportancia } from "../importante.mjs"
 import { espacioThreads, _espRulesOf } from "./espacios.mjs"
 const pexecFile = promisify(execFile)
 
@@ -146,7 +147,17 @@ export function listThreads({ limit = 200, q = "" } = {}, { cache = true } = {})
     // escalada del piloto: activa solo mientras NO respondiste (si tu último msg es saliente, ya lo atendiste → limpiar)
     let escalated = false, escalatedReason = null
     if (esc[r.key]) { if (r.lastDir === "out") clearEscalation(r.key); else { escalated = true; escalatedReason = esc[r.key].reason || null } }
-    return { key: r.key, canon, self, group: kind === "group", name: clean, photo, initials: avatar, channels: r.channels || [], lastChannel: r.lastChannel, count: r.count, unread: r.unread || 0, unseen, suggested, email: emailAddr, account: r.account || null, ident, ts: r.ts, lastText: lt.slice(0, 120) || "…", lastDir: r.lastDir, bucket, pinned: pinned.has(r.key), silenced: sil.has(r.key), autopilot: autoOn.has(r.key), escalated, escalatedReason }
+    // ¿MERECE TU ATENCIÓN HOY? Solo para lo ENTRANTE y sin responder: si ya contestaste, o lo escribiste vos, no
+    // hay nada que destacar. Sin esto "Prioritarios" era únicamente lo que fijabas a mano, así que una invitación
+    // real no tenía forma de sobresalir y se perdía entre el resto. Cuesta 0 tokens (heurística, no IA).
+    let importante = false, importanteRazon = null
+    if (r.lastDir !== "out" && (r.unread || unseen) && bucket !== "spam") {
+      try {
+        const v = evaluarImportancia({ text: r.lastText || "", from: emailAddr || jid || "", subject: r.grp || "", nombrePropio: ownerFirst() })
+        if (v.importante) { importante = true; importanteRazon = v.razon }
+      } catch { /* ante la duda, no destacamos nada */ }
+    }
+    return { key: r.key, canon, self, importante, importanteRazon, group: kind === "group", name: clean, photo, initials: avatar, channels: r.channels || [], lastChannel: r.lastChannel, count: r.count, unread: r.unread || 0, unseen, suggested, email: emailAddr, account: r.account || null, ident, ts: r.ts, lastText: lt.slice(0, 120) || "…", lastDir: r.lastDir, bucket, pinned: pinned.has(r.key), silenced: sil.has(r.key), autopilot: autoOn.has(r.key), escalated, escalatedReason }
   }).filter((t) => t.key !== "self" && !arch.has(t.key) && !inEspacio(t.key, t.name) && !/whatsapp status broadcast/i.test(t.name || "")) // self va en su pestaña; archivados ocultos; los de un espacio viven ahí; status no es conversación
   // los espacios entran como una conversación más. En una BÚSQUEDA solo si el nombre matchea: si no, aparecían
   // los mismos 3 espacios encabezando cualquier resultado y tapaban al contacto que estabas buscando.

@@ -1528,7 +1528,7 @@ const threadItem = (t) => {
     return `<div class="thread${on ? " pinned" : ""}" style="cursor:pointer${on ? ";background:color-mix(in srgb, var(--accent) 14%, transparent)" : ""}" onclick="toggleMergeSel('${enck(t.key)}')">
       <span style="font-size:20px;flex-shrink:0;align-self:center;margin-right:2px" aria-hidden="true">${on ? "☑️" : "⬜"}</span>
       ${avatar(t.name, t.photo)}
-      <div class="th-main"><div class="th-top"><span class="th-name">${esc(t.name)}</span><span class="th-icons">${chs.map(chanIcon).join("")}</span></div><div class="th-prev">${esc(prev) || "…"}</div></div>
+      <div class="th-main"><div class="th-top">${t.importante ? `<span class="imp-dot" title="Merece tu atención: ${esc(t.importanteRazon || "")}">✦</span>` : ""}<span class="th-name">${esc(t.name)}</span><span class="th-icons">${chs.map(chanIcon).join("")}</span></div><div class="th-prev">${esc(prev) || "…"}</div></div>
     </div>`
   }
   const nav = isEsp ? `go('#espacio/${t.espId}')` : `go('#conv/${enck(t.key)}')`
