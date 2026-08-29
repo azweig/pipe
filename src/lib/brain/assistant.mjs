@@ -15,7 +15,8 @@ import { transcribeMedia } from "../voice.mjs" // Whisper LOCAL (GPU box): la no
 import { casReadBuffer } from "../cas.mjs"
 import { harden, UNTRUSTED_NOTE } from "../safety.mjs"
 import { ownerFirst } from "../hub.mjs"
-import { ask } from "./ask.mjs"
+import { ask, routerSearch } from "./ask.mjs"
+import { jarvisGuardar } from "../db.mjs" // lo que preguntás por WhatsApp entra a la MISMA charla que la de la app
 import { sendReply } from "./reply.mjs"
 import { selfNotesSince, selfNotesSinceAll, selfNotesHiddenCount, isSecretSelfRow } from "../db.mjs" // trae AMBAS direcciones del hilo propio y ya excluye las notas de canal secreto
 
@@ -107,7 +108,12 @@ export async function answerQuestion(question, { web = true, localOnly = false }
   // El MODELO local tiene que valer para todo el camino, no solo para la síntesis final: ask() arma su propia cadena con
   // la nube primero, así que el paso que razona sobre tu historial usaba un tercero igual. (La búsqueda web sigue como
   // está por decisión propia, arriba: lo que sale a buscar es la pregunta, no tus datos.)
-  const own = await ask(question, { localOnly }).catch(() => ({ answer: "", matches: 0 }))
+  // El buscador de la app (routerSearch) llega a correos, adjuntos y agenda; ask() solo al RAG de mensajes. Lo que
+  // le preguntás por WhatsApp merece la misma capacidad que lo que preguntás en la app — si no, la misma pregunta
+  // se contesta distinta según por dónde la hagas.
+  let own = { answer: "", matches: 0 }
+  if (!localOnly) { try { const rs = await routerSearch(question); if (rs?.answer) own = { answer: rs.answer, matches: rs.matches || 0 } } catch { /* caemos al RAG */ } }
+  if (!own.answer) own = await ask(question, { localOnly }).catch(() => ({ answer: "", matches: 0 }))
   // Si el paso sobre TUS datos no encontró nada, suele devolver una NEGATIVA ("no hay información sobre…").
   // Pasarla como contexto contagia al modelo final, que repite la negativa incluso en preguntas de conocimiento
   // general. Ej. real: "¿cuál es la capital de Israel?" → "no tengo información explícita". Se descarta.
@@ -240,7 +246,11 @@ export async function runAssistant() {
       sent = await sendReply("self", out, opts).catch((e) => { if (!/BUSY|locked/i.test(e.message)) return null; return null })
       if (!sent) await new Promise((r2) => setTimeout(r2, 300 * (i + 1))) // la ingesta escribe seguido: reintentar el lock
     }
-    if (sent && !sent.error) { markSent(out); answered++; console.log(`[asistente] ✓${secreta ? " 🔒local" : ""}${m.mediaType === "audio" ? " 🎤" : ""} "${String(texto).slice(0, 40)}" → "${r.text.slice(0, 55)}"`) }
+    if (sent && !sent.error) {
+      // UNA sola conversación con el asistente: si preguntás por WhatsApp queda registrado igual que si lo
+      // hubieras preguntado en la app, y lo ves desde cualquier dispositivo.
+      try { jarvisGuardar("me", question, "whatsapp"); jarvisGuardar("ai", out, "whatsapp") } catch { /* la respuesta ya salió */ }
+      markSent(out); answered++; console.log(`[asistente] ✓${secreta ? " 🔒local" : ""}${m.mediaType === "audio" ? " 🎤" : ""} "${String(texto).slice(0, 40)}" → "${r.text.slice(0, 55)}"`) }
     break // una por corrida: el daemon vuelve en 60s. Evita ráfagas si pegaste varias preguntas juntas.
   }
   save(STATE(), { ...load(STATE(), {}), since })

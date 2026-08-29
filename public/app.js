@@ -3734,15 +3734,28 @@ function viewJarvis() {
   const body = jarvisMsgs.map((m) => `<div class="bubble ${m.role === "me" ? "out" : "in"}">${esc(m.text)}</div>`).join("")
   app.innerHTML = `<div class="screen" style="min-height:100vh;display:flex;flex-direction:column">
     <button class="back" onclick="go('#home')">‹ Inicio</button>
-    <div class="row" style="gap:10px;margin:8px 0 16px"><div class="orb" style="width:44px;height:44px"></div><div><div class="b" style="font-size:19px">Jarvis</div><div class="sub">Vos preguntás, él busca en tus datos · privado en tu server</div></div></div>
+    <div class="row" style="gap:10px;margin:8px 0 16px"><div class="orb" style="width:44px;height:44px"></div><div><div class="b" style="font-size:19px">Jarvis <span class="tiny muted" style="font-weight:400;cursor:pointer" onclick="jarvisLimpiar()" title="Borrar esta charla (no borra tus mensajes)">· limpiar</span></div><div class="sub">Vos preguntás, él busca en tus datos · privado en tu server</div></div></div>
     <div id="jbody" style="flex:1;overflow:auto">${body || `<div class="sub" style="text-align:center;margin-top:40px">Preguntame lo que quieras sobre tus mensajes, gente, reuniones…<br><br>Ej: "¿quién me debe plata?", "resumime lo de Carlos"</div>`}</div>
     <div class="card row" style="padding:8px;gap:8px;margin-top:10px"><input class="inp" id="jinp" style="border:none" placeholder="Pregúntale a Jarvis…" onkeydown="if(event.key==='Enter')jarvisAsk()">
       <button class="orb" style="width:40px;height:40px;border:none" onclick="jarvisVoice()" id="jmic" aria-label="Hablar con Jarvis"></button></div></div>`
   const jb = document.getElementById("jbody"); if (jb) jb.scrollTop = jb.scrollHeight
+  // la charla vive en el hub: al abrir, traemos lo que ya hablaste (desde cualquier app, o por WhatsApp)
+  if (!jarvisMsgs.length && !window._jarvisCargado) { window._jarvisCargado = true; void jarvisCargar() }
+}
+// La conversación con Jarvis se guarda en el hub, no en memoria del navegador: antes se perdía al recargar y no
+// existía en el celular ni en el escritorio. Y ahora usa el MISMO buscador que la app (correos, adjuntos, agenda),
+// no solo el RAG de mensajes.
+window.jarvisCargar = async () => {
+  const r = await api("/api/jarvis?limit=80").catch(() => null)
+  if (r && Array.isArray(r.items)) { jarvisMsgs = r.items.map((m) => ({ role: m.role, text: m.text, via: m.via })); viewJarvis() }
 }
 window.jarvisAsk = async (text) => { const inp = document.getElementById("jinp"); const q = text || (inp && inp.value); if (!q) return
   jarvisMsgs.push({ role: "me", text: q }); if (inp) inp.value = ""; jarvisMsgs.push({ role: "ai", text: "…" }); viewJarvis()
-  const r = await post("/api/ask", { q }); jarvisMsgs[jarvisMsgs.length - 1] = { role: "ai", text: (r && r.answer) || "No pude responder ahora." }; viewJarvis() }
+  const r = await post("/api/jarvis", { q, via: "web" })
+  jarvisMsgs[jarvisMsgs.length - 1] = { role: "ai", text: (r && r.answer) || "No pude responder ahora." }; viewJarvis() }
+window.jarvisLimpiar = async () => {
+  if (!confirm("¿Borrar toda la conversación con Jarvis? No se borra ningún mensaje tuyo, solo esta charla.")) return
+  await post("/api/jarvis/clear", {}); jarvisMsgs = []; viewJarvis() }
 window.jarvisVoice = async () => { const mic = document.getElementById("jmic"); if (mic) mic.style.transform = "scale(1.2)"
   try { const stream = await navigator.mediaDevices.getUserMedia({ audio: true }); const rec = new MediaRecorder(stream); const chunks = []
     rec.ondataavailable = (e) => chunks.push(e.data)

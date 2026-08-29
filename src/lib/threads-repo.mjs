@@ -134,6 +134,22 @@ export function grupoTemas(clave) {
   } catch { return { temas: [], resumen: "" } }
 }
 
+// CONVERSACIÓN CON EL ASISTENTE. Antes el historial vivía en memoria del navegador: se perdía al recargar, no se
+// compartía entre la web, el escritorio y el celular, y lo que le preguntabas por WhatsApp quedaba en otro lado.
+// Ahora es una sola conversación, venga de donde venga.
+export function jarvisGuardar(role, text, via = "app", meta = null) {
+  if (!text) return 0
+  return withRetry(() => db().prepare("INSERT INTO jarvis_chat (ts, role, text, via, meta) VALUES (?,?,?,?,?)")
+    .run(Date.now(), String(role), String(text).slice(0, 8000), String(via), meta ? JSON.stringify(meta).slice(0, 2000) : null)).lastInsertRowid
+}
+export function jarvisHistorial({ limit = 80 } = {}) {
+  try {
+    // se piden los últimos N y se devuelven en orden cronológico: leer una charla al revés no tiene sentido
+    return db().prepare("SELECT id, ts, role, text, via, meta FROM jarvis_chat ORDER BY ts DESC, id DESC LIMIT ?").all(limit).reverse()
+  } catch { return [] }
+}
+export function jarvisBorrar() { return withRetry(() => db().prepare("DELETE FROM jarvis_chat").run()).changes }
+
 export function marcarComoHistoria(id) {
   if (!id) return 0
   return withRetry(() => db().prepare("UPDATE messages SET tag='historia' WHERE id=?").run(String(id))).changes

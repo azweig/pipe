@@ -2,6 +2,7 @@
 // El handle llega como `db` (alias de handle() de db-core) → los cuerpos se mueven verbatim desde db.mjs.
 import { handle as db, withRetry } from "./db-core.mjs"
 import { owner } from "./hub.mjs"
+import { normalizarHiloPropio } from "./thread.mjs"
 import { casTrash, casRestore } from "./cas.mjs"
 
 // ── ingest ──
@@ -35,6 +36,8 @@ export function insertMany(records) {
 }
 // inserta un mensaje ENVIADO por mí (dir:out) directo en el hilo dado (sin pasar por computeThread). Para el compositor.
 export function insertSent(thread, channel, text, extra = {}) {
+  // escribirte a vos mismo es una NOTA, no una conversación: si la clave apunta a una línea tuya, va a "Mis Notas"
+  thread = normalizarHiloPropio(thread)
   const ts = Date.now(), id = `sent:${channel}:${ts}:${Math.random().toString(36).slice(2, 8)}`
   // withRetry + tx ATÓMICA: el mensaje YA salió por el cable; un SQLITE_BUSY acá lo dejaba entregado pero AUSENTE en la DB → reenvío = duplicado del lado del contacto.
   // .immediate: sin esto la transacción arranca DIFERIDA y al subir a escritura SQLite devuelve SQLITE_BUSY_SNAPSHOT,

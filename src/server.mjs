@@ -27,7 +27,7 @@ import * as maintenance from "./lib/maintenance.mjs"
 import * as mailArchive from "./lib/mail-archive.mjs"
 import { ocrCas, ocrEnabled, ocrUrlActual } from "./lib/ocr.mjs"
 import { destinoConfiable } from "./lib/media-trust.mjs" // 🔒 el OCR configurado puede ser un host en internet
-import { casSecreto, searchThreadKeys } from "./lib/db.mjs" // 🔒 gateo de archivos del CAS por ruta (OCR, papelera, /cas/)
+import { casSecreto, searchThreadKeys, jarvisGuardar, jarvisHistorial, jarvisBorrar } from "./lib/db.mjs" // 🔒 gateo de archivos del CAS por ruta (OCR, papelera, /cas/)
 import { calcularOnboarding } from "./lib/onboarding.mjs" // checklist de primer arranque (una sola fuente de verdad para las 3 apps)
 import { cuarentenaVault, restaurarVault, purgarRagDeNotas } from "./lib/secret-vault.mjs" // 🔒 notas del vault ya escritas
 import { clipFlag, getMeta, delMeta, delMetaLike, rebuildStats, freeThreadMedia, restoreMedia, listNotes, noteCategories, noteJunkCount, noteAction, totalUnread } from "./lib/db.mjs"
@@ -508,6 +508,23 @@ const server = createServer(async (req, res) => {
       if (path === "/api/directory") return json(res, 200, brain.directory())
       if (path === "/api/search") { const b = await body(req); return json(res, 200, brain.searchMessages(b.q || q.q || "")) }
       if (path === "/api/ask") { const b = await body(req); return json(res, 200, await brain.ask(b.q || q.q || "")) }
+      // JARVIS con memoria: una sola conversación, venga de la web, del escritorio, del celular o de WhatsApp.
+      // Usa el MISMO buscador que la app (routerSearch): así encuentra en correos, adjuntos y agenda, no solo en
+      // el RAG de mensajes — que era la queja de fondo.
+      if (path === "/api/jarvis" && req.method === "POST") {
+        const b = await body(req)
+        const pregunta = String(b.q || "").trim()
+        if (!pregunta) return json(res, 400, { error: "sin pregunta" })
+        jarvisGuardar("me", pregunta, b.via || "app")
+        let r = null
+        try { r = await brain.routerSearch(pregunta) } catch (e) { r = { answer: "", error: e.message } }
+        // la búsqueda de mensajes no devuelve prosa: se resume en una línea para que la conversación se lea igual
+        const texto = r?.answer || (r?.type === "mensajes" ? `Encontré ${r.total} mensaje${r.total === 1 ? "" : "s"} con “${r.termino}”.` : "") || "No pude responder eso."
+        jarvisGuardar("ai", texto, b.via || "app", { engine: r?.engine, mode: r?.mode, total: r?.total })
+        return json(res, 200, { ...r, answer: texto })
+      }
+      if (path === "/api/jarvis") return json(res, 200, { items: jarvisHistorial({ limit: +q.limit || 80 }) })
+      if (path === "/api/jarvis/clear" && req.method === "POST") return json(res, 200, { borrados: jarvisBorrar() })
       if (path === "/api/router-search") { const b = await body(req); return json(res, 200, await brain.routerSearch(b.q || q.q || "")) } // robotito: facetas (0 tokens) → fallback RAG
       // 🔒 estos dos toman el contacto del CUERPO del POST (b.name), y el gate por-hilo de arriba solo mira el query
       // string → se lo salteaban enteros. Redactarle un borrador a alguien es leerle el historial, así que se chequea acá.
@@ -1191,7 +1208,7 @@ server.headersTimeout = server.keepAliveTimeout + 5000
 
 server.listen(PORT, process.env.HOST || "127.0.0.1", () => {
   console.log(`\n🧠 pipe web → http://localhost:${PORT}\n`)
-  try { maintenance.ensureStats(); maintenance.repararHistorias(); brain.listThreads({ limit: 600 }); setTimeout(() => { try { brain.coachData() } catch {} }, 2000) } catch (e) { console.error("warm:", e.message) } // auto-sanar stats + calentar bandeja + coach (para que Coach/IA abran instantáneo)
+  try { maintenance.ensureStats(); maintenance.repararHistorias(); maintenance.repararHilosPropios(); brain.listThreads({ limit: 600 }); setTimeout(() => { try { brain.coachData() } catch {} }, 2000) } catch (e) { console.error("warm:", e.message) } // auto-sanar stats + calentar bandeja + coach (para que Coach/IA abran instantáneo)
 })
 // mantenimiento periódico (ensureStats + fixGroupLeaks) MOVIDO al cron maintain.mjs del daemon → ya NO bloquea el event loop del
 // HTTP (~3s cada 30 min). Acá queda solo el ensureStats del warm-up de arriba (una vez al boot, sin usuarios todavía = sin freeze).

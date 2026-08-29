@@ -114,6 +114,20 @@ const isSelfThread = (e) => {
   return !!(peer && MY_NUMBERS.has(peer))
 }
 
+// Normaliza una CLAVE de hilo que en realidad apunta a una línea tuya. El cálculo al recibir ya manda esos
+// mensajes a "Mis Notas", pero al ENVIAR la clave llega dada por quien llama (por ejemplo mandarte un archivo a
+// tu propio número), y así se creaban conversaciones sueltas contigo mismo — encima duplicadas, una por cada
+// formato de clave. Escribirte a vos mismo es una nota, no una conversación.
+export function normalizarHiloPropio(clave) {
+  const k = String(clave || "")
+  if (!k || k === "self") return k
+  const num = phoneOf(k) || (k.match(/(\d{8,15})@s\.whatsapp\.net/)?.[1] || "")
+  if (num && MY_NUMBERS.has(num)) return "self"
+  const mail = k.startsWith("email:") ? k.slice(6).toLowerCase() : ""
+  if (mail && MY_EMAILS.has(mail)) return "self"
+  return k
+}
+
 let _n2c = null, _n2cMtime = 0
 function nameToCanonMap() {
   const al = aliases(), m = {}

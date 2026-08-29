@@ -3,6 +3,7 @@
 import { rebuildStats } from "./db.mjs"
 // Acceso DIRECTO al handle (excepción marcada al seam): SQL de mantenimiento/reparación admin, in-process (misma conexión del server).
 // No se fuerza a named queries por ser reparación puntual; el handle no sale de la capa de datos.
+import { readFileSync } from "fs"
 import { handle, withRetry } from "./db-core.mjs"
 
 // AUTO-SANADO: si thread_stats quedó vacío (race/interrupción de un rebuild) pero hay mensajes → reconstruir.
@@ -72,6 +73,30 @@ export function purgeSelfTest(ventanaMs = 10 * 60000) {
     }
   } catch (e) { console.error("[maintenance] purgeSelfTest:", e.message) }
   return n
+}
+
+// CONVERSACIONES CONTIGO MISMO. Escribirte a tu propia línea es una nota, no una charla — pero si algo guarda el
+// mensaje con la clave del número (mandarte un archivo, por ejemplo) queda una conversación suelta en la bandeja,
+// y encima duplicada: una por cada formato de clave del mismo número. Se corrige sola en cada arranque.
+export function repararHilosPropios() {
+  const d = handle()
+  let movidos = 0
+  try {
+    const mios = new Set()
+    try { const cfg = JSON.parse(readFileSync("./data/hub-config.json", "utf8")); for (const n of cfg.myNumbers || []) mios.add(String(n).replace(/\D/g, "")) } catch { return 0 }
+    if (!mios.size) return 0
+    for (const num of mios) {
+      const sueltos = d.prepare("SELECT DISTINCT thread FROM messages WHERE thread<>'self' AND (thread=? OR thread=?)").all(`whatsapp:${num}@s.whatsapp.net`, `${num}@s.whatsapp.net`).map((r) => r.thread)
+      for (const t of sueltos) {
+        withRetry(() => d.transaction(() => {
+          movidos += d.prepare("UPDATE messages SET thread='self' WHERE thread=?").run(t).changes
+          d.prepare("DELETE FROM thread_stats WHERE thread=?").run(t)
+        }).immediate())
+      }
+    }
+    if (movidos) { console.log(`🧹 propios: ${movidos} mensajes movidos a Mis Notas (eran conversaciones contigo mismo)`); try { rebuildStats() } catch {} }
+  } catch (e) { console.error("[maintenance] repararHilosPropios:", e.message) }
+  return movidos
 }
 
 export function fixGroupLeaks() {
