@@ -65,8 +65,17 @@ export async function retrieveContext(question, { limit = 14, semantic: useSeman
   // 🔒 el RAG NUNCA ve mensajes de fuente secreta (ni 100%-secretos ni el canal secreto de un contacto parcial) → no se filtran en respuestas de IA
   let secretKeys = new Set(), isSecret = () => false; try { const S = await import("../secret.mjs"); secretKeys = S.secretThreadKeys(); isSecret = S.isSecretMsg } catch {}
   const visibleSem = ragItemVisible({ secretKeys, isSecret })
-  for (const it of semantic) { if (seen.has(it.id) || !visibleSem(it)) continue; seen.add(it.id); ctxItems.push({ ts: it.ts, label: it.kind === "note" ? "🧠 " + it.ref : it.ref, text: it.text }) }
-  try { for (const r of dbSearch(question, { limit: 22, byRank: true })) { const k = "fts:" + r.id; if (seen.has(k) || secretKeys.has(r.thread) || isSecret(r)) continue; seen.add(k); ctxItems.push({ ts: r.ts, label: `${r.channel} ${stripWA(r.grp || r.name || "")}`, text: cleanMsg(r.text) }) } } catch {}
+  // VENTANA TEMPORAL: si la pregunta habla de "hoy" / "nuevos" / "urgente", todo lo viejo sobra. Sin esto una
+  // pregunta sobre las últimas horas se contestaba con mensajes de hace años, coherente y completamente inútil —
+  // y tardaba minutos, porque el contexto se llenaba de historial.
+  const vent = ventanaTemporal(question)
+  for (const it of semantic) {
+    if (seen.has(it.id) || !visibleSem(it)) continue
+    if (vent.desde && (it.ts || 0) < vent.desde) continue // el índice semántico no sabe de fechas: se filtra acá
+    seen.add(it.id)
+    ctxItems.push({ ts: it.ts, label: it.kind === "note" ? "🧠 " + it.ref : it.ref, text: it.text })
+  }
+  try { for (const r of dbSearch(question, { limit: 22, byRank: true, desde: vent.desde })) { const k = "fts:" + r.id; if (seen.has(k) || secretKeys.has(r.thread) || isSecret(r)) continue; seen.add(k); ctxItems.push({ ts: r.ts, label: `${r.channel} ${stripWA(r.grp || r.name || "")}`, text: cleanMsg(r.text) }) } } catch {}
   try { for (const r of dbSearchBody(question, { limit: 8 })) { const k = "body:" + r.thread + ":" + r.ts; if (seen.has(k) || secretKeys.has(r.thread) || isSecret({ ...r, channel: "email" })) continue; seen.add(k); ctxItems.push({ ts: r.ts, label: `email ${stripWA(r.name || "")}`, text: cleanMsg(String(r.snip || "").replace(/<[^>]+>/g, " ")) }) } } catch {}
   // 4) ADJUNTOS: contratos, adendas, facturas, planillas. El texto vive DENTRO del archivo, así que ninguna de las
   // búsquedas de arriba lo ve — el cerebro contestaba "no hay información" teniendo el dato en un PDF. Primero una
@@ -103,7 +112,8 @@ export async function ask(question, { localOnly = false } = {}) {
   const { recortarUtil } = await import("../doc-text.mjs")
   const ctx = ctxItems.map((e) => `- (${e.label}, ${fmt(e.ts).slice(0, 10)}) ${(e.doc ? recortarUtil(e.text || "", question, 6000) : String(e.text || "").slice(0, 200)).replace(/\s+/g, " ")}`).join("\n")
   // TODO LOCAL: respuesta con modelo chico/rápido en el server (privado). Prompt claro para que el modelo chico no se pierda.
-  const prompt = `Sos el asistente personal de ${ownerFirst()}. Abajo hay FRAGMENTOS reales de sus mensajes y notas.
+  const alc = ventanaTemporal(question).etiqueta
+  const prompt = `Sos el asistente personal de ${ownerFirst()}. Abajo hay FRAGMENTOS reales de sus mensajes y notas.${alc ? `\nSOLO estás viendo lo de ${alc}. Si no hay nada, decí exactamente eso — no contestes con cosas viejas.` : ""}
 Respondé la PREGUNTA en 1 a 4 frases claras, en español, usando SOLO esos fragmentos.
 Nombrá a las personas, proyectos o montos concretos que aparezcan. La fecha entre paréntesis es CUÁNDO se dijo, no es la respuesta.
 Si los fragmentos no alcanzan para responder, decí exactamente qué falta. NO inventes.
@@ -121,6 +131,42 @@ RESPUESTA:`
 
 // ── ROUTER-SEARCH: barato primero (facetas), fallback al RAG completo (ask) ──
 // Es lo que llama el "robotito" de la bandeja. Ahorra tokens: BUSCAR = 0 tokens; PREGUNTA = síntesis chica con contexto ya filtrado.
+// ¿LA PREGUNTA HABLA DE UN MOMENTO? "¿hay alguna urgencia HOY?" traía mensajes de 2020 rankeados por relevancia:
+// la respuesta salía coherente y completamente inútil. Y tardaba minutos, porque el contexto se llenaba de años de
+// historial para una pregunta sobre las últimas horas.
+//
+// El corte se calcula en la zona del USUARIO, no la del servidor: "hoy" a las 23:00 de Lima son las 06:00 del día
+// siguiente en Europa, y sin eso el corte se iba un día entero.
+const TZ = () => process.env.TZ_USUARIO || process.env.HUB_TZ || "America/Lima"
+function inicioDelDia(offsetDias = 0) {
+  const hoy = new Date(new Date().toLocaleString("en-US", { timeZone: TZ() }))
+  hoy.setHours(0, 0, 0, 0)
+  return hoy.getTime() - offsetDias * 86400000
+}
+// "¿TENGO ALGO QUE NECESITE MI ATENCIÓN?" no se contesta buscando texto. Buscar "urgencia" trae cualquier mensaje
+// donde alguien escribió esa palabra, y se pierde justo lo que importa: la invitación que sigue sin responder. Esa
+// respuesta ya la tenemos calculada en la bandeja (el ✦), así que se contesta con eso — exacto y sin tokens.
+const PIDE_PENDIENTES = [
+  /\bnecesit[ae]n?\s+(mi\s+)?(asistencia|atenci[oó]n|respuesta)\b/i,
+  /\b(algo|alg[uú]n[ao]s?)\s+(urgente|urgencias?|importante|prioritario)\b/i,
+  /\bqu[eé]\s+(tengo|me\s+falta)\s+(pendiente|por\s+responder|responder)\b/i,
+  /\bhay\s+(algo|alguna\s+cosa)\s+(urgente|importante|pendiente)\b/i,
+  /\bqu[eé]\s+(es\s+)?(lo\s+)?(m[aá]s\s+)?(urgente|importante)\b/i,
+  /\bsin\s+responder\b/i,
+]
+export const pidePendientes = (q) => PIDE_PENDIENTES.some((re) => re.test(String(q || "")))
+
+export function ventanaTemporal(q) {
+  const t = String(q || "").toLowerCase()
+  if (/\bhoy\b|\beste momento\b|\bahora mismo\b|\ben el día\b/.test(t)) return { desde: inicioDelDia(0), etiqueta: "hoy" }
+  if (/\bayer\b/.test(t)) return { desde: inicioDelDia(1), etiqueta: "desde ayer" }
+  if (/\besta semana\b|\búltimos d[ií]as\b|\bultimos d[ií]as\b/.test(t)) return { desde: inicioDelDia(7), etiqueta: "esta semana" }
+  if (/\beste mes\b|\búltimo mes\b|\bultimo mes\b/.test(t)) return { desde: inicioDelDia(30), etiqueta: "este mes" }
+  // "nuevo/reciente/sin responder/pendiente" no nombran una fecha pero preguntan por lo de AHORA, no por el archivo
+  if (/\bnuevos?\b|\brecientes?\b|\bsin responder\b|\bpendientes?\b|\búltimas?\b|\bultimas?\b|\burgencias?\b|\burgentes?\b/.test(t)) return { desde: inicioDelDia(3), etiqueta: "los últimos días" }
+  return { desde: 0, etiqueta: "" }
+}
+
 // ¿Es un pedido de BUSCAR MENSAJES, y no una pregunta? "busca cualquier mensaje que diga F12" no se contesta con
 // una síntesis: se contesta con los mensajes. Antes caía en el camino de respuesta y devolvía un resumen inútil
 // ("te enviaste mensajes con F12 en varias fechas") en vez de mostrarte los 102 que existen.
@@ -144,6 +190,22 @@ export function intentoBuscarTexto(q) {
 }
 
 export async function routerSearch(question) {
+  // "¿QUÉ NECESITA MI ATENCIÓN?" se contesta con la señal ya calculada, no buscando la palabra "urgente".
+  if (pidePendientes(question)) {
+    const { listThreads } = await import("./inbox.mjs")
+    const v = ventanaTemporal(question)
+    const desde = v.desde || Date.now() - 7 * 86400000 // sin fecha en la pregunta, la última semana
+    const imp = listThreads({ limit: 900 }).filter((t) => t.importante && (t.ts || 0) >= desde)
+    // "en hoy" se lee mal: los adverbios van sin preposición y las duraciones con "en"
+    const et = v.etiqueta || "los últimos 7 días"
+    const cuando = /^(hoy|desde ayer)$/.test(et) ? et : `en ${et}`
+    const answer = imp.length
+      ? `Sí: ${imp.length} ${imp.length === 1 ? "conversación necesita" : "conversaciones necesitan"} tu respuesta ${cuando}.\n` +
+        imp.slice(0, 8).map((t) => `• ${t.name} — ${t.importanteRazon}`).join("\n")
+      : `No hay nada sin responder que parezca urgente ${cuando}.`
+    return { mode: "pendientes", engine: "señales", type: "answer", tokens: 0, answer, total: imp.length,
+      threads: imp.slice(0, 8).map((t) => ({ key: t.key, name: t.name, summary: t.importanteRazon || "" })) }
+  }
   // BUSCAR MENSAJES es distinto de PREGUNTAR: va primero y no gasta un solo token.
   const buscar = intentoBuscarTexto(question)
   if (buscar) {
@@ -188,7 +250,8 @@ export async function routerSearch(question) {
   const fmt = (ts) => new Date(ts).toISOString().slice(0, 10)
   const line = (m) => `- (${fmt(m.ts)}, ${m.dir === "out" ? ownerFirst() : (m.name || "?")}) ${cleanMsg(m.text).replace(/\s+/g, " ").slice(0, 180)}`
   const seenId = new Set(), msgLines = []
-  for (const m of dbSearch(question, { limit: 14, byRank: true })) { if (seenId.has(m.id) || !m.text || hide.has(m.thread) || isSecret(m)) continue; seenId.add(m.id); msgLines.push(line(m)); if (m.thread && !srcThreads.find((s) => s.key === m.thread)) srcThreads.push({ key: m.thread, name: nameOf(m.thread), summary: cmap[m.thread]?.summary || "", score: 0 }) } // 🔒
+  const ventG = ventanaTemporal(question)
+  for (const m of dbSearch(question, { limit: 14, byRank: true, desde: ventG.desde })) { if (seenId.has(m.id) || !m.text || hide.has(m.thread) || isSecret(m)) continue; seenId.add(m.id); msgLines.push(line(m)); if (m.thread && !srcThreads.find((s) => s.key === m.thread)) srcThreads.push({ key: m.thread, name: nameOf(m.thread), summary: cmap[m.thread]?.summary || "", score: 0 }) } // 🔒
   // cuerpos de email (montos/fechas, fuera del FTS) — términos = entidades matcheadas + expansión por co-ocurrencia del grafo (juan→deuda)
   const stripB = (h) => String(h || "").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#\d+;|&gt;|&lt;|&amp;/g, " ").replace(/\s+/g, " ").trim()
   for (const m of dbBodyMatch(threads.slice(0, 3), [...(r.matched || []), ...(r.expand || [])], { limit: 3 })) { if (hide.has(m.thread) || isSecret({ ...m, channel: "email" })) continue; const s = stripB(m.body).slice(0, 260); if (s) msgLines.push(`- (${fmt(m.ts)}, ${m.name || "email"}) ${s}`) } // 🔒
@@ -207,7 +270,8 @@ export async function routerSearch(question) {
     }
   } catch { /* sin extracción: el grafo responde como antes */ }
   const ctx = srcThreads.slice(0, 4).map((s) => `• ${s.name}: ${s.summary}`).filter(Boolean).join("\n") + "\n\nMENSAJES:\n" + msgLines.slice(0, 16).join("\n") + (docLines.length ? "\n\nDOCUMENTOS:\n" + docLines.join("\n") : "")
-  const prompt = `Sos el asistente personal de ${ownerFirst()}. Abajo hay RESÚMENES y MENSAJES reales de sus conversaciones más relevantes para la pregunta.
+  const alcance = ventG.etiqueta ? `\nSOLO estás viendo lo de ${ventG.etiqueta}. Si no hay nada, decí exactamente eso — no busques más atrás ni contestes con cosas viejas.` : ""
+  const prompt = `Sos el asistente personal de ${ownerFirst()}. Abajo hay RESÚMENES y MENSAJES reales de sus conversaciones más relevantes para la pregunta.${alcance}
 Respondé en 1 a 4 frases, en español, usando SOLO eso. Nombrá personas, proyectos y montos concretos. Si no alcanza, decí qué falta. NO inventes.
 
 PREGUNTA: ${question}

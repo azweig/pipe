@@ -64,7 +64,9 @@ export function filesByTerms(terms = [], threads = [], { docs = true, limit = 40
 // MCP lo usa para search_inbox: un cliente MCP preguntando cualquier cosa recibía verbatim los mensajes de las cuentas
 // marcadas como secretas, sin 2º PIN en ningún punto del camino.
 // El filtro va DESPUÉS del LIMIT del SQL a propósito: pedimos de más y recortamos, para no reescribir la consulta FTS.
-export function search(query, { limit = 80, byRank = false } = {}) {
+// `desde` (ms): recorta a los mensajes posteriores a esa fecha. Hace falta porque preguntar "¿hay alguna urgencia
+// HOY?" traía mensajes de 2020 rankeados por relevancia: la respuesta era coherente y completamente inútil.
+export function search(query, { limit = 80, byRank = false, desde = 0 } = {}) {
   const words = ((query || "").toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || []).filter((w) => !STOP.has(w))
   if (!words.length) return []
   const ftsq = words.map((w) => `"${w}"*`).join(" OR ")
@@ -75,9 +77,15 @@ export function search(query, { limit = 80, byRank = false } = {}) {
   const visible = (rows) => rows.filter((r) => !hide.has(r.thread) && !isSecretRow(r)).slice(0, limit)
   const over = limit * 3 + 30 // margen para que el filtrado no deje la búsqueda corta
   try {
+    const corte = desde ? " AND m.ts >= ?" : ""
+    const args = desde ? [ftsq, desde, over] : [ftsq, over]
     return visible(db().prepare(`SELECT m.* FROM messages_fts f JOIN messages m ON m.rowid=f.rowid
-      WHERE messages_fts MATCH ? ORDER BY ${order} LIMIT ?`).all(ftsq, over))
-  } catch { return visible(db().prepare("SELECT * FROM messages WHERE text LIKE ? ORDER BY ts DESC LIMIT ?").all("%" + words[0] + "%", over)) }
+      WHERE messages_fts MATCH ?${corte} ORDER BY ${order} LIMIT ?`).all(...args))
+  } catch {
+    const corte = desde ? " AND ts >= ?" : ""
+    const args = desde ? ["%" + words[0] + "%", desde, over] : ["%" + words[0] + "%", over]
+    return visible(db().prepare(`SELECT * FROM messages WHERE text LIKE ?${corte} ORDER BY ts DESC LIMIT ?`).all(...args))
+  }
 }
 // corpus completo para reindexar. 🔒 Filtra los canales secretos en el ORIGEN: lo que entre acá termina vectorizado y
 // saliendo en respuestas de IA, donde ya no hay forma de distinguirlo. Necesita account/jid para decidir por-mensaje.

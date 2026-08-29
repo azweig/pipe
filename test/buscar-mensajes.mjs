@@ -31,7 +31,7 @@ test("una PREGUNTA no se confunde con una búsqueda", () => {
 
 test("va ANTES del grafo y no gasta tokens", () => {
   const i = ASK.indexOf("export async function routerSearch")
-  const fn = ASK.slice(i, i + 1800)
+  const fn = ASK.slice(i, i + 3200)
   const iBuscar = fn.indexOf("const buscar = intentoBuscarTexto(question)")
   const iGrafo = fn.indexOf("activateGraph(question)")
   assert.ok(iBuscar > 0 && iBuscar < iGrafo, "la búsqueda se resuelve antes de activar el grafo")
