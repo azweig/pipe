@@ -231,6 +231,9 @@ export async function runAssistant() {
   // propósito), y se atienden varias por corrida hasta el tope.
   const TOPE_POR_CORRIDA = 3
   const resuelto = (m) => { since = Math.max(since, m.ts || 0) }
+  // El hilo propio guarda cada mensaje DOS VECES (mismo ts, mismo texto). Mientras se contestaba una sola por
+  // corrida no molestaba; atendiendo varias, la misma pregunta se respondería dos veces seguidas.
+  const vistos = new Set()
   for (const m of fresh) {
     if (answered >= TOPE_POR_CORRIDA) break // el daemon vuelve en 60s; evita ráfagas
     if ((st.today || []).filter((x) => Date.now() - x < 86400000).length + answered >= cfg.maxPerDay) break
@@ -244,6 +247,9 @@ export async function runAssistant() {
     }
     const c = classify(texto)
     if (!c.answer) { resuelto(m); continue } // no era una pregunta: descartada a propósito
+    const huella = `${m.ts}|${String(texto).trim()}`
+    if (vistos.has(huella)) { resuelto(m); continue } // copia exacta de una que ya atendí en esta corrida
+    vistos.add(huella)
     // Si vino de una línea secreta se responde con modelo LOCAL. OJO: eso NO es "sin internet" — la búsqueda web sigue
     // activa a propósito (ver la nota larga de answerQuestion: lo que sale a buscar es la PREGUNTA, no tus datos, y
     // bloquearla dejaba al asistente ciego justo cuando más servía). Este comentario decía lo contrario y era falso:

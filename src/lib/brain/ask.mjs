@@ -253,6 +253,30 @@ export function intentoBuscarTexto(q) {
   return { termino: termino.replace(/^["'“”«»]|["'“”«»]$/g, ""), soloMios }
 }
 
+// "¿LO ÚLTIMO DE X ES MÍO O DE ELLOS?" / "¿cuáles fueron los últimos dos mensajes de X?"
+// No es una pregunta semántica: es mirar el final de un hilo. El RAG la contestaba con "no hay información"
+// aunque hubiera cientos de mensajes de ese contacto, porque buscaba por PARECIDO en vez de ir al hilo.
+const PIDE_ULTIMOS = /\b(lo\s+[uú]ltimo|[uú]ltimo\s+mensaje|[uú]ltimos?\s+(?:\w+\s+)?mensa\w+|qui[eé]n\s+(?:me\s+)?(?:escribi[oó]|habl[oó])\s+[uú]ltimo|qui[eé]n\s+contest[oó]\s+[uú]ltimo)\b/i
+const NUMERO = { un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, diez: 10 }
+// palabras que siguen a "de" pero no nombran a nadie
+const NO_SUJETO = new Set(["ellos", "ella", "ellas", "él", "el", "la", "los", "las", "mi", "mis", "su", "sus", "ayer",
+  "hoy", "eso", "esa", "ese", "esto", "nuevo", "nuevos", "correo", "correos", "mail", "mails", "email", "emails",
+  "whatsapp", "telegram", "mensaje", "mensajes", "parte", "quien", "quién", "que", "qué"])
+export function pideUltimos(q) {
+  const t = String(q || "")
+  if (!PIDE_ULTIMOS.test(t)) return null
+  let n = 1
+  const mNum = /[uú]ltimos?\s+(\w+)\s+mensa\w+/i.exec(t)
+  if (mNum) { const w = mNum[1].toLowerCase(); n = NUMERO[w] || (/^\d+$/.test(w) ? +w : 1) }
+  else if (/[uú]ltimos\s+mensa\w+/i.test(t)) n = 3
+  const sujetos = []
+  for (const m of t.matchAll(/\bde\s+(?:la\s+|el\s+|los\s+|las\s+)?([\p{L}\p{N}][\p{L}\p{N}._-]{2,})/giu)) {
+    const w = m[1]
+    if (!NO_SUJETO.has(w.toLowerCase())) sujetos.push(w)
+  }
+  return sujetos.length ? { n: Math.min(Math.max(n, 1), 10), sujetos } : null
+}
+
 export async function routerSearch(question, { historial = [] } = {}) {
   // Con historial, una pregunta de seguimiento se busca CON las palabras del turno anterior: si no, "¿y cuánto
   // era?" se busca literalmente y trae cualquier cosa.
@@ -279,6 +303,28 @@ export async function routerSearch(question, { historial = [] } = {}) {
       : `No hay nada sin responder que parezca urgente ${cuando}${dondeTxt}.`
     return { mode: "pendientes", engine: "señales", type: "answer", tokens: 0, answer, total: imp.length,
       threads: imp.slice(0, 8).map((t) => ({ key: t.key, name: t.name, summary: t.importanteRazon || "" })) }
+  }
+  // "¿LO ÚLTIMO DE X ES MÍO O DE ELLOS?" — se mira el final del hilo, sin gastar un token.
+  const ult = pideUltimos(question)
+  if (ult) {
+    const { searchThreadKeys, recentInThread } = await import("../threads-repo.mjs")
+    let hideU = new Set(), isSecU = () => false
+    try { const S = await import("../secret.mjs"); hideU = S.secretThreadKeys(); isSecU = S.isSecretMsg } catch {}
+    for (const sujeto of ult.sujetos) {
+      const claves = (searchThreadKeys(sujeto, { limit: 8 }) || []).filter((k) => !hideU.has(k))
+      if (!claves.length) continue
+      const msgs = recentInThread(claves[0], { limit: ult.n }).filter((m) => !isSecU(m))
+      if (!msgs.length) continue
+      const ultimo = msgs[msgs.length - 1]
+      const deQuien = ultimo.dir === "out" ? "Lo mandaste vos" : `Te lo mandó ${humanizarIds(ultimo.name || sujeto)}`
+      const lineas = msgs.map((m) => `• ${m.dir === "out" ? "vos" : humanizarIds(m.name || sujeto)}: ${cleanMsg(m.text || "").replace(/\s+/g, " ").slice(0, 220)}`)
+      return {
+        mode: "ultimos", engine: "hilo", type: "answer", tokens: 0, total: msgs.length,
+        answer: `${deQuien}. ${msgs.length === 1 ? "Es el último" : `Estos son los últimos ${msgs.length}`} de ${humanizarIds(sujeto)}:\n${lineas.join("\n")}`,
+        threads: [{ key: claves[0], name: sujeto, summary: "" }],
+      }
+    }
+    // si no se resolvió ningún sujeto, seguimos con el camino normal en vez de mentir con un "no hay"
   }
   // BUSCAR MENSAJES es distinto de PREGUNTAR: va primero y no gasta un solo token.
   const buscar = intentoBuscarTexto(question)
