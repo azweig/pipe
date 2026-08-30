@@ -39,7 +39,11 @@ try {
     let box = null; for await (const b of await c.list()) if ((b.specialUse || "") === "\\All") box = b.path
     try { await c.mailboxOpen(box || "[Gmail]/All Mail", { readOnly: true }) } catch (e) { await c.logout().catch(() => {}); continue }
     let uids = []
-    try { uids = (await c.search({ or: [{ from: QUERY }, { to: QUERY }, { subject: QUERY }, { body: QUERY }] }, { uid: true })) || [] } catch {}
+    try {
+      uids = QUERY === "*"
+        ? (await c.search({ all: true }, { uid: true })) || []
+        : (await c.search({ or: [{ from: QUERY }, { to: QUERY }, { subject: QUERY }, { body: QUERY }] }, { uid: true })) || []
+    } catch {}
     uids = uids.slice(-LIMIT)
     console.log(`[backfill] ${acc.label || acc.user}: ${uids.length} archivados`)
     for (const uid of uids) {
@@ -69,13 +73,31 @@ try {
       const tok = (await pca.acquireTokenSilent({ account: accts[0], scopes: ["User.Read", "Mail.Read"] })).accessToken
       const g = async (p) => { const r = await fetch(`https://graph.microsoft.com/v1.0${p}`, { headers: { Authorization: `Bearer ${tok}`, ConsistencyLevel: "eventual" } }); if (!r.ok) throw new Error("Graph " + r.status); return r.json() }
       const me = await g("/me?$select=mail"), label = me.mail || "outlook"
-      const d = await g(`/me/messages?$search=${encodeURIComponent('"' + QUERY + '"')}&$top=${Math.min(LIMIT, 50)}&$select=id,subject,from,toRecipients,receivedDateTime,body,bodyPreview`)
-      console.log(`[backfill] ${label}: ${(d.value || []).length} en Graph`)
-      for (const m of (d.value || [])) {
-        const from = m.from?.emailAddress || {}, to = (m.toRecipients || [])[0]?.emailAddress || {}
-        const dir = isMine(from.address) ? "out" : "in", party = dir === "out" ? to : from
-        rec(label, { address: party.address, name: party.name }, m.subject || "(sin asunto)", (m.bodyPreview || "").replace(/\s+/g, " ").slice(0, 200), new Date(m.receivedDateTime || Date.now()).getTime(), dir, m.body?.content || null, m.id)
+      // Graph corta en 50 por página. Sin seguir @odata.nextLink el backfill traía 50 correos y decía "listo":
+      // con miles en el buzón eso es no traer nada. Se pagina hasta LIMIT.
+      // QUERY="*" = traer el buzón ENTERO (inbox + enviados + carpetas), paginando. Con $search sobre tu propia
+      // dirección Graph devolvía apenas unos cientos: busca en el CONTENIDO indexado, y tu dirección casi nunca
+      // aparece en el cuerpo. Para "todo mi correo de este buzón" hay que enumerar, no buscar.
+      const TODO = QUERY === "*"
+      let url = TODO
+        ? "/me/messages?$top=50&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,sentDateTime,body,bodyPreview"
+        : `/me/messages?$search=${encodeURIComponent('"' + QUERY + '"')}&$top=50&$select=id,subject,from,toRecipients,receivedDateTime,sentDateTime,body,bodyPreview`
+      let traidos = 0
+      while (url && traidos < LIMIT) {
+        const d = await g(url)
+        const pagina = d.value || []
+        for (const m of pagina) {
+          if (traidos >= LIMIT) break
+          const from = m.from?.emailAddress || {}, to = (m.toRecipients || [])[0]?.emailAddress || {}
+          const dir = isMine(from.address) ? "out" : "in", party = dir === "out" ? to : from
+          rec(label, { address: party.address, name: party.name }, m.subject || "(sin asunto)", (m.bodyPreview || "").replace(/\s+/g, " ").slice(0, 200), new Date(m.receivedDateTime || m.sentDateTime || Date.now()).getTime(), dir, m.body?.content || null, m.id)
+          traidos++
+        }
+        const next = d["@odata.nextLink"]
+        url = next && pagina.length ? next.replace("https://graph.microsoft.com/v1.0", "") : null
+        if (url) { setStatus({ state: "running", found: total }); await new Promise((r) => setTimeout(r, 300)) } // Graph tira 429 si lo apurás
       }
+      console.log(`[backfill] ${label}: ${traidos} en Graph`)
     }
   }
 } catch (e) { console.log("[backfill] outlook err", e.message) }

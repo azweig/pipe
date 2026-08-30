@@ -109,7 +109,11 @@ async function ollamaRaw(prompt, { json, system, temperature, numPredict }, mode
 let _ollamaChain = Promise.resolve()
 const OLLAMA_TIMEOUT = +process.env.OLLAMA_TIMEOUT_MS || 90000
 function ollama(prompt, opts, model) {
-  const run = () => { let t; const to = new Promise((_, rej) => { t = setTimeout(() => rej(new Error("ollama timeout")), OLLAMA_TIMEOUT) }); return Promise.race([ollamaRaw(prompt, opts, model), to]).finally(() => clearTimeout(t)) } // clearTimeout: sin esto el timer de 90s quedaba colgando cuando ollama respondía/fallaba antes
+  // El timeout no puede ser uno solo para todo: en un box sin GPU, CARGAR el modelo ya se come 150-250s, así que
+  // los 90s pensados para una llamada interactiva mataban a los trabajos de fondo antes de que empezaran a escribir.
+  // Los interactivos siguen con 90s (más que eso el usuario no espera); los de fondo piden su propio margen.
+  const lim = +opts?.timeoutMs || OLLAMA_TIMEOUT
+  const run = () => { let t; const to = new Promise((_, rej) => { t = setTimeout(() => rej(new Error("ollama timeout")), lim) }); return Promise.race([ollamaRaw(prompt, opts, model), to]).finally(() => clearTimeout(t)) } // clearTimeout: sin esto el timer de 90s quedaba colgando cuando ollama respondía/fallaba antes
   const p = _ollamaChain.then(run, run) // se encola detrás de la anterior (haya salido bien o mal)
   _ollamaChain = p.catch(() => {}) // la cadena nunca se rompe por un error individual
   return p
@@ -403,7 +407,7 @@ export async function llm(prompt, opts = {}) {
     for (const model of modelList) {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const out = await prov.fn(prompt, { json, system: sys, temperature, numPredict, _key: routed && pname === routed.provider ? routed.token : undefined }, model)
+          const out = await prov.fn(prompt, { json, system: sys, temperature, numPredict, timeoutMs: opts.timeoutMs, _key: routed && pname === routed.provider ? routed.token : undefined }, model)
           meter(pname, opts.task, (sys + prompt).length, typeof out === "string" ? out.length : 0) // medir uso nube/local
           if (process.env.LLM_DEBUG) console.error(`[llm] ${pname}/${model} OK`)
           if (json) { const p = parseJson(out); if (!p || typeof p !== "object") throw new Error("respuesta JSON inválida (no es objeto)"); return p } // #27: no escribir estado con basura → falla y cae al fallback

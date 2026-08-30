@@ -102,10 +102,14 @@ async function runSent(acc) {
     try {
       const status = await client.status(sentBox, { messages: true })
       const total = status.messages || 0
-      const from = lastSeq ? lastSeq + 1 : Math.max(1, total - 9)
-      if (total >= from) for await (const msg of client.fetch(`${from}:${total}`, { envelope: true })) {
-        const to = msg.envelope?.to?.[0] || {}
-        store(acc.label, to, msg.envelope?.subject || "(sin asunto)", "", +new Date(msg.envelope?.date || Date.now()), false, "out", null, msg.envelope?.messageId)
+      // Antes: 10 al conectar y SOLO el envelope. Resultado: de todo lo que escribiste quedaba el asunto y nada más
+      // ("Re: propuesta — "), así que preguntarle "¿lo último es mío o de ellos?" o "¿qué le respondí?" no tenía con
+      // qué contestar. Ahora se baja el cuerpo igual que en INBOX y se arranca con 60, el mismo criterio.
+      const from = lastSeq ? lastSeq + 1 : Math.max(1, total - 59)
+      if (total >= from) for await (const msg of client.fetch(`${from}:${total}`, { envelope: true, source: true })) {
+        const e = msg.envelope || {}
+        const { preview, body, attachments } = await parseBody(msg.source)
+        store(acc.label, e.to?.[0] || {}, e.subject || "(sin asunto)", preview, +new Date(e.date || Date.now()), false, "out", body, e.messageId, attachments)
       }
       lastSeq = total
     } finally { lock.release() }

@@ -83,14 +83,16 @@ async function poll(token) {
     console.log(`📧 [outlook] ${name}: ${m.subject || "(sin asunto)"}`)
   }
   // ENVIADOS — para saber qué YA respondiste (dir: out, jid = destinatario)
-  const sent = await graph(token, "/me/mailFolders/sentitems/messages?$top=25&$orderby=sentDateTime desc&$select=id,subject,toRecipients,sentDateTime,bodyPreview")
+  // Se pide `body`, no solo `bodyPreview`: de lo que vos escribís quedaba el asunto y 160 caracteres, así que
+  // "¿qué le respondí?" o "¿lo último es mío o de ellos?" no tenían con qué contestarse. Mismo criterio que el inbox.
+  const sent = await graph(token, "/me/mailFolders/sentitems/messages?$top=60&$orderby=sentDateTime desc&$select=id,subject,toRecipients,sentDateTime,bodyPreview,body")
   for (const m of (sent.value || []).reverse()) {
     const ts = Date.parse(m.sentDateTime || "") || 0
     if (ts < (seen.tsSent || 0) - 5000) continue
     if (seenIds.has(m.id)) continue
     seenIds.add(m.id); seen.tsSent = Math.max(seen.tsSent || 0, ts)
     const to = m.toRecipients?.[0]?.emailAddress || {}
-    const rec = { id: `email:${m.id}`, channel: "email", account: "outlook", jid: to.address || "", name: to.name || to.address || "?", text: `${m.subject || "(sin asunto)"} — ${(m.bodyPreview || "").replace(/\s+/g, " ").trim().slice(0, 160)}`, ts, dir: "out" }
+    const rec = { id: `email:${m.id}`, channel: "email", account: "outlook", jid: to.address || "", name: to.name || to.address || "?", text: `${m.subject || "(sin asunto)"} — ${(m.bodyPreview || "").replace(/\s+/g, " ").trim().slice(0, 160)}`, ts, dir: "out", body: m.body?.content || null }
     appendMessage(rec)
     console.log(`➡️  [outlook→] ${to.name || to.address}: ${m.subject || "(sin asunto)"}`)
   }

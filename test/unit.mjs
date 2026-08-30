@@ -62,11 +62,29 @@ test("smartChain: complejo/visión → nube (sin ollama que no lo hace bien)", (
 })
 
 test("smartChain: sensible → FAIL-CLOSED (nunca nube por defecto)", () => {
-  const prev = process.env.SENSITIVE_ALLOW_CLOUD
+  const prevFlag = process.env.SENSITIVE_ALLOW_CLOUD, prevChain = process.env.LLM_CHAIN_SENSITIVE
   delete process.env.SENSITIVE_ALLOW_CLOUD
-  assert.equal(smartChain({ sensitive: true }), "ollama", "sensible NO debe incluir gemini/nube")
-  process.env.SENSITIVE_ALLOW_CLOUD = "1" // escape explícito y consciente
-  assert.ok(smartChain({ sensitive: true }).includes("gemini"), "con el escape sí permite nube")
+  assert.equal(smartChain({ sensitive: true }), "ollama", "sensible NO debe salir de local por defecto")
+  // Con el escape, la cadena la decide LLM_CHAIN_SENSITIVE. La versión vieja de esta prueba exigía que apareciera
+  // "gemini": daba por hecho que "escape" = proveedor de terceros. En este hub la cadena sensible es el GPU box
+  // PROPIO, así que la prueba fallaba por una config MÁS privada que la que esperaba. Se fija el destino a mano.
+  process.env.SENSITIVE_ALLOW_CLOUD = "1"
+  process.env.LLM_CHAIN_SENSITIVE = "gemini,ollama"
+  assert.ok(smartChain({ sensitive: true }).includes("gemini"), "con el escape, manda LLM_CHAIN_SENSITIVE")
+  process.env.LLM_CHAIN_SENSITIVE = "gestionado,ollama"
+  assert.equal(smartChain({ sensitive: true }), "gestionado,ollama", "el escape no impone un tercero: respeta la cadena configurada")
+  if (prevFlag === undefined) delete process.env.SENSITIVE_ALLOW_CLOUD; else process.env.SENSITIVE_ALLOW_CLOUD = prevFlag
+  if (prevChain === undefined) delete process.env.LLM_CHAIN_SENSITIVE; else process.env.LLM_CHAIN_SENSITIVE = prevChain
+})
+
+// El escape global NO puede pisar la política POR FUNCIÓN: graphify/learn/enrich/email nombran su feature y ahí
+// manda el mapa (default local). Si algún día el escape volviera a ganar sobre el feature, todo el corpus saldría.
+test("el escape global no pisa la política por función", () => {
+  const prev = process.env.SENSITIVE_ALLOW_CLOUD
+  process.env.SENSITIVE_ALLOW_CLOUD = "1"
+  for (const f of ["graphify", "learn", "enrich", "email"]) {
+    assert.equal(smartChain({ sensitive: true, feature: f }), "ollama", `${f} tiene que seguir local aunque el escape esté puesto`)
+  }
   if (prev === undefined) delete process.env.SENSITIVE_ALLOW_CLOUD; else process.env.SENSITIVE_ALLOW_CLOUD = prev
 })
 
