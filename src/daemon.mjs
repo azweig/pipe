@@ -105,7 +105,12 @@ function runGraphify() {
   if (graphifyRunning) { log("⏭️  graphify aún corriendo, salto este ciclo"); return }
   graphifyRunning = true
   // HÍBRIDO: graphify procesa tus mensajes → LLM local primero (privado), Gemini de respaldo si el local falla
-  const p = spawnLogged("graphify", NODE, ["src/graphify.mjs"], { ...process.env, GEMINI_MODEL: "gemini-2.5-flash-lite", LLM_CHAIN: SENSITIVE_CHAIN, LLM_CHAIN_SENSITIVE: SENSITIVE_CHAIN })
+  // VENTANA PROPIA. graphify avanza el offset todo-o-nada: o termina la tanda o no anota nada. En un box sin GPU un
+  // lote son ~4 min, así que ponerse al día con un atraso de cientos de eventos lleva más de una hora — y el watchdog
+  // genérico de 20 min lo mataba SIEMPRE a mitad. Resultado: reempezaba de cero en cada ciclo y no avanzaba nunca.
+  // No es un cuelgue, es trabajo largo de verdad; el flag graphifyRunning ya evita que se solapen dos corridas.
+  const p = spawnLogged("graphify", NODE, ["src/graphify.mjs"], { ...process.env, GEMINI_MODEL: "gemini-2.5-flash-lite", LLM_CHAIN: SENSITIVE_CHAIN, LLM_CHAIN_SENSITIVE: SENSITIVE_CHAIN },
+    { timeoutMs: +process.env.GRAPHIFY_JOB_TIMEOUT_MS || 3 * 3600000 })
   p.on("exit", (code) => { graphifyRunning = false; log(`🧠 graphify ciclo terminado (code ${code})`); runVaultSync() })
 }
 
