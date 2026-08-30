@@ -6,7 +6,7 @@ import { search as dbSearch, searchBody as dbSearchBody, conversationsByThreads 
 import { llm, smartChain } from "../llm.mjs"
 import { UNTRUSTED_NOTE } from "../safety.mjs"
 import { ownerFirst } from "../hub.mjs"
-import { nombrePorContacto } from "../threads-repo.mjs"
+import { nombrePorContacto, cuentasDeCorreo } from "../threads-repo.mjs"
 import { stripWA } from "./kernel/keys.mjs"
 import { cleanMsg } from "./kernel/convo.mjs"
 
@@ -277,6 +277,19 @@ export function pideUltimos(q) {
   return sujetos.length ? { n: Math.min(Math.max(n, 1), 10), sujetos } : null
 }
 
+// "¿DE QUÉ HABLÉ POR EL MAIL DE X?" / "¿qué le respondí desde la casilla del trabajo?"
+// La pregunta acota un BUZÓN, no un tema. Sin esto el buscador respondía con hilos de WhatsApp a una pregunta
+// sobre correo, porque busca por parecido semántico y el nombre de una casilla no se parece a nada.
+export function buzonMencionado(q) {
+  const t = String(q || "").toLowerCase()
+  if (!/\b(mail|mails|email|emails|correos?|casilla|bandeja|escrib|respond)/i.test(t)) return null
+  const elegidas = []
+  for (const c of cuentasDeCorreo()) {
+    if (c.alias.some((a) => new RegExp(`(^|[^\\p{L}])${a}([^\\p{L}]|$)`, "iu").test(t))) elegidas.push(c.account)
+  }
+  return elegidas.length ? elegidas : null
+}
+
 export async function routerSearch(question, { historial = [] } = {}) {
   // Con historial, una pregunta de seguimiento se busca CON las palabras del turno anterior: si no, "¿y cuánto
   // era?" se busca literalmente y trae cualquier cosa.
@@ -325,6 +338,38 @@ export async function routerSearch(question, { historial = [] } = {}) {
       }
     }
     // si no se resolvió ningún sujeto, seguimos con el camino normal en vez de mentir con un "no hay"
+  }
+  // PREGUNTA ACOTADA A UN BUZÓN: el contexto se arma SOLO con esa casilla, no con todo el historial.
+  const buzones = buzonMencionado(question)
+  if (buzones) {
+    const { recientesEnCuentas } = await import("../threads-repo.mjs")
+    const vb = seguimiento ? ventanaHeredada(question, historial) : ventanaTemporal(question)
+    // primero por relevancia dentro del buzón; si la pregunta no trae términos propios ("de qué hablé"), lo reciente
+    // "¿qué le RESPONDÍ?", "¿qué ESCRIBÍ?" pregunta por lo tuyo: hay que quedarse con lo saliente, o el contexto se
+    // llena de lo que te mandaron a vos y el modelo contesta "no hay información" teniendo 258 correos tuyos.
+    const soloMios = /\b(respond[ií]|escrib[ií]|mand[eé]|envi[eé]|le dije|contest[eé]|mi respuesta|lo que puse)\b/i.test(question)
+    const mios = (rs) => (soloMios ? rs.filter((m) => m.dir === "out") : rs)
+    const porTermino = mios(dbSearch(consulta, { limit: 400, byRank: true, desde: vb.desde }).filter((m) => buzones.includes(m.account)))
+    const msgs = porTermino.length >= 4 ? porTermino.slice(0, 40) : mios(recientesEnCuentas(buzones, { limit: 150, desde: vb.desde })).slice(0, 40)
+    if (msgs.length) {
+      // `fmt` se declara más abajo en esta misma función (zona muerta temporal): acá va uno propio.
+      const dia = (ts) => new Date(ts).toISOString().slice(0, 10)
+      const lineas = msgs.map((m) => `- (${m.dir === "out" ? "vos escribiste" : "te escribió " + (m.name || "?")}, ${dia(m.ts)}) ${cleanMsg(m.text || "").replace(/\s+/g, " ").slice(0, 240)}`)
+      const alcanceB = vb.etiqueta ? ` Alcance: ${vb.etiqueta}.` : ""
+      const pr = `Sos el asistente personal de ${ownerFirst()}. Abajo están SUS correos de la casilla ${buzones.join(" / ")}.${alcanceB}
+Respondé en 1 a 5 frases, en español, usando SOLO eso.${soloMios ? " Son correos que ÉL envió: contá qué dijo él." : " Distinguí lo que escribió ÉL de lo que le escribieron."} Nombrá personas, empresas y montos concretos. Si no alcanza, decí qué falta. NO inventes.
+
+PREGUNTA: ${question}
+
+CORREOS (${msgs.length}):
+${lineas.join("\n")}
+
+RESPUESTA:`
+      const ans = await llm(pr, { system: UNTRUSTED_NOTE, chain: process.env.LLM_CHAIN_ASK || "gemini,ollama", temperature: 0.2, task: "router", bypassCap: true }).then((x) => humanizarIds((x || "").trim())).catch(() => "")
+      if (ans) return { mode: "buzon", engine: "correo", type: "answer", answer: ans, total: msgs.length, cuentas: buzones,
+        threads: [...new Map(msgs.map((m) => [m.thread, { key: m.thread, name: m.name, summary: "" }])).values()].slice(0, 6) }
+    }
+    // sin nada en esa casilla: seguimos por el camino normal en vez de negar
   }
   // BUSCAR MENSAJES es distinto de PREGUNTAR: va primero y no gasta un solo token.
   const buscar = intentoBuscarTexto(question)

@@ -13,6 +13,14 @@ import { PublicClientApplication } from "@azure/msal-node"
 
 const QUERY = (process.env.BACKFILL_QUERY || process.argv[2] || "").trim()
 const LIMIT = Number(process.env.BACKFILL_LIMIT || 400)
+// ALCANCE. Sin esto, QUERY="*" barría TODAS las casillas configuradas — incluida una personal de 13 años que
+// nadie pidió — y el disco se iba a ~3,4 GB/hora. BACKFILL_ONLY limita a qué lector se le pide:
+//   "graph"  → solo Outlook/Microsoft      "gmail" → solo las cuentas IMAP de Gmail
+//   "gmail:<etiqueta>" → una sola cuenta   (vacío) → todas, como antes
+const ONLY = String(process.env.BACKFILL_ONLY || "").trim().toLowerCase()
+const quiereGmail = !ONLY || ONLY === "gmail" || ONLY.startsWith("gmail:")
+const quiereGraph = !ONLY || ONLY === "graph" || ONLY === "outlook"
+const cuentaPedida = ONLY.startsWith("gmail:") ? ONLY.slice(6) : ""
 if (!QUERY) { console.log("[backfill] sin query"); process.exit(0) }
 const mine = new Set((myEmails() || []).map((e) => e.toLowerCase()))
 const isMine = (a) => a && mine.has(String(a).toLowerCase())
@@ -28,9 +36,11 @@ function rec(label, party, subject, preview, ts, dir, body, msgId) {
 
 // ── Gmail IMAP (All Mail) ──
 try {
+  if (!quiereGmail) throw { skip: true }
   const accs = existsSync("./auth/imap-accounts.json") ? JSON.parse(readFileSync("./auth/imap-accounts.json", "utf8")) : []
   for (const acc of accs) {
     if (!/gmail|googlemail/.test(acc.host || "")) continue
+    if (cuentaPedida && String(acc.label || acc.user || "").toLowerCase() !== cuentaPedida) continue
     let c
     try {
       const auth = acc.oauth === "google" ? { user: acc.user, accessToken: await gmailAccessToken(decSecret(acc.refreshToken)) } : { user: acc.user, pass: decSecret(acc.pass) }
@@ -59,10 +69,11 @@ try {
     await c.logout().catch(() => {})
     setStatus({ state: "running", found: total })
   }
-} catch (e) { console.log("[backfill] gmail err", e.message) }
+} catch (e) { if (!e?.skip) console.log("[backfill] gmail err", e.message) }
 
 // ── Outlook / Microsoft Graph ──
 try {
+  if (!quiereGraph) throw { skip: true }
   const clientId = process.env.MS_CLIENT_ID || "", tenantId = process.env.MS_TENANT_ID || "", cacheFile = "./auth/teams.cache.json"
   if (existsSync(cacheFile) && clientId) {
     const pca = new PublicClientApplication({ auth: { clientId, authority: `https://login.microsoftonline.com/${tenantId}` }, cache: { cachePlugin: {
@@ -100,7 +111,7 @@ try {
       console.log(`[backfill] ${label}: ${traidos} en Graph`)
     }
   }
-} catch (e) { console.log("[backfill] outlook err", e.message) }
+} catch (e) { if (!e?.skip) console.log("[backfill] outlook err", e.message) }
 
 setStatus({ state: "done", found: total })
 console.log(`[backfill] LISTO: ${total} correos traídos para "${QUERY}"`)

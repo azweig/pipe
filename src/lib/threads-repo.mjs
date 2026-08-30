@@ -177,6 +177,35 @@ export function nombrePorContacto(id) {
   } catch { return null }
 }
 
+// Las casillas configuradas, sacadas de los datos (nada hardcodeado: si mañana conectás otra, aparece sola).
+// Cada una con las palabras por las que la nombrarías al preguntar: "por el mail del trabajo", "desde la otra".
+let _cuentasCache = null, _cuentasTs = 0
+export function cuentasDeCorreo() {
+  if (_cuentasCache && Date.now() - _cuentasTs < 300000) return _cuentasCache
+  try {
+    const filas = db().prepare("SELECT account, COUNT(*) c FROM messages WHERE channel='email' AND account IS NOT NULL AND account<>'' GROUP BY account HAVING c > 5").all()
+    _cuentasCache = filas.map((f) => {
+      const a = String(f.account)
+      const partes = a.toLowerCase().split(/[@._:-]+/).filter((x) => x.length >= 4 && !["gmail", "mail", "com", "outlook0", "correo"].includes(x))
+      return { account: a, n: f.c, alias: [...new Set(partes)] }
+    })
+    _cuentasTs = Date.now()
+    return _cuentasCache
+  } catch { return [] }
+}
+
+// Últimos mensajes de una casilla (para "¿de qué hablé por el mail de X?"), con la ventana temporal de la pregunta.
+export function recientesEnCuentas(cuentas = [], { limit = 40, desde = 0 } = {}) {
+  if (!cuentas.length) return []
+  const ph = cuentas.map(() => "?").join(",")
+  const corte = desde ? " AND ts >= ?" : ""
+  try {
+    const args = desde ? [...cuentas, desde, limit * 3 + 20] : [...cuentas, limit * 3 + 20]
+    return db().prepare(`SELECT * FROM messages WHERE account IN (${ph})${corte} AND text IS NOT NULL AND text<>'' ORDER BY ts DESC LIMIT ?`)
+      .all(...args).filter((r) => !isSecretRow(r)).slice(0, limit)
+  } catch { return [] }
+}
+
 export function threadPorClave(clave) {
   const k = String(clave || "").trim()
   if (!k) return null
