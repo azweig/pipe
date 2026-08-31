@@ -55,6 +55,7 @@ async function processBatch(events, known) {
   return llm(prompt, { json: true, system: harden(SYSTEM), feature: "graphify",
     models: { ollama: process.env.OLLAMA_MODEL_GRAPHIFY || "qwen2.5:3b" },
     timeoutMs: +process.env.GRAPHIFY_TIMEOUT_MS || 300000,
+    numCtx: +process.env.GRAPHIFY_NUM_CTX || 8192, // entrada ~2570 + la lista de personas conocidas + el JSON de salida
     chain: smartChain({ sensitive: true, feature: "graphify" }) }) // feature top-level → área private (GPU box del hub); smartChain = fallback fail-closed
 }
 

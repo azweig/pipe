@@ -96,10 +96,13 @@ async function anthropic(prompt, { json, system, temperature, _key } = {}, model
   const d = await res.json()
   return d.content?.map((c) => c.text).join("") || ""
 }
-async function ollamaRaw(prompt, { json, system, temperature, numPredict }, model) {
+async function ollamaRaw(prompt, { json, system, temperature, numPredict, numCtx }, model) {
   let host = ollamaHost()
   if (process.env.LLM_BLOCK_PRIVATE_HOSTS) host = await resolveSafeHost(host) // managed: resuelve+valida+FIJA la IP → cierra el rebinding dinámico (TOCTOU)
-  const res = await fetch(host + "/api/generate", { method: "POST", body: JSON.stringify({ model, prompt: (system ? system + "\n\n" : "") + prompt, stream: false, ...(json ? { format: "json" } : {}), keep_alive: process.env.OLLAMA_KEEP_ALIVE || "30m", options: { temperature, ...(numPredict ? { num_predict: numPredict } : {}) } }) })
+  const res = await fetch(host + "/api/generate", { method: "POST", body: JSON.stringify({ model, prompt: (system ? system + "\n\n" : "") + prompt, stream: false, ...(json ? { format: "json" } : {}), keep_alive: process.env.OLLAMA_KEEP_ALIVE || "30m", // num_ctx: el default de ollama son 4096 tokens. Un lote de trabajo ya gasta ~2570 solo de ENTRADA, así que
+    // el que trae mensajes largos se pasa del contexto y la conexión se corta en el medio ("fetch failed"). Los
+    // trabajos de fondo piden el contexto que necesitan; lo interactivo sigue con el default.
+    options: { temperature, ...(numPredict ? { num_predict: numPredict } : {}), ...(numCtx ? { num_ctx: numCtx } : {}) } }) })
   if (!res.ok) { const e = new Error(`ollama ${res.status}`); e.status = res.status; throw e }
   const d = await res.json()
   return d.response || ""
@@ -373,7 +376,7 @@ const NO_INVENT = `REGLA ABSOLUTA E INNEGOCIABLE: NUNCA inventes, alucines, esti
 const HUMAN_VOICE = `Escribís como una persona real, directa y concreta. NUNCA sones a IA. Prohibido: frases de relleno ("es importante notar", "en resumen", "cabe destacar", "en el mundo de hoy"), disclaimers ("como IA/modelo de lenguaje", "no tengo acceso"), entusiasmo genérico y adulador, moralejas, guiones largos decorativos (—), y listas cuando una frase alcanza. Andá al grano con la info real, tono natural y humano. Si no sabés algo, decilo sin vueltas. No expliques que sos un asistente.`
 
 export async function llm(prompt, opts = {}) {
-  const { json = false, system = "", temperature = 0.2, chain, model: modelOverride, models: modelByProv, numPredict, raw = false, bypassCap = false } = opts
+  const { json = false, system = "", temperature = 0.2, chain, model: modelOverride, models: modelByProv, numPredict, numCtx, raw = false, bypassCap = false } = opts
   // inyectar SIEMPRE la regla anti-invención; y la voz humana solo en prosa (no json/raw)
   const base = json || raw ? system : (system ? `${HUMAN_VOICE}\n\n${system}` : HUMAN_VOICE)
   const sys = base ? `${NO_INVENT}\n\n${base}` : NO_INVENT
@@ -407,7 +410,7 @@ export async function llm(prompt, opts = {}) {
     for (const model of modelList) {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const out = await prov.fn(prompt, { json, system: sys, temperature, numPredict, timeoutMs: opts.timeoutMs, _key: routed && pname === routed.provider ? routed.token : undefined }, model)
+          const out = await prov.fn(prompt, { json, system: sys, temperature, numPredict, numCtx: opts.numCtx, timeoutMs: opts.timeoutMs, _key: routed && pname === routed.provider ? routed.token : undefined }, model)
           meter(pname, opts.task, (sys + prompt).length, typeof out === "string" ? out.length : 0) // medir uso nube/local
           if (process.env.LLM_DEBUG) console.error(`[llm] ${pname}/${model} OK`)
           if (json) { const p = parseJson(out); if (!p || typeof p !== "object") throw new Error("respuesta JSON inválida (no es objeto)"); return p } // #27: no escribir estado con basura → falla y cae al fallback
