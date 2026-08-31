@@ -103,7 +103,7 @@ async function anthropic(prompt, { json, system, temperature, _key } = {}, model
 // evaluación del prompt sola puede pasarse de 5 minutos, así que TODA llamada larga moría con "fetch failed"
 // aunque nuestro propio timeout fuera mayor — nunca llegaba a aplicarse. Medido: fallaba a los 300,8s clavados.
 // Con http.request el único reloj es el nuestro, el de ollama() de más abajo.
-function pedirNdjson(url, cuerpo, onDato) {
+function pedirNdjson(url, cuerpo, onDato, signal) {
   return new Promise((resolve, reject) => {
     const u = new URL(url)
     const mod = u.protocol === "https:" ? https : http
@@ -128,13 +128,19 @@ function pedirNdjson(url, cuerpo, onDato) {
       res.on("end", () => resolve())
       res.on("error", reject)
     })
-    req.on("error", reject)
+    req.on("error", (e) => { if (!signal?.aborted) reject(e) }) // abortado por NOSOTROS: el timeout de arriba ya rechazó
     req.setTimeout(0) // sin reloj propio: el único límite es el de ollama(), que sí sabe si es interactivo o de fondo
+    // …pero sin reloj propio hace falta poder CERRARLO: si el timeout de ollama() gana la carrera y nadie destruye
+    // el pedido, el socket queda abierto para siempre y el proceso no termina nunca (se comía el suite de pruebas).
+    if (signal) {
+      if (signal.aborted) { req.destroy(); return reject(new Error("ollama abortado")) }
+      signal.addEventListener("abort", () => { req.destroy(); reject(new Error("ollama abortado")) }, { once: true })
+    }
     req.end(cuerpo)
   })
 }
 
-async function ollamaRaw(prompt, { json, system, temperature, numPredict, numCtx }, model) {
+async function ollamaRaw(prompt, { json, system, temperature, numPredict, numCtx, signal }, model) {
   let host = ollamaHost()
   if (process.env.LLM_BLOCK_PRIVATE_HOSTS) host = await resolveSafeHost(host) // managed: resuelve+valida+FIJA la IP → cierra el rebinding dinámico (TOCTOU)
   // Se pide en streaming aunque juntemos todo antes de devolver: así el socket recibe un chunk por token y nunca
@@ -150,7 +156,7 @@ async function ollamaRaw(prompt, { json, system, temperature, numPredict, numCtx
   await pedirNdjson(host + "/api/generate", cuerpo, (j) => {
     if (j.error) throw new Error(`ollama: ${String(j.error).slice(0, 120)}`)
     if (typeof j.response === "string") out += j.response
-  })
+  }, signal)
   return out
 }
 // COLA + TIMEOUT para ollama: en este box (CPU sin GPU) ollama SERIALIZA y CUELGA si le mandás varias a la vez o prompts grandes.
@@ -162,7 +168,12 @@ function ollama(prompt, opts, model) {
   // los 90s pensados para una llamada interactiva mataban a los trabajos de fondo antes de que empezaran a escribir.
   // Los interactivos siguen con 90s (más que eso el usuario no espera); los de fondo piden su propio margen.
   const lim = +opts?.timeoutMs || OLLAMA_TIMEOUT
-  const run = () => { let t; const to = new Promise((_, rej) => { t = setTimeout(() => rej(new Error("ollama timeout")), lim) }); return Promise.race([ollamaRaw(prompt, opts, model), to]).finally(() => clearTimeout(t)) } // clearTimeout: sin esto el timer de 90s quedaba colgando cuando ollama respondía/fallaba antes
+  const run = () => {
+    let t
+    const ac = new AbortController()
+    const to = new Promise((_, rej) => { t = setTimeout(() => { ac.abort(); rej(new Error("ollama timeout")) }, lim) })
+    return Promise.race([ollamaRaw(prompt, { ...opts, signal: ac.signal }, model), to]).finally(() => { clearTimeout(t); ac.abort() })
+  } // clearTimeout: sin esto el timer de 90s quedaba colgando cuando ollama respondía/fallaba antes
   const p = _ollamaChain.then(run, run) // se encola detrás de la anterior (haya salido bien o mal)
   _ollamaChain = p.catch(() => {}) // la cadena nunca se rompe por un error individual
   return p
