@@ -11,7 +11,11 @@ import { anchored, gstrip } from "./lib/grounding.mjs"
 import { mkdirSync, appendFileSync, readFileSync, writeFileSync, renameSync, rmSync, statSync, existsSync } from "fs"
 
 mkdirSync("./vault/Daily", { recursive: true })
-const BATCH = 30
+// LOTE CHICO A PROPÓSITO. Con 30 eventos el prompt ronda los 2570 tokens y, en un CPU sin GPU, evaluar un prompt
+// grande cuesta más que linealmente: subir el contexto a 8192 para que entrara hizo que un lote pasara de ~250s a
+// más de 10 minutos. Con la mitad de eventos el prompt entra holgado en el contexto por defecto y cada llamada
+// cuesta bastante menos; son más llamadas, pero el total baja y ninguna queda al borde del timeout.
+const BATCH = +process.env.GRAPHIFY_BATCH || 15
 
 // ── alias/canónicos (de la semilla) → normalizar nombres para no duplicar ──
 const ALIASES = existsSync("./data/aliases.json") ? JSON.parse(readFileSync("./data/aliases.json", "utf8")) : { people: {}, companies: {} }
@@ -55,7 +59,7 @@ async function processBatch(events, known) {
   return llm(prompt, { json: true, system: harden(SYSTEM), feature: "graphify",
     models: { ollama: process.env.OLLAMA_MODEL_GRAPHIFY || "qwen2.5:3b" },
     timeoutMs: +process.env.GRAPHIFY_TIMEOUT_MS || 300000,
-    numCtx: +process.env.GRAPHIFY_NUM_CTX || 8192, // entrada ~2570 + la lista de personas conocidas + el JSON de salida
+    numCtx: +process.env.GRAPHIFY_NUM_CTX || 4096, // con lotes de 15 la entrada ronda 1300 tokens: entra holgado
     chain: smartChain({ sensitive: true, feature: "graphify" }) }) // feature top-level → área private (GPU box del hub); smartChain = fallback fail-closed
 }
 

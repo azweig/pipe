@@ -3,6 +3,8 @@
 // Keys en .env: GEMINI_API_KEY, OPENAI_API_KEY (opcional ANTHROPIC_API_KEY). Ollama en OLLAMA_HOST (default localhost:11434).
 import { readFileSync, existsSync, writeFileSync, statSync, renameSync } from "fs"
 import { lookup } from "dns/promises"
+import http from "node:http"
+import https from "node:https"
 import { withLock } from "./lock.mjs"
 import { encSecret, decSecret } from "./secrets.mjs"
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -96,16 +98,60 @@ async function anthropic(prompt, { json, system, temperature, _key } = {}, model
   const d = await res.json()
   return d.content?.map((c) => c.text).join("") || ""
 }
+// PEDIDO NDJSON CON EL CLIENTE HTTP CRUDO, no fetch. El fetch de Node aborta a los 300s si no recibió los
+// encabezados (headersTimeout de undici), y ese límite no es configurable desde fetch(). En un box sin GPU la
+// evaluación del prompt sola puede pasarse de 5 minutos, así que TODA llamada larga moría con "fetch failed"
+// aunque nuestro propio timeout fuera mayor — nunca llegaba a aplicarse. Medido: fallaba a los 300,8s clavados.
+// Con http.request el único reloj es el nuestro, el de ollama() de más abajo.
+function pedirNdjson(url, cuerpo, onDato) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url)
+    const mod = u.protocol === "https:" ? https : http
+    const req = mod.request({
+      protocol: u.protocol, hostname: u.hostname, port: u.port || (u.protocol === "https:" ? 443 : 80),
+      path: u.pathname + u.search, method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(cuerpo) },
+    }, (res) => {
+      if ((res.statusCode || 0) >= 400) { res.resume(); const e = new Error(`ollama ${res.statusCode}`); e.status = res.statusCode; return reject(e) }
+      res.setEncoding("utf8")
+      let buf = ""
+      res.on("data", (c) => {
+        buf += c
+        let i
+        while ((i = buf.indexOf("\n")) >= 0) {
+          const linea = buf.slice(0, i).trim(); buf = buf.slice(i + 1)
+          if (!linea) continue
+          let j; try { j = JSON.parse(linea) } catch { continue } // línea partida entre chunks → la cierra la próxima
+          try { onDato(j) } catch (e) { req.destroy(); return reject(e) }
+        }
+      })
+      res.on("end", () => resolve())
+      res.on("error", reject)
+    })
+    req.on("error", reject)
+    req.setTimeout(0) // sin reloj propio: el único límite es el de ollama(), que sí sabe si es interactivo o de fondo
+    req.end(cuerpo)
+  })
+}
+
 async function ollamaRaw(prompt, { json, system, temperature, numPredict, numCtx }, model) {
   let host = ollamaHost()
   if (process.env.LLM_BLOCK_PRIVATE_HOSTS) host = await resolveSafeHost(host) // managed: resuelve+valida+FIJA la IP → cierra el rebinding dinámico (TOCTOU)
-  const res = await fetch(host + "/api/generate", { method: "POST", body: JSON.stringify({ model, prompt: (system ? system + "\n\n" : "") + prompt, stream: false, ...(json ? { format: "json" } : {}), keep_alive: process.env.OLLAMA_KEEP_ALIVE || "30m", // num_ctx: el default de ollama son 4096 tokens. Un lote de trabajo ya gasta ~2570 solo de ENTRADA, así que
-    // el que trae mensajes largos se pasa del contexto y la conexión se corta en el medio ("fetch failed"). Los
-    // trabajos de fondo piden el contexto que necesitan; lo interactivo sigue con el default.
-    options: { temperature, ...(numPredict ? { num_predict: numPredict } : {}), ...(numCtx ? { num_ctx: numCtx } : {}) } }) })
-  if (!res.ok) { const e = new Error(`ollama ${res.status}`); e.status = res.status; throw e }
-  const d = await res.json()
-  return d.response || ""
+  // Se pide en streaming aunque juntemos todo antes de devolver: así el socket recibe un chunk por token y nunca
+  // queda mudo. num_ctx: el default de ollama son 4096 y un lote de trabajo gasta ~2570 solo de ENTRADA, así que
+  // los trabajos de fondo piden el contexto que necesitan; lo interactivo sigue con el default.
+  const cuerpo = JSON.stringify({
+    model, prompt: (system ? system + "\n\n" : "") + prompt, stream: true,
+    ...(json ? { format: "json" } : {}),
+    keep_alive: process.env.OLLAMA_KEEP_ALIVE || "30m",
+    options: { temperature, ...(numPredict ? { num_predict: numPredict } : {}), ...(numCtx ? { num_ctx: numCtx } : {}) },
+  })
+  let out = ""
+  await pedirNdjson(host + "/api/generate", cuerpo, (j) => {
+    if (j.error) throw new Error(`ollama: ${String(j.error).slice(0, 120)}`)
+    if (typeof j.response === "string") out += j.response
+  })
+  return out
 }
 // COLA + TIMEOUT para ollama: en este box (CPU sin GPU) ollama SERIALIZA y CUELGA si le mandás varias a la vez o prompts grandes.
 // Semáforo de 1 (encola) + timeout → nunca cuelga el sistema; si tarda demasiado tira error y la cadena de llm() cae a gemini.
