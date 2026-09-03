@@ -193,7 +193,9 @@ h2{font-size:20px;font-weight:700;letter-spacing:-.3px;margin:0}
 .back{background:none;border:none;color:var(--accent);font-size:16px;font-weight:600;cursor:pointer;padding:6px 0;display:inline-flex;gap:4px;align-items:center}
 .nav{position:fixed;left:0;right:0;bottom:0;max-width:480px;margin:0 auto;height:82px;background:rgba(255,255,255,.92);
   backdrop-filter:blur(14px);border-top:1px solid var(--line);display:flex;align-items:flex-start;padding-top:10px;z-index:20}
-.nav a{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted2);text-decoration:none;font-size:11px;font-weight:600;cursor:pointer}
+.nav a{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted2);text-decoration:none;font-size:11px;font-weight:600;cursor:pointer}
+.nav a span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:380px){.nav a{font-size:10px}}
 .nav a.on{color:var(--accent)} .nav svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.8}
 .nav a.on svg{stroke:var(--accent)}
 .nav .center{margin-top:-18px}
@@ -573,6 +575,24 @@ h2{font-size:20px;font-weight:700;letter-spacing:-.3px;margin:0}
 .hb-eyebrow .ei svg{width:14px;height:14px}
 .nt-sec{margin:20px 0 10px} .nt-sec .ei{color:var(--accent)} .nt-sec .ei svg{width:18px;height:18px}
 .nt-none{text-align:center;color:var(--muted2);font-size:13.5px;padding:20px 12px}
+/* ── 📧 sección Correo: tres cajones, y el spam a la vista para poder corregirlo ── */
+.mail-list{display:flex;flex-direction:column;gap:2px}
+.mail-row{display:flex;gap:10px;align-items:flex-start;padding:11px 12px;border-radius:12px;background:var(--card);border:1px solid transparent}
+.mail-row:hover{border-color:var(--line)}
+.mail-row.unread{background:rgba(109,111,245,.06);border-color:rgba(109,111,245,.18)}
+.mail-main{flex:1;min-width:0}
+.mail-de{font-weight:650;font-size:14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.mail-row.unread .mail-de{font-weight:750}
+.mail-cta{font-size:10px;font-weight:600;color:var(--muted2);border:1px solid var(--line);padding:1px 6px;border-radius:6px}
+.mail-txt{font-size:13px;color:var(--muted);margin-top:3px;line-height:1.45;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.mail-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0}
+.mail-time{font-size:11px;color:var(--muted2);white-space:nowrap}
+.mail-badge{font-size:12px;line-height:1}
+.mail-badge.imp{color:#e0a83a}
+.mail-act{font-size:11px;font-weight:600;padding:4px 9px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer;white-space:nowrap}
+.mail-act:hover{border-color:var(--accent);color:var(--accent)}
+.mail-act.ok{border-color:rgba(60,160,90,.45);color:#3ca05a}
+.mail-act.ok:hover{background:rgba(60,160,90,.1)}
 .nt-inbar button{display:grid;place-items:center}
 .nt-inbar button svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 /* Notas: tarjeta de nota */

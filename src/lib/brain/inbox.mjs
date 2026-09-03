@@ -50,10 +50,11 @@ export function hiloPorClave(clave) {
   return row ? { key: row.thread, name: row.thread, count: row.count || 0, last: row.last_ts || 0 } : null
 }
 
-export function listThreads({ limit = 200, q = "" } = {}, { cache = true } = {}) {
+export function listThreads({ limit = 200, q = "", soloEmail = false } = {}, { cache = true } = {}) {
   if (q) cache = false // una búsqueda no debe pisar ni leer el cache de la bandeja
-  if (cache && _ltCache.data && _ltCache.limit === limit && Date.now() - _ltCache.ts < 15000) return _ltCache.data // 15s: la ingesta es cada 15s, no hace falta recomputar el inbox más seguido
-  const rows = q ? dbThreads({ keys: dbSearchThreadKeys(q, { limit: Math.min(limit, 60) }) }) : dbThreads({ limit: Math.min(limit * 3, 600) }) // amplio: mostrar TODO (menos spam)
+  // ⚠️ soloEmail va en la CLAVE del cache: sin eso, la sección de Correo y la bandeja general se pisaban el resultado
+  if (cache && _ltCache.data && _ltCache.limit === limit && _ltCache.soloEmail === soloEmail && Date.now() - _ltCache.ts < 15000) return _ltCache.data // 15s: la ingesta es cada 15s, no hace falta recomputar el inbox más seguido
+  const rows = q ? dbThreads({ keys: dbSearchThreadKeys(q, { limit: Math.min(limit, 60) }) }) : dbThreads({ limit: Math.min(limit * 3, soloEmail ? 1500 : 600), soloEmail }) // amplio: mostrar TODO (menos spam)
   const grpNames = waGroups()
   const cats = (jf("contact-overrides.json") || {}).categories || {} // categorías manuales del usuario (familia/amigos/trabajo)
   const pinned = new Set(jf("pins.json") || []) // hilos fijados arriba
@@ -174,7 +175,7 @@ export function listThreads({ limit = 200, q = "" } = {}, { cache = true } = {})
   result = result
     .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.ts || 0) - (a.ts || 0)) // fijados arriba, resto por recencia (incluido "Mis Notas")
     .slice(0, limit)
-  if (cache && result.length) _ltCache = { ts: Date.now(), limit, data: result } // NUNCA cachear vacío: un read transitorio malo no se queda pegado (shadow: cache=false → no ensucia el cache)
+  if (cache && result.length) _ltCache = { ts: Date.now(), limit, soloEmail, data: result } // NUNCA cachear vacío: un read transitorio malo no se queda pegado (shadow: cache=false → no ensucia el cache)
   return result
 }
 

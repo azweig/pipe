@@ -127,6 +127,8 @@ function avatar(name, photo, cls = "") {
 const ORB = `<div class="dot"></div>`
 const ORB2 = (t) => `<div class="row" style="justify-content:center;gap:8px">${ORB}<span class="sb">${t}</span></div>`
 const SVG = { chat: '<svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 16 0Z"/></svg>',
+  // sobre (sección Correo). Mismo trazo de línea que el resto de la barra: rect + solapa.
+  mail: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m3.6 7 7.3 5.2a2 2 0 0 0 2.2 0L20.4 7"/></svg>',
   cal: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 9h18M8 3v4M16 3v4"/></svg>',
   globe: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg>',
   coach: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15 9-3.5 1.5L10 14l3.5-1.5Z"/></svg>',
@@ -165,6 +167,7 @@ function nav() {
   const item = (tab, icon, label, hash) => `<a class="${ST.tab === tab ? "on" : ""}" href="${hash}"${ST.tab === tab ? ' aria-current="page"' : ""} onclick="go(${escj(hash)})">${icon}<span>${label}</span></a>`
   return `<nav class="nav" aria-label="Principal">
     ${item("mensajes", SVG.chat, "Mensajes", "#mensajes")}
+    ${item("correo", SVG.mail, "Correo", "#correo")}
     ${item("calendario", SVG.cal, "Calendario", "#calendario")}
     <a class="center${ST.tab === "home" ? " on" : ""}" href="#home"${ST.tab === "home" ? ' aria-current="page"' : ""} onclick="go('#home')" aria-label="Inicio"><div class="orb">${SVG.home}</div></a>
     ${item("proactivo", SVG.spark, "Radar", "#proactivo")}
@@ -3782,11 +3785,78 @@ window.closeSheet = () => {
   if (_sheetReturn?.focus) { try { _sheetReturn.focus() } catch {} ; _sheetReturn = null }
 }
 
+
+// ══════════ 📧 CORREO ══════════
+// Sección propia porque la bandeja general mezcla ~2M de mensajes de mensajería con ~13k de correo: el correo se
+// pierde. Y sobre todo porque el cajón de spam estaba ESCONDIDO del todo (bucketCat==="spam" → no se muestra), así
+// que un falso positivo del clasificador era invisible y no había forma de corregirlo. Acá el spam se ve y se
+// desmarca, y lo que no es spam se puede mandar ahí.
+let mailTab = "prioritarios", mailData = null
+const MAIL_TABS = [["prioritarios", "Prioritarios"], ["todos", "Todos"], ["spam", "Spam"]]
+
+async function viewCorreo() {
+  render(skel(6), "correo")
+  await loadCorreo(mailTab)
+}
+window.loadCorreo = async (tab) => {
+  mailTab = tab || mailTab
+  const r = await api(`/api/mail?tab=${encodeURIComponent(mailTab)}`).catch(() => null)
+  mailData = r || { items: [], counts: {} }
+  paintCorreo()
+}
+function mailRow(m) {
+  const s = "event.stopPropagation();"
+  const k = escj(encodeURIComponent(m.key))
+  // En Spam la acción es rescatar; en el resto, mandar a spam. Una sola acción por fila: la que corresponde.
+  const acc = m.spam
+    ? `<button class="mail-act ok" onclick="${s}mailNoSpam(${k})" title="No es spam">No es spam</button>`
+    : `<button class="mail-act" onclick="${s}mailSiSpam(${k})" title="Marcar como spam">Es spam</button>`
+  const marca = m.importante ? `<span class="mail-badge imp" title="${esc(m.razon || "Necesita tu atención")}">★</span>`
+    : m.transaccional ? `<span class="mail-badge tx" title="Aviso que requiere acción (factura, vencimiento, servicio, agenda)">🧾</span>` : ""
+  const de = m.name || m.email || "(sin remitente)"
+  return `<div class="mail-row tap${m.unread ? " unread" : ""}" onclick="location.hash='#conv/'+encodeURIComponent(${escj(m.key)})">
+    <div class="mail-main">
+      <div class="mail-de">${marca}${esc(de)}${m.account ? `<span class="mail-cta">${esc(m.account)}</span>` : ""}</div>
+      <div class="mail-txt">${esc(String(m.lastText || "").replace(/\s+/g, " ").slice(0, 140))}</div>
+    </div>
+    <div class="mail-side"><span class="mail-time">${ago(m.ts)}</span>${acc}</div>
+  </div>`
+}
+function paintCorreo() {
+  const c = (mailData && mailData.counts) || {}
+  const tabs = MAIL_TABS.map(([id, lbl]) =>
+    `<button class="chip${mailTab === id ? " on" : ""}" onclick="loadCorreo(${escj(id)})">${esc(lbl)}${c[id] != null ? `<span class="n">${c[id]}</span>` : ""}</button>`).join("")
+  const items = (mailData && mailData.items) || []
+  const vacio = mailTab === "spam" ? "No hay nada apartado como spam." : mailTab === "prioritarios" ? "Nada que necesite tu atención ahora." : "No hay correo."
+  const nota = mailTab === "spam"
+    ? `<div class="tiny muted" style="margin:0 0 10px">Esto es lo que el clasificador apartó. Si algo no es spam, tocá <b>No es spam</b> y vuelve a la bandeja.</div>`
+    : mailTab === "prioritarios"
+      ? `<div class="tiny muted" style="margin:0 0 10px">Correo que no es masivo: marcado importante, avisos que piden acción (★ 🧾) o gente con la que ya venís hablando.</div>` : ""
+  render(`<div class="screen">
+    <h1 class="title">Correo</h1>
+    <div class="nt-quick" style="margin-bottom:10px">${tabs}</div>
+    ${nota}
+    <div class="mail-list">${items.length ? items.map(mailRow).join("") : `<div class="nt-none">${esc(vacio)}</div>`}</div>
+  </div>`, "correo")
+}
+// El desmarcado es la señal más valiosa que da el usuario: corrige el clasificador para SIEMPRE, no solo la vista.
+window.mailNoSpam = async (keyEnc) => {
+  const key = decodeURIComponent(keyEnc)
+  await post("/api/spam/unmark", { key })
+  await loadCorreo(mailTab)
+}
+window.mailSiSpam = async (keyEnc) => {
+  const key = decodeURIComponent(keyEnc)
+  await post("/api/contact/spam", { key, addr: key.replace(/^email:/, "") })
+  await loadCorreo(mailTab)
+}
+
 // ══════════ ROUTER ══════════
 function route() {
   const h = location.hash.slice(1) || "home"; const [base, arg] = h.split("/"); closeSheet()
   if (base !== "conv") window.onscroll = null // solo la conversación usa el globito flotante de fecha
   if (base === "mensajes") return viewMensajes()
+  if (base === "correo") { if (arg && ["prioritarios", "todos", "spam"].includes(arg)) mailTab = arg; return viewCorreo() }
   if (base === "conv") return viewConv(decodeURIComponent(arg || ""))
   if (base === "calendario") { if (arg && ["dia", "laboral", "semana"].includes(arg)) CALVIEW = arg; return viewCalendario() }
   if (base === "meeting") return viewMeeting(decodeURIComponent(arg || ""))

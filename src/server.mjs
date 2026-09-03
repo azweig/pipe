@@ -40,6 +40,7 @@ import { appendMessage } from "./lib/lock.mjs"
 import { notifyNewSubscription } from "./lib/kofi.mjs"
 import { usageStats } from "./lib/llm.mjs"
 import { setNotSpam } from "./lib/spam.mjs"
+import { esTransaccional } from "./lib/transaccional.mjs"
 
 // cookie de sesión: token aleatorio (NO el PIN), HttpOnly (no accesible por JS → mitiga XSS-robo), SameSite=Lax, Secure solo bajo HTTPS (Caddy)
 // SameSite=Strict: la cookie NO viaja en requests iniciados desde otros sitios → mata la superficie CSRF
@@ -511,6 +512,31 @@ const server = createServer(async (req, res) => {
       // JARVIS con memoria: una sola conversación, venga de la web, del escritorio, del celular o de WhatsApp.
       // Usa el MISMO buscador que la app (routerSearch): así encuentra en correos, adjuntos y agenda, no solo en
       // el RAG de mensajes — que era la queja de fondo.
+      // 📧 SECCIÓN CORREO — solo email, en tres cajones. Existe porque la bandeja general mezcla 2M de mensajes de
+      // mensajería con 13k de correo: el correo se pierde. Y porque el cajón de spam estaba escondido del todo, así
+      // que un falso positivo era invisible y no había forma de corregirlo.
+      //   · prioritarios → no es spam Y (marcado importante, o transaccional accionable, o ya hubo ida y vuelta)
+      //   · todos        → no es spam
+      //   · spam         → lo que el clasificador apartó, VISIBLE, para poder desmarcarlo
+      if (path === "/api/mail") {
+        const tab = ["prioritarios", "todos", "spam"].includes(String(q.tab || "")) ? String(q.tab) : "prioritarios"
+        const todos = brain.listThreads({ limit: Math.min(+q.limit || 300, 800), soloEmail: true })
+        // OJO: no alcanza con "el hilo TIENE email". Un contacto con el que hablás por WhatsApp Y por correo trae
+        // ambos canales, y su última foto de WhatsApp no pinta nada en una sección de Correo. Lo que manda es que
+        // el ÚLTIMO mensaje sea un correo (o que el hilo sea puramente de correo).
+        const esCorreo = (t) => String(t.key || "").startsWith("email:") || t.lastChannel === "email"
+        const mails = todos.filter(esCorreo)
+        const prioritario = (t) => t.bucket !== "spam" && (t.importante || esTransaccional(t.lastText || "") || t.lastDir === "out" || t.pinned)
+        const cajon = { prioritarios: mails.filter(prioritario), todos: mails.filter((t) => t.bucket !== "spam"), spam: mails.filter((t) => t.bucket === "spam") }
+        const fila = (t) => ({ key: t.key, name: t.name, email: t.email, account: t.account, ts: t.ts, unread: t.unread,
+          lastText: String(t.lastText || "").slice(0, 240), lastDir: t.lastDir, importante: !!t.importante, razon: t.importanteRazon || null,
+          transaccional: esTransaccional(t.lastText || ""), spam: t.bucket === "spam", initials: t.initials, photo: t.photo })
+        return json(res, 200, {
+          tab,
+          counts: { prioritarios: cajon.prioritarios.length, todos: cajon.todos.length, spam: cajon.spam.length },
+          items: cajon[tab].slice(0, 200).map(fila),
+        })
+      }
       if (path === "/api/jarvis" && req.method === "POST") {
         const b = await body(req)
         const pregunta = String(b.q || "").trim()

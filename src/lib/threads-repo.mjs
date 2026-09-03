@@ -212,12 +212,16 @@ export function threadPorClave(clave) {
   try { return db().prepare("SELECT thread, last_ts, count, unread, channels, nsenders FROM thread_stats WHERE thread=? OR thread=? LIMIT 1").get(k, "whatsapp:" + k) || null } catch { return null }
 }
 
-export function threadsSummary({ limit = 200, keys = null } = {}) {
+export function threadsSummary({ limit = 200, keys = null, soloEmail = false } = {}) {
   // top-N hilos desde thread_stats (índice, instantáneo). Sin subqueries pesados por hilo.
   // Con `keys` se piden hilos PUNTUALES (búsqueda) en vez de la ventana por recencia — el resto del armado es idéntico.
   const tops = keys
     ? (keys.length ? db().prepare(`SELECT thread, last_ts, count, unread, channels, nsenders FROM thread_stats WHERE thread IN (${keys.map(() => "?").join(",")}) ORDER BY last_ts DESC`).all(...keys) : [])
-    : db().prepare("SELECT thread, last_ts, count, unread, channels, nsenders FROM thread_stats ORDER BY last_ts DESC LIMIT ?").all(limit)
+    : soloEmail
+      // La sección de Correo pide MUCHOS hilos de correo. Sin filtrar en la consulta habría que traer miles de hilos
+      // de mensajería para quedarse con los de email: se filtra acá, donde el índice ya está.
+      ? db().prepare("SELECT thread, last_ts, count, unread, channels, nsenders FROM thread_stats WHERE channels LIKE '%email%' ORDER BY last_ts DESC LIMIT ?").all(limit)
+      : db().prepare("SELECT thread, last_ts, count, unread, channels, nsenders FROM thread_stats ORDER BY last_ts DESC LIMIT ?").all(limit)
   const lastMsg = db().prepare("SELECT channel AS lastChannel, text AS lastText, dir AS lastDir, grp, media, mediaType, account FROM messages WHERE thread=? AND ts=? LIMIT 1")
   const emailAcct = db().prepare("SELECT account FROM messages WHERE thread=? AND channel='email' AND account!='' ORDER BY ts DESC LIMIT 1") // a qué cuenta MÍA llegó
   // NOMBRE del contacto = último mensaje ENTRANTE (nunca el mío saliente); si solo escribí yo, queda null y listThreads resuelve por número/agenda.
