@@ -22,6 +22,7 @@ import { owner, ownerFirst } from "../hub.mjs"
 import { llm, smartChain, geminiMultimodal, geminiUploadFile } from "../llm.mjs"
 import { MY_EMAILS } from "../thread.mjs"
 import { isSpam, llmSpam, notSpam } from "../spam.mjs"
+import { esTransaccional } from "../transaccional.mjs"
 import { ocrCas, ocrEnabled } from "../ocr.mjs"
 import { evaluarImportancia } from "../importante.mjs"
 import { espacioThreads, _espRulesOf } from "./espacios.mjs"
@@ -97,8 +98,15 @@ export function listThreads({ limit = 200, q = "" } = {}, { cache = true } = {})
     // saltaba la línea de abajo: los canales de Telegram a los que te suscribiste a propósito (promos de casino,
     // avisos VIP) caían en spam, así que llegaba la notificación pero el mensaje no aparecía en ningún lado.
     // A un canal de mensajería te suscribiste VOS; si molesta, lo marcás spam a mano (spamS, más arriba).
-    if (pureEmail && kind !== "group" && !own && llmSpam(r.key) && !notSpam(r.key)) return "spam" // veredicto LLM (capa 2), salvo des-marcado
-    if (pureEmail && !own && isSpam(jid, name, r.lastText || "") && !notSpam(r.key)) return "spam" // detector compartido, salvo des-marcado por el usuario
+    // 🧾 EL REMITENTE NO DECIDE SOLO. El antispam etiqueta DIRECCIONES, y eso rompe con el correo transaccional: la
+    // misma que te manda "40% OFF" te manda "problema de facturación" o "se corta el servicio". Marcada la dirección,
+    // esos avisos se ocultaban junto con las promos — y la bandeja los esconde del todo. Casos medidos acá: un
+    // "Problema de facturación" de Apple, un "service disruption" de Vercel, la notificación de una reunión de
+    // Google Calendar, un aviso del banco de la empresa y un comunicado de mantenimiento de un cliente.
+    // Si el ÚLTIMO mensaje es transaccional, el hilo se muestra igual. Lo marcado a mano (spamS, arriba) sigue mandando.
+    const rescatar = pureEmail && esTransaccional(r.lastText || "")
+    if (pureEmail && kind !== "group" && !own && !rescatar && llmSpam(r.key) && !notSpam(r.key)) return "spam" // veredicto LLM (capa 2), salvo des-marcado
+    if (pureEmail && !own && !rescatar && isSpam(jid, name, r.lastText || "") && !notSpam(r.key)) return "spam" // detector compartido, salvo des-marcado por el usuario
     if (kind === "group") return /familia|family|casa|hogar|amig/i.test(grp || grpNames[jid] || name || "") ? "family" : "other"
     if (canon) { const t = ptags[canon] || ""; if (/familia/.test(t)) return "family"; if (/amigo/.test(t)) return "amigos"; if (pseed[canon] && /cliente|inversor|socio|partner|proveedor|empleado|due[ñn]o|contacto|finanzas/.test(t)) return "trabajo" }
     return "other"
