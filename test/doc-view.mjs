@@ -66,15 +66,25 @@ test("PDF de 2 páginas → 2 imágenes numeradas en orden, y la segunda vez sal
   })
 })
 
-test("formato sin vista previa → 0 páginas con motivo, y queda anotado para no reintentar", async () => {
+test("formato sin vista previa → 0 páginas con motivo claro", async () => {
   await enSandbox(async () => {
     const { docPaginas } = await import("../src/lib/doc-view.mjs?" + Math.random())
     writeFileSync(join("data", "cas", "ab", "abcdef0001.zip"), "no soy un documento")
     const r = await docPaginas("/cas/ab/abcdef0001.zip", "backup.zip")
     assert.equal(r.pages, 0)
     assert.match(r.err, /formato/i)
-    const otra = await docPaginas("/cas/ab/abcdef0001.zip", "backup.zip")
-    assert.equal(otra.cached, true, "el fracaso también se cachea: si no, se reintenta para siempre")
+  })
+})
+
+test("un fallo CARO sí se cachea: no se re-arranca LibreOffice sobre un archivo roto", { skip: !HAY_POPPLER && "sin poppler" }, async () => {
+  await enSandbox(async () => {
+    const { docPaginas } = await import("../src/lib/doc-view.mjs?" + Math.random())
+    // extensión reconocida (entra al camino caro) pero contenido corrupto → pdftoppm corre y falla
+    writeFileSync(join("data", "cas", "ab", "roto0001.pdf"), "%PDF-1.4 basura que no es un PDF")
+    const uno = await docPaginas("/cas/ab/roto0001.pdf", "roto.pdf")
+    assert.equal(uno.pages, 0)
+    const dos = await docPaginas("/cas/ab/roto0001.pdf", "roto.pdf")
+    assert.equal(dos.cached, true, "sin cachearlo, cada apertura vuelve a pagar la conversión")
   })
 })
 
@@ -94,4 +104,46 @@ test("XLSX abre en tabla y el PDF en página: LibreOffice parte las columnas anc
   assert.equal(vistaPorDefecto("adenda.docx"), "paginas")
   assert.ok(esVisualizable("a.pdf") && esVisualizable("b.docx") && esVisualizable("c.xlsx"))
   assert.ok(!esVisualizable("d.zip") && !esVisualizable("e.mp4"))
+})
+
+// EL BUG QUE ESTO CIERRA: 408 de los 7.435 documentos llegaron SIN filename y guardados como `.bin` — la ingesta
+// nunca registró el tipo. Entre ellos hay planillas y manuales REALES. Rechazarlos por la extensión es rechazarlos
+// por un dato que falta. Y el primer intento de arreglarlo leía sólo 8 bytes, así que comparar contra "<!doctype
+// html" (14 caracteres) daba falso SIEMPRE: el HTML seguía sin detectarse.
+test("un documento guardado como .bin se reconoce por su CONTENIDO", { skip: !HAY_POPPLER && "sin poppler" }, async () => {
+  await enSandbox(async () => {
+    const { docPaginas, tipoPorContenido } = await import("../src/lib/doc-view.mjs?" + Math.random())
+
+    // PDF disfrazado de .bin, sin filename: el caso exacto de producción
+    writeFileSync(join("data", "cas", "ab", "aabb001122.bin"), pdfDosPaginas())
+    assert.equal(tipoPorContenido(join("data", "cas", "ab", "aabb001122.bin")), "pdf")
+    const r = await docPaginas("/cas/ab/aabb001122.bin", "") // filename VACÍO, como llega de verdad
+    assert.equal(r.pages, 2, "un PDF no deja de serlo por llamarse .bin: " + (r.err || ""))
+  })
+})
+
+test("el HTML se detecta aunque la firma no entre en los primeros bytes", async () => {
+  await enSandbox(async () => {
+    const { tipoPorContenido } = await import("../src/lib/doc-view.mjs?" + Math.random())
+    const casos = {
+      "h1.bin": "<!DOCTYPE html>\n<html lang=\"es\"><head><title>Manual</title></head><body>x</body></html>",
+      "h2.bin": "\uFEFF   \n<html><body>con BOM y espacios delante</body></html>",
+      "h3.bin": "<?xml version=\"1.0\"?>\n<html xmlns=\"http://www.w3.org/1999/xhtml\"><body>x</body></html>",
+    }
+    for (const [n, cuerpo] of Object.entries(casos)) {
+      writeFileSync(join("data", "cas", "ab", n), cuerpo)
+      assert.equal(tipoPorContenido(join("data", "cas", "ab", n)), "html", "no detectó " + n)
+    }
+  })
+})
+
+test("un rechazo por formato NO se cachea: el detector puede mejorar", async () => {
+  await enSandbox(async () => {
+    const { docPaginas } = await import("../src/lib/doc-view.mjs?" + Math.random())
+    writeFileSync(join("data", "cas", "ab", "raro01.bin"), "contenido que no es ningún documento")
+    const uno = await docPaginas("/cas/ab/raro01.bin", "")
+    assert.equal(uno.pages, 0)
+    assert.ok(!existsSync(join("data", "docview", "ab", "raro01", "meta.json")),
+      "cachear este fallo dejaba marcados para siempre documentos que una versión mejor SÍ podría abrir")
+  })
 })

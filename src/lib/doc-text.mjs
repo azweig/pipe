@@ -10,13 +10,14 @@ import { existsSync, readFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { handle as db, withRetry } from "./db-core.mjs"
 import { ocrCas, ocrEnabled } from "./ocr.mjs"
+import { tipoPorContenido } from "./doc-view.mjs" // hay documentos guardados como .bin y sin filename: el tipo sale del contenido
 
 const MAX_CHARS = 20000 // un contrato entero no entra en el prompt; con esto alcanza y sobra para los datos duros
 
 const extOf = (s) => (String(s || "").match(/\.([a-z0-9]{2,5})$/i)?.[1] || "").toLowerCase()
 const esOfficeZip = (e) => /^(docx|xlsx|pptx)$/.test(e)
 const esOcr = (e) => /^(pdf|jpg|jpeg|png|webp|gif|bmp|tiff?)$/.test(e)
-const esPlano = (e) => /^(txt|csv|md|json|log|xml|html?|vcf|srt)$/.test(e) // se leen directo: ni OCR ni descomprimir
+const esPlano = (e) => /^(txt|csv|md|json|log|xml|html?|vcf|srt|ics)$/.test(e) // se leen directo: ni OCR ni descomprimir
 
 // docx/xlsx/pptx son ZIP con XML adentro: se leen sin OCR y sin dependencias. `ocrCas` los rechaza (solo imagen/pdf),
 // y son 2.282 archivos — los más numerosos después de los PDF.
@@ -76,9 +77,12 @@ export async function docTexto(media, filename = "") {
   if (!media) return ""
   const cache = leerCache(media)
   if (cache) return cache.texto || ""
-  const ext = extOf(filename) || extOf(media)
+  let ext = extOf(filename) || extOf(media)
   const ruta = "./data" + media
   if (!existsSync(ruta)) { guardarCache(media, "", "archivo ausente"); return "" }
+  // Igual que en el visor: si la extensión no dice nada (el clásico `.bin` sin filename), mirar el CONTENIDO. Sin
+  // esto, 408 documentos reales quedaban como "formato no soportado" y el buscador seguía ciego a ellos.
+  if (!esPlano(ext) && !esOfficeZip(ext) && !esOcr(ext)) { const real = tipoPorContenido(ruta); if (real) ext = real === "odf" ? "" : real }
   let texto = "", err = null
   try {
     if (esPlano(ext)) texto = readFileSync(ruta, "utf8").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()

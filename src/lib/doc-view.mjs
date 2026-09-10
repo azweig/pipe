@@ -9,7 +9,7 @@
 // seleccionar texto sobre la página; para eso está la vista de texto (docTexto).
 //
 // Todo local: poppler y LibreOffice corren en el hub. Un contrato no sale de la caja para poder mirarlo.
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, renameSync, rmSync, statSync, openSync, readSync, closeSync } from "node:fs"
 import { join } from "node:path"
 import { spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
@@ -24,8 +24,53 @@ const T_PDF = +process.env.DOCVIEW_PDFTOPPM_MS || 120000
 const extDe = (s) => (String(s || "").match(/\.([a-z0-9]{2,5})$/i)?.[1] || "").toLowerCase()
 const hashDe = (media) => String(media || "").split("/").pop().split(".")[0]
 
+// TIPO REAL POR CONTENIDO. 408 de los 7.435 documentos llegaron SIN filename y con la ruta terminada en `.bin`:
+// la ingesta nunca registró el tipo. Pero el archivo SÍ es un documento — medido en la base de producción, entre esos
+// .bin hay planillas XLSX, manuales HTML de 1 MB, .ics y audios. Rechazarlos por la extensión es rechazarlos por un
+// dato que falta, no porque no se puedan mostrar.
+//
+// Se leen los primeros bytes y se decide por la firma. Barato (una lectura de 8 bytes) y sólo cuando hace falta.
+export function tipoPorContenido(rutaAbs) {
+  let fd
+  try {
+    fd = openSync(rutaAbs, "r")
+    // 256 bytes, no 8: las firmas binarias entran en 4, pero HTML puede empezar con BOM, espacios, comentarios o un
+    // <?xml antes del <html. Leer de menos hacía que "<!DOCTYPE html>" nunca matcheara — el prefijo era más largo
+    // que lo leído, así que la comparación era falsa SIEMPRE y 4 manuales reales quedaban sin vista previa.
+    const b = Buffer.alloc(256)
+    const n = readSync(fd, b, 0, 256, 0)
+    const head = b.slice(0, n)
+    if (head.slice(0, 4).toString("latin1") === "%PDF") return "pdf"
+    if (head.slice(0, 4).toString("latin1") === "PK\u0003\u0004") return zipDe(rutaAbs) // ooxml u odf: hay que mirar adentro
+    if (head.slice(0, 5).toString("latin1") === "{\\rtf") return "rtf"
+    const txt = head.toString("utf8").replace(/^\uFEFF/, "").trimStart().toLowerCase()
+    if (txt.startsWith("<!doctype html") || txt.startsWith("<html") || /^<\?xml[\s\S]{0,200}<html/.test(txt)) return "html"
+    return ""
+  } catch { return "" } finally { if (fd !== undefined) try { closeSync(fd) } catch {} }
+}
+
+// Un ZIP puede ser docx/xlsx/pptx/odt/ods/odp. Se distingue por los directorios que trae adentro.
+function zipDe(rutaAbs) {
+  const r = spawnSync("python3", ["-c", `
+import sys, zipfile
+try:
+    n = zipfile.ZipFile(sys.argv[1]).namelist()
+except Exception:
+    sys.exit(1)
+if any(x.startswith('word/') for x in n): print('docx')
+elif any(x.startswith('xl/') for x in n): print('xlsx')
+elif any(x.startswith('ppt/') for x in n): print('pptx')
+else:
+    mt = [x for x in n if x == 'mimetype']
+    print('odf' if mt else '')
+`, rutaAbs], { encoding: "utf8", timeout: 20000 })
+  return r.status === 0 ? String(r.stdout || "").trim() : ""
+}
+
+// HTML se convierte igual que Office: LibreOffice lo pasa a PDF y de ahí a páginas.
+const ES_HTML = (e) => /^html?$/.test(e)
 const ES_PDF = (e) => e === "pdf"
-const ES_OFFICE = (e) => /^(docx?|xlsx?|pptx?|odt|ods|odp|rtf)$/.test(e)
+const ES_OFFICE = (e) => /^(docx?|xlsx?|pptx?|odt|ods|odp|odf|rtf|html?)$/.test(e)
 export const esVisualizable = (nombre) => { const e = extDe(nombre); return ES_PDF(e) || ES_OFFICE(e) }
 
 // XLSX abre en TABLA y no en página: LibreOffice parte las columnas anchas entre hojas y una planilla real queda
@@ -93,10 +138,18 @@ export async function docPaginas(media, filename = "") {
 
   if (enVuelo.has(hash)) return enVuelo.get(hash)
   const tarea = (async () => {
-    const ext = extDe(filename) || extDe(media)
+    let ext = extDe(filename) || extDe(media)
     const origen = join(process.cwd(), "data", String(media).replace(/^\//, ""))
-    if (!existsSync(origen)) { const m = { pages: 0, type: ext, err: "el archivo ya no está" }; guardarMeta(hash, m); return { ...m, urls: [] } }
-    if (!ES_PDF(ext) && !ES_OFFICE(ext)) { const m = { pages: 0, type: ext, err: "formato sin vista previa: " + (ext || "?") }; guardarMeta(hash, m); return { ...m, urls: [] } }
+    // tampoco se cachea "no está": el archivo puede volver (restore, re-descarga)
+    if (!existsSync(origen)) return { pages: 0, type: ext, err: "el archivo ya no está", urls: [] }
+    // La extensión no alcanza: hay documentos guardados como `.bin` y sin filename. Antes de rendirse, mirar el
+    // CONTENIDO. Así una planilla que llegó sin tipo se abre igual.
+    if (!ES_PDF(ext) && !ES_OFFICE(ext)) { const real = tipoPorContenido(origen); if (real) ext = real }
+    // NO se cachea el rechazo por formato. Decidirlo es barato (4 bytes) y, sobre todo, la respuesta puede CAMBIAR
+    // cuando el detector mejora: la primera versión leía 8 bytes y no reconocía HTML, así que dejó marcados como
+    // "sin vista previa" documentos que sí se podían mostrar — y con el fallo cacheado no se recuperaban nunca.
+    // Sólo se cachea lo que costó caro (LibreOffice/pdftoppm de verdad ejecutados).
+    if (!ES_PDF(ext) && !ES_OFFICE(ext)) return { pages: 0, type: ext, err: "formato sin vista previa: " + (ext || "?"), urls: [] }
 
     const destino = dirDe(hash)
     mkdirSync(destino, { recursive: true })
@@ -105,7 +158,11 @@ export async function docPaginas(media, filename = "") {
     try {
       if (ES_OFFICE(ext)) {
         mkdirSync(tmp, { recursive: true })
-        pdf = officeAPdf(origen, tmp)
+        // LibreOffice decide el FILTRO por la extensión del archivo, no por su contenido: un xlsx llamado ".bin" no
+        // lo convierte. Se le pasa una copia con el nombre correcto (el original queda intacto en el CAS).
+        let entrada = origen
+        if (extDe(origen) !== ext) { entrada = join(tmp, "doc." + ext); writeFileSync(entrada, readFileSync(origen)) }
+        pdf = officeAPdf(entrada, tmp)
         if (!pdf) err = "LibreOffice no pudo convertirlo"
       }
       if (!err) {

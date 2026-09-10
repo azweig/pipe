@@ -1787,6 +1787,19 @@ const fmtText = (t) => esc(t).replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" targ
 window.cycleSpeed = (btn) => { const m = btn.parentElement.querySelector("audio,video"); if (!m) return; const r = [1, 1.25, 1.5, 2]; const n = r[(r.indexOf(m.playbackRate) + 1) % r.length] || 1; m.playbackRate = n; btn.textContent = n + "x" }
 const spdVideo = (media) => `<div style="position:relative;display:inline-block;line-height:0">${media}<button onclick="cycleSpeed(this)" title="Velocidad" style="position:absolute;top:8px;right:8px;background:rgba(0,0,0,.55);color:#fff;border:0;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;line-height:1.35;cursor:pointer">1x</button></div>`
 const spdAudio = (media) => `<div style="display:flex;align-items:center;gap:8px">${media}<button onclick="cycleSpeed(this)" title="Velocidad" style="background:var(--bg,#eef);color:var(--accent);border:1px solid var(--line);border-radius:999px;padding:5px 10px;font-size:12px;font-weight:700;cursor:pointer;flex:none">1x</button></div>`
+// ¿Se puede mostrar adentro? NO alcanza con mirar la extensión del filename: hay documentos que llegaron SIN nombre
+// y guardados como ".bin" —408 de 7.435 medidos en la base—, y entre ellos hay planillas y manuales reales. Se mira
+// el filename Y la ruta, y ante un tipo DESCONOCIDO se deja pasar: el servidor lo abre por su contenido y, si de
+// verdad no se puede, el visor lo dice y ofrece descargarlo. Rechazar por un dato que falta era el bug.
+const docExt = (s) => (String(s || "").match(/\.([a-z0-9]{2,5})$/i)?.[1] || "").toLowerCase()
+const DOC_VE = /^(pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|html?)$/
+const DOC_NO = /^(zip|rar|7z|tar|gz|bz2|exe|apk|dmg|iso|mp3|mp4|mov|avi|mkv|webm|jpe?g|png|gif|webp|ogg|opus|m4a|wav|aac)$/
+const docAbrible = (filename, media) => {
+  const a = docExt(filename), b = docExt(media)
+  if (DOC_VE.test(a) || DOC_VE.test(b)) return true
+  if (DOC_NO.test(a) || DOC_NO.test(b)) return false
+  return true // tipo desconocido (.bin, sin extensión) → que decida el servidor
+}
 function mediaHtml(it) { if (!it.media) return ""
   // min-height: una imagen lazy SIN alto mide 0px hasta que carga, y con miles de ellas document.body.scrollHeight
   // queda muchísimo por debajo del real → el "¿estoy cerca del final?" del autoscroll da verdadero estando arriba.
@@ -1796,9 +1809,9 @@ function mediaHtml(it) { if (!it.media) return ""
   if (it.mediaType === "audio") return spdAudio(`<audio src="${esc(it.media)}" controls preload="metadata" style="max-width:200px;display:block"></audio>`)
   // DOCUMENTO: se abre ADENTRO. Antes esto era un <a href> y para leer un contrato tenías que sacarlo de la app.
   // El ícono cambia según el tipo, y sigue habiendo descarga (la flecha), sólo que ya no es la única opción.
-  const _ext = String(it.filename || it.media || "").split(".").pop().toLowerCase()
+  const _ext = docExt(it.filename) || docExt(it.media)
   const _ico = /^(xlsx?|ods|csv)$/.test(_ext) ? "📊" : /^(docx?|odt|rtf)$/.test(_ext) ? "📝" : /^pptx?$/.test(_ext) ? "📽" : "📄"
-  const _abrible = /^(pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf)$/.test(_ext)
+  const _abrible = docAbrible(it.filename, it.media)
   return `<div class="row" style="padding:9px 11px;background:#fff;border-radius:10px;gap:9px;min-width:190px;${_abrible ? "cursor:pointer" : ""}"${_abrible ? ` onclick='event.stopPropagation();openDoc(${escj({ id: it.id, media: it.media, filename: it.filename || "" })})'` : ""}><span style="font-size:22px">${_ico}</span><div style="min-width:0;flex:1"><div class="sb small" style="word-break:break-word">${esc(it.filename || it.text || "Documento")}</div><div class="tiny" style="color:var(--accent)">${_abrible ? "Ver adentro" : "Descargar"}</div></div><a href="${esc(it.media)}" target="_blank" onclick="event.stopPropagation()" title="Descargar" style="text-decoration:none;color:var(--accent);font-size:17px;padding:0 2px">↓</a></div>` }
 const audioSum = (it) => it.audioSummary && it.summary ? `<div class="aud-sum">${esc(it.summary)}</div>` : ""
 // resumen del DOCUMENTO, con el mismo tratamiento visual que el de la nota de voz: para vos son lo mismo, algo que
@@ -3027,7 +3040,7 @@ window.showEmailFull = async (id) => {
   const kb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB")
   // Un PDF es un PDF venga de un chat o de un correo: los adjuntos de email abren en el MISMO visor. Antes esto era
   // window.open() a pelo, o sea el archivo se iba del hub para poder mirarlo.
-  const _attAbrible = (n) => /\.(pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf)$/i.test(String(n || ""))
+  const _attAbrible = (n) => docAbrible(n, "")
   const _attIco = (n) => /\.(xlsx?|ods|csv)$/i.test(n) ? "📊" : /\.(docx?|odt|rtf)$/i.test(n) ? "📝" : /\.pptx?$/i.test(n) ? "📽" : "📄"
   const attHtml = atts.length ? `<div style="margin:8px 0 4px;font-weight:600;font-size:14px">📎 ${atts.length} adjunto${atts.length > 1 ? "s" : ""}</div><div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">${atts.map((a) => `<div class="card itemtap" style="padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:pointer" onclick="${_attAbrible(a.name) ? `openDoc(${escj({ media: a.cas, filename: a.name })})` : `window.open(${escj(a.cas)},'_blank')`}"><span style="font-size:20px">${_attIco(a.name)}</span><div style="flex:1;min-width:0"><div class="b" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(a.name)}</div><div class="sub">${_attAbrible(a.name) ? "Ver adentro · " : ""}${esc((a.mime || "").split("/").pop() || "archivo")} · ${kb(a.size || 0)}</div></div><a href="${esc(a.cas)}" target="_blank" onclick="event.stopPropagation()" title="Descargar" style="text-decoration:none;color:var(--accent)">↓</a></div>`).join("")}</div>` : ""
   _emailOpen = { id, body, mtg } // para "responder" y "mostrar imágenes" desde los botones de la hoja
