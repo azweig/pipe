@@ -44,6 +44,18 @@ sys.stdout.write(t[:%d])
   return r.status === 0 ? (r.stdout || "").trim() : ""
 }
 
+// Quitar las ETIQUETAS no alcanza: <style> y <script> tienen su contenido AFUERA de la etiqueta, así que el texto de
+// un manual HTML salía siendo la hoja de estilos entera. Hay que borrar esos bloques con su contenido primero.
+function textoPlano(bruto) {
+  return String(bruto || "")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(style|script|head|noscript|svg)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<\/(p|div|li|tr|h[1-6]|section|article|br)>/gi, "\n") // conservar los cortes de párrafo: si no, todo queda en un chorizo
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;|&#160;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&#39;/g, "'")
+    .replace(/[ \t\u00a0]+/g, " ").replace(/\n\s*\n\s*\n+/g, "\n\n").trim()
+}
+
 // PDF DIGITAL → texto sin GPU. Antes TODO PDF se mandaba al OCR de la GPU, y la mayoría de los contratos y facturas
 // que te llegan son digitales: el texto ya está adentro del archivo, sólo hay que leerlo. `pdftotext` lo saca en
 // milisegundos y gratis. El OCR queda para lo que de verdad lo necesita: los escaneados y las fotos.
@@ -85,7 +97,7 @@ export async function docTexto(media, filename = "") {
   if (!esPlano(ext) && !esOfficeZip(ext) && !esOcr(ext)) { const real = tipoPorContenido(ruta); if (real) ext = real === "odf" ? "" : real }
   let texto = "", err = null
   try {
-    if (esPlano(ext)) texto = readFileSync(ruta, "utf8").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+    if (esPlano(ext)) texto = textoPlano(readFileSync(ruta, "utf8"))
     else if (esOfficeZip(ext)) texto = textoOffice(ruta)
     else if (esOcr(ext)) {
       // PDF: primero el camino barato (texto embebido). Sólo si viene vacío o ridículamente corto —o sea, es un

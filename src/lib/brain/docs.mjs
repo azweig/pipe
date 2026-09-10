@@ -39,16 +39,19 @@ export async function docView(ref, { secretOn = false, soloTexto = false } = {})
   const nombre = r.filename || r.media
   const base = {
     id: r.msg?.id || null, media: r.media, filename: r.filename,
-    vista: vistaPorDefecto(nombre), visor: esVisualizable(nombre),
+    vista: vistaPorDefecto(nombre),
     summary: r.msg?.summary || "",
   }
 
   // El texto se lee de la cache si ya está; si no, se extrae — y de paso queda indexado para la búsqueda.
   const texto = await docTexto(r.media, r.filename).catch(() => "")
-  if (soloTexto || !base.visor) return { ...base, texto, pages: 0, urls: [] }
+  if (soloTexto) return { ...base, texto, visor: esVisualizable(nombre), pages: 0, urls: [] }
 
+  // NO se corta por la extensión antes de intentar. Ese atajo era el bug: docPaginas sabe reconocer el archivo por su
+  // CONTENIDO (hay documentos guardados como .bin, sin filename), pero acá nunca se la llamaba y el visor contestaba
+  // "0 páginas" sin haber mirado el archivo. Ahora decide quien puede decidir, y `visor` es el RESULTADO, no un pronóstico.
   const p = await docPaginas(r.media, r.filename)
-  return { ...base, texto, pages: p.pages || 0, urls: p.urls || [], err: p.err || null }
+  return { ...base, texto, visor: p.pages > 0, pages: p.pages || 0, urls: p.urls || [], err: p.err || null }
 }
 
 // Sólo el texto (el botón "ver como texto"). Barato: si ya se extrajo, no vuelve a abrir el archivo.
