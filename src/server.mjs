@@ -34,6 +34,7 @@ import { clipFlag, getMeta, delMeta, delMetaLike, rebuildStats, freeThreadMedia,
 import { channelCatalog, bridgeNets, tokenNets, sendableDirectChannels, channelLabel } from "./lib/channels.mjs" // registro de canales (única fuente de verdad de qué canales hay + cómo se vinculan)
 import { getMediaPolicy, setMediaDefault, setThreadMediaPolicy } from "./lib/media-policy.mjs"
 import { casStats, casTrashList } from "./lib/cas.mjs"
+import { mediaDeHash } from "./lib/doc-view.mjs" // 🔒 mapea la página renderizada de vuelta a su archivo, para gatearla igual que /cas/
 import { storageStatus } from "./lib/quota.mjs"
 import * as push from "./lib/push.mjs"
 import { appendMessage } from "./lib/lock.mjs"
@@ -814,6 +815,12 @@ const server = createServer(async (req, res) => {
       if (path === "/api/autopilot/council" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.setCouncil({ enabled: b.enabled, members: b.members, chairman: b.chairman })) } // council: varios modelos locales draftean + chairman elige
       if (path === "/api/autopilot/council") return json(res, 200, { ...brain.getCouncil(), available: await brain.councilModels() })
       // #5: transcribir + resumir un video/audio/imagen on-demand (long-press/hover)
+      // ── VISOR DE DOCUMENTOS (pdf/docx/xlsx). Las tres apps consumen esto y sólo muestran: el hub ya convirtió. ──
+      // 🔒 todas gatean por messageById dentro de brain/docs.mjs (ver un documento es leerlo).
+      if (path === "/api/doc" && req.method === "GET") { try { const r = await brain.docView({ id: q.id, media: q.media, filename: q.filename }, { secretOn, soloTexto: q.texto === "1" }); return json(res, r && r.error ? 404 : 200, r) } catch (e) { return json(res, 500, { error: e.message }) } }
+      if (path === "/api/doc/text" && req.method === "GET") { try { const r = await brain.docTextView({ id: q.id, media: q.media, filename: q.filename }, { secretOn }); return json(res, r && r.error ? 404 : 200, r) } catch (e) { return json(res, 500, { error: e.message }) } }
+      // resumen a pedido: es el botón de los documentos VIEJOS (los nuevos los hace el cron)
+      if (path === "/api/doc/summarize" && req.method === "POST") { const b = await body(req); try { const r = await brain.docSummarize({ id: b.id, media: b.media, filename: b.filename }, { secretOn, rehacer: !!b.rehacer }); return json(res, r && r.error ? 400 : 200, r) } catch (e) { return json(res, 500, { error: e.message }) } }
       if (path === "/api/media/summarize" && req.method === "POST") { const b = await body(req); try { const r = await brain.summarizeMedia(b.id, { secretOn }); return json(res, r && r.error ? 400 : 200, r) } catch (e) { return json(res, 500, { error: e.message }) } }
       // ── IMPORT de historial de WhatsApp (self-service desde la app: "Exportar chat" → subir el .txt) ──
       if (path === "/api/import/whatsapp" && req.method === "POST") {
@@ -1192,6 +1199,17 @@ fetch('/api/wa-status?acc=${acc}').then(r=>r.json()).then(d=>{if(d.connected){do
       const full = normalize(join(process.cwd(), "data", path))
       if (full.startsWith(join(process.cwd(), "data", "avatars")) && existsSync(full)) { res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=86400" }); return res.end(readFileSync(full)) }
       res.writeHead(404); return res.end()
+    }
+    // ── PÁGINAS RENDERIZADAS de un documento (/docview/xx/hash/pNNN.jpg). Derivadas del CAS, así que inmutables igual. ──
+    if (path.startsWith("/docview/")) {
+      const full = normalize(join(process.cwd(), "data", path))
+      if (!full.startsWith(join(process.cwd(), "data", "docview")) || !existsSync(full)) { res.writeHead(404); return res.end() }
+      // 🔒 la PÁGINA de un documento es el documento. Sin este gate, /docview/ sería la puerta de atrás para leer un
+      // contrato de una cuenta secreta sin 2º PIN: el hash está en la URL y /cas/ ya está cerrado. Mismo 404 mudo.
+      const hash = path.split("/")[3] || ""
+      const origen = mediaDeHash(hash)
+      if (origen && casSecreto(origen, { secretOn })) { res.writeHead(404); return res.end() }
+      return serveFile(req, res, full, "image/jpeg", "public, max-age=31536000, immutable")
     }
     // ── CAS: archivos dedupeados por contenido (una copia física, N referencias) → content-addressed = INMUTABLE ──
     if (path.startsWith("/cas/") || path.startsWith("/media/")) {

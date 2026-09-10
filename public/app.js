@@ -1794,13 +1794,21 @@ function mediaHtml(it) { if (!it.media) return ""
   if (it.mediaType === "image") return `<img src="${esc(it.media)}" alt="Imagen del mensaje" loading="lazy" style="max-width:230px;min-height:170px;background:var(--bg2,#f0f0f5);border-radius:12px;display:block;cursor:pointer" onload="this.style.minHeight='0';this.style.background='none'" onclick="window.open(${escj(it.media)})" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'small muted',textContent:'🖼 imagen no disponible'}))">`
   if (it.mediaType === "video") return spdVideo(`<video src="${esc(it.media)}" controls preload="none" style="max-width:250px;border-radius:12px;display:block"></video>`)
   if (it.mediaType === "audio") return spdAudio(`<audio src="${esc(it.media)}" controls preload="metadata" style="max-width:200px;display:block"></audio>`)
-  return `<a href="${esc(it.media)}" target="_blank" class="row" style="padding:9px 11px;background:#fff;border-radius:10px;text-decoration:none;color:inherit;gap:9px;min-width:180px"><span style="font-size:22px">📄</span><div style="min-width:0"><div class="sb small" style="word-break:break-word">${esc(it.filename || it.text || "Documento")}</div><div class="tiny" style="color:var(--accent)">Abrir / descargar</div></div></a>` }
+  // DOCUMENTO: se abre ADENTRO. Antes esto era un <a href> y para leer un contrato tenías que sacarlo de la app.
+  // El ícono cambia según el tipo, y sigue habiendo descarga (la flecha), sólo que ya no es la única opción.
+  const _ext = String(it.filename || it.media || "").split(".").pop().toLowerCase()
+  const _ico = /^(xlsx?|ods|csv)$/.test(_ext) ? "📊" : /^(docx?|odt|rtf)$/.test(_ext) ? "📝" : /^pptx?$/.test(_ext) ? "📽" : "📄"
+  const _abrible = /^(pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf)$/.test(_ext)
+  return `<div class="row" style="padding:9px 11px;background:#fff;border-radius:10px;gap:9px;min-width:190px;${_abrible ? "cursor:pointer" : ""}"${_abrible ? ` onclick='event.stopPropagation();openDoc(${escj({ id: it.id, media: it.media, filename: it.filename || "" })})'` : ""}><span style="font-size:22px">${_ico}</span><div style="min-width:0;flex:1"><div class="sb small" style="word-break:break-word">${esc(it.filename || it.text || "Documento")}</div><div class="tiny" style="color:var(--accent)">${_abrible ? "Ver adentro" : "Descargar"}</div></div><a href="${esc(it.media)}" target="_blank" onclick="event.stopPropagation()" title="Descargar" style="text-decoration:none;color:var(--accent);font-size:17px;padding:0 2px">↓</a></div>` }
 const audioSum = (it) => it.audioSummary && it.summary ? `<div class="aud-sum">${esc(it.summary)}</div>` : ""
+// resumen del DOCUMENTO, con el mismo tratamiento visual que el de la nota de voz: para vos son lo mismo, algo que
+// te mandaron y que no querés tener que abrir para saber de qué se trata.
+const docSum = (it) => (it.mediaType === "document" || it.mediaType === "file") && it.summary ? `<div class="aud-sum">${esc(it.summary)}</div>` : ""
 const convContent = (it) => it.covert // modo encubierto: mostrás el texto DESCIFRADO + badge para ver el poema original (lo que ve WhatsApp)
   ? `${fmtText(it.covert.text)}<div class="tiny" style="opacity:.7;margin-top:3px;cursor:pointer;color:var(--accent)" onclick='event.stopPropagation();covertReveal(${escj(it.id)})'>🕊️ descifrado · ver original</div>`
   : it.mediaType === "call"
   ? `<div class="call-chip">${esc(it.text || "📞 Llamada")}<div class="tiny" style="opacity:.7;margin-top:2px">Contestá desde WhatsApp</div></div>`
-  : (it.media ? mediaHtml(it) + audioSum(it) + (it.text && !/^(🖼|📹|🎤|📄|🌟|📎|📍|👤)/.test(it.text) ? `<div style="margin-top:5px">${fmtText(it.text)}</div>` : "") : fmtText(it.text))
+  : (it.media ? mediaHtml(it) + audioSum(it) + docSum(it) + (it.text && !/^(🖼|📹|🎤|📄|🌟|📎|📍|👤)/.test(it.text) ? `<div style="margin-top:5px">${fmtText(it.text)}</div>` : "") : fmtText(it.text))
 const hhmm = (ts) => { const d = new Date(ts); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0") }
 const dayKey = (ts) => new Date(ts).toDateString()
 function dayLabel(ts) {
@@ -2946,6 +2954,68 @@ const emailIframe = (it, allowRemote = false) => {
   // sandbox sin allow-scripts (bloquea JS/XSS) pero permite imágenes; allow-popups deja abrir links en pestaña nueva
   return `<iframe sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="${srcdoc}" style="width:100%;height:70vh;border:1px solid var(--line);border-radius:10px;background:#fff"></iframe>`
 }
+// ── VISOR DE DOCUMENTOS (pdf / docx / xlsx) ─────────────────────────────────────────────────────────────────────
+// El hub ya convirtió: acá sólo se muestran imágenes de página y texto. La app NO parsea el archivo — misma decisión
+// que el iframe sin allow-scripts del visor de correo: lo que te mandó un tercero no se ejecuta de este lado.
+let _docState = null
+
+window.openDoc = async (ref) => {
+  const r = typeof ref === "string" ? { id: ref } : (ref || {})
+  const nombre = r.filename || "Documento"
+  openSheet(`<div class="row" style="gap:8px">${ORB}<b>Abriendo ${esc(nombre)}…</b></div><div class="sub" style="margin-top:8px">Convirtiendo las páginas. La primera vez tarda unos segundos; después es instantáneo.</div>`)
+  const qs = new URLSearchParams(Object.entries(r).filter(([, v]) => v)).toString()
+  const d = await api("/api/doc?" + qs).catch(() => null)
+  if (!d || d.error) return openSheet(`<h2 style="margin:0 0 6px">${esc(nombre)}</h2><div class="sub">${esc((d && d.error) || "No se pudo abrir el documento.")}</div><div style="margin-top:12px"><a href="${esc(r.media || "")}" target="_blank" style="color:var(--accent);font-weight:600">Descargar el archivo ↓</a></div>`)
+  _docState = { ...d, ref: r, modo: d.pages ? d.vista : "texto" } // sin páginas (formato raro), el texto es lo único que hay
+  pintarDoc()
+}
+
+function pintarDoc() {
+  const d = _docState; if (!d) return
+  const nombre = d.filename || "Documento"
+  const hayPag = d.pages > 0, hayTxt = (d.texto || "").trim().length > 0
+  // escj y no '${id}': el test de XSS prohíbe interpolar crudo dentro de la string JS de un handler, aunque acá el
+  // valor sea literal nuestro. La regla vale por el patrón, no por el caso.
+  const tab = (id, etiqueta, activo) => `<button class="pill" onclick="docModo(${escj(id)})" style="${activo ? "background:var(--accent);color:#fff;border-color:var(--accent)" : ""}">${etiqueta}</button>`
+
+  const cuerpo = d.modo === "texto"
+    ? (hayTxt
+      // pre-wrap: una planilla o un contrato traen su propio ordenamiento en saltos de línea; aplastarlos lo vuelve ilegible
+      ? `<div style="white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.55;background:var(--bg2,#f7f7fb);border-radius:10px;padding:12px;max-height:62vh;overflow:auto">${esc(d.texto)}</div>`
+      : `<div class="sub">No se pudo extraer texto de este archivo. ${hayPag ? "Probá la vista de páginas." : ""}</div>`)
+    : (hayPag
+      // loading=lazy + alto reservado: un documento de 80 páginas no puede bajar 80 imágenes de una
+      ? `<div style="max-height:62vh;overflow:auto;background:var(--bg2,#f7f7fb);border-radius:10px;padding:8px">${d.urls.map((u, i) => `<img src="${esc(u)}" alt="Página ${i + 1} de ${esc(nombre)}" loading="lazy" style="width:100%;display:block;margin-bottom:8px;border-radius:6px;background:#fff;min-height:220px;box-shadow:0 1px 3px rgba(0,0,0,.12)">`).join("")}</div>`
+      : `<div class="sub">${esc(d.err || "Este formato no tiene vista de páginas.")}</div>`)
+
+  const resumen = d.summary
+    ? `<div class="aud-sum" style="margin:0 0 10px">${esc(d.summary)}</div>`
+    : (d.id ? `<div style="margin:0 0 10px"><button class="pill" onclick="docResumir()">✨ Resumir este documento</button></div>` : "")
+
+  openSheet(`
+    <div class="row" style="gap:8px;align-items:flex-start;margin-bottom:2px">
+      <div style="flex:1;min-width:0"><h2 style="margin:0;font-size:17px;word-break:break-word">${esc(nombre)}</h2>
+      <div class="sub" style="margin-top:2px">${hayPag ? d.pages + (d.pages === 1 ? " página" : " páginas") : "sin vista de páginas"}${hayTxt ? " · texto disponible" : ""}</div></div>
+      <a href="${esc(d.media || "")}" target="_blank" title="Descargar" style="text-decoration:none;color:var(--accent);font-weight:700;font-size:15px;flex:none">↓</a>
+    </div>
+    <div class="row" style="gap:6px;margin:10px 0 11px">${tab("paginas", "📄 Documento", d.modo !== "texto")}${tab("texto", "📃 Texto", d.modo === "texto")}</div>
+    ${resumen}${cuerpo}`)
+}
+
+window.docModo = (m) => { if (!_docState) return; _docState.modo = m; pintarDoc() }
+
+// Resumen a pedido: es el botón de los documentos VIEJOS (los nuevos los resume el cron solo).
+window.docResumir = async () => {
+  const d = _docState; if (!d || !d.id) return
+  d.summary = "Leyendo el documento…"; pintarDoc()
+  const r = await post("/api/doc/summarize", { id: d.id }).catch(() => null)
+  d.summary = (r && r.summary) || ""
+  if (!d.summary) { d.summary = ""; pintarDoc(); return alert((r && r.error) || "No se pudo resumir el documento.") }
+  pintarDoc()
+  // que el resumen también quede en el hilo, sin recargar
+  const it = (convState.items || []).find((x) => x.id === d.id); if (it) { it.summary = d.summary; renderConv() }
+}
+
 window.showEmailFull = async (id) => {
   const it = (convState.items || []).find((x) => x.id === id) || {}
   const mtg = it.meeting || it.channel === "meeting"
@@ -2955,7 +3025,11 @@ window.showEmailFull = async (id) => {
   // los adjuntos INLINE (las imágenes del cuerpo, cid:) ya se ven dentro del correo → no se listan como archivos
   let atts = []; try { atts = (JSON.parse(it.attachments || "[]") || []).filter((a) => !a.inline) } catch {}
   const kb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB")
-  const attHtml = atts.length ? `<div style="margin:8px 0 4px;font-weight:600;font-size:14px">📎 ${atts.length} adjunto${atts.length > 1 ? "s" : ""}</div><div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">${atts.map((a) => `<div class="card itemtap" style="padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:pointer" onclick="window.open(${escj(a.cas)},'_blank')"><span style="font-size:20px">📄</span><div style="flex:1;min-width:0"><div class="b" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(a.name)}</div><div class="sub">${esc((a.mime || "").split("/").pop() || "archivo")} · ${kb(a.size || 0)}</div></div><span style="color:var(--accent)">↓</span></div>`).join("")}</div>` : ""
+  // Un PDF es un PDF venga de un chat o de un correo: los adjuntos de email abren en el MISMO visor. Antes esto era
+  // window.open() a pelo, o sea el archivo se iba del hub para poder mirarlo.
+  const _attAbrible = (n) => /\.(pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf)$/i.test(String(n || ""))
+  const _attIco = (n) => /\.(xlsx?|ods|csv)$/i.test(n) ? "📊" : /\.(docx?|odt|rtf)$/i.test(n) ? "📝" : /\.pptx?$/i.test(n) ? "📽" : "📄"
+  const attHtml = atts.length ? `<div style="margin:8px 0 4px;font-weight:600;font-size:14px">📎 ${atts.length} adjunto${atts.length > 1 ? "s" : ""}</div><div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">${atts.map((a) => `<div class="card itemtap" style="padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:pointer" onclick="${_attAbrible(a.name) ? `openDoc(${escj({ media: a.cas, filename: a.name })})` : `window.open(${escj(a.cas)},'_blank')`}"><span style="font-size:20px">${_attIco(a.name)}</span><div style="flex:1;min-width:0"><div class="b" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(a.name)}</div><div class="sub">${_attAbrible(a.name) ? "Ver adentro · " : ""}${esc((a.mime || "").split("/").pop() || "archivo")} · ${kb(a.size || 0)}</div></div><a href="${esc(a.cas)}" target="_blank" onclick="event.stopPropagation()" title="Descargar" style="text-decoration:none;color:var(--accent)">↓</a></div>`).join("")}</div>` : ""
   _emailOpen = { id, body, mtg } // para "responder" y "mostrar imágenes" desde los botones de la hoja
   const remote = /<img[^>]+src=["']https?:/i.test(body || "") // el CSP las bloquea por defecto (anti-tracking) → ofrecer mostrarlas
   openSheet(`<h2 style="margin:0">${mtg ? "🎙 Reunión" : "📧 Email"}</h2><div class="sub" style="margin:6px 0 10px">${esc((it.text || "").split(" — ")[0].replace(/^📅\s*/, ""))} · ${esc(it.name || "")}</div>

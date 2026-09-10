@@ -43,10 +43,32 @@ sys.stdout.write(t[:%d])
   return r.status === 0 ? (r.stdout || "").trim() : ""
 }
 
+// PDF DIGITAL → texto sin GPU. Antes TODO PDF se mandaba al OCR de la GPU, y la mayoría de los contratos y facturas
+// que te llegan son digitales: el texto ya está adentro del archivo, sólo hay que leerlo. `pdftotext` lo saca en
+// milisegundos y gratis. El OCR queda para lo que de verdad lo necesita: los escaneados y las fotos.
+function textoPdfNativo(rutaAbs) {
+  const r = spawnSync("pdftotext", ["-q", "-enc", "UTF-8", "-l", "40", rutaAbs, "-"], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024, timeout: 45000 })
+  if (r.status !== 0) return ""
+  return String(r.stdout || "").replace(/\s+/g, " ").trim()
+}
+
+// Cuánto texto alcanza para dar por bueno el camino barato. Un PDF escaneado igual devuelve algo (un número de
+// página suelto, basura del generador), así que un umbral bajo lo dejaría pasar sin OCR y perderíamos el contenido.
+const MIN_NATIVO = +process.env.DOC_PDF_MIN_CHARS || 120
+
 const leerCache = (media) => { try { return db().prepare("SELECT texto, err FROM doc_text WHERE media=?").get(media) || null } catch { return null } }
 const guardarCache = (media, texto, err) => {
   try { withRetry(() => db().prepare("INSERT INTO doc_text (media, texto, chars, ts, err) VALUES (?,?,?,?,?) ON CONFLICT(media) DO UPDATE SET texto=excluded.texto, chars=excluded.chars, ts=excluded.ts, err=excluded.err")
     .run(media, texto || "", (texto || "").length, Date.now(), err || null)) } catch { /* si la base está trabada, se reintenta la próxima */ }
+}
+
+// Texto YA extraído, SIN extraer nada: sólo mira la cache. Para los consumidores que corren sobre muchos mensajes y
+// no pueden pagar OCR por cada uno — el enriquecedor de facetas pasa por miles de mensajes en cada corrida, y si
+// tirara de la extracción convertiría un cron barato en horas de GPU. Va mejorando solo: a medida que se extraen
+// documentos (por búsqueda o por resumen), el router los ve.
+export function docTextoCache(media) {
+  if (!media) return ""
+  return leerCache(media)?.texto || ""
 }
 
 // Texto de UN adjunto. Cacheado: la segunda vez es gratis. "" si no se puede (y se anota, para no reintentar en vano).
@@ -61,7 +83,15 @@ export async function docTexto(media, filename = "") {
   try {
     if (esPlano(ext)) texto = readFileSync(ruta, "utf8").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
     else if (esOfficeZip(ext)) texto = textoOffice(ruta)
-    else if (esOcr(ext)) { if (!ocrEnabled()) err = "OCR apagado"; else texto = await ocrCas(media, { timeoutMs: 240000 }) }
+    else if (esOcr(ext)) {
+      // PDF: primero el camino barato (texto embebido). Sólo si viene vacío o ridículamente corto —o sea, es un
+      // escaneado— se paga la GPU. Las imágenes sueltas van derecho al OCR, ahí no hay texto que leer.
+      if (ext === "pdf") texto = textoPdfNativo(ruta)
+      if (texto.length < MIN_NATIVO) {
+        if (!ocrEnabled()) err = texto ? null : "OCR apagado"
+        else { const porOcr = await ocrCas(media, { timeoutMs: 240000 }); if (porOcr.length > texto.length) texto = porOcr }
+      }
+    }
     else err = "formato no soportado: " + (ext || "?")
   } catch (e) { err = e.message }
   texto = arreglarOcr(String(texto || "")).slice(0, MAX_CHARS)

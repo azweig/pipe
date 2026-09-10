@@ -3,6 +3,7 @@
 // y con el LLM LOCAL (privado) extrae resumen + entidades + tags + keywords → tabla conversations/conv_facets.
 // Acotado por diseño (no es un loop fire-and-forget): el daemon lo vuelve a llamar cada N minutos → cubre todo de a poco.
 import { staleConversations, saveConversation, threadMessagesTail } from "./lib/db.mjs"
+import { convText } from "./lib/conv-text.mjs" // incluye lo que dice DENTRO de los adjuntos ya extraídos → entra a las facetas
 import { llm, smartChain } from "./lib/llm.mjs"
 import { owner, ownerFirst } from "./lib/hub.mjs"
 import { secretThreadKeys } from "./lib/secret.mjs" // 🔒 no indexar hilos 100%-secretos en el router por facetas
@@ -12,16 +13,6 @@ const CHAIN = smartChain({ sensitive: true, feature: "enrich" }) // enrich proce
 const TAGVOCAB = "deuda, facturación, pagos, cobranza, contrato, legal, técnico, integración, soporte, bug, reunión, propuesta, comercial, ventas, marketing, producto, proyecto, documentación, finanzas, banco, impuestos, logística, recursos-humanos, personal, familia, amistad, viaje, evento, salud, media, noticias"
 
 const arr = (x) => (Array.isArray(x) ? x.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim()).slice(0, 20) : [])
-const striphtml = (h) => String(h || "").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#\d+;|&gt;|&lt;|&amp;/g, " ").replace(/\s+/g, " ").trim()
-function convText(msgs) {
-  return msgs.map((m) => {
-    const who = m.dir === "out" ? "yo" : (m.name || "?")
-    let t = m.text || ""
-    if (m.channel === "email" && m.body) t = (t ? t + " — " : "") + striphtml(m.body).slice(0, 500) // el asunto está en text; el DETALLE (montos, fechas) en body → sin esto el resumen no captura la deuda
-    const body = (t || m.filename || (m.mediaType ? `[${m.mediaType}]` : "")).replace(/\s+/g, " ").slice(0, m.channel === "email" ? 520 : 160)
-    return body.length > 1 ? `${who}: ${body}` : ""
-  }).filter(Boolean).join("\n").slice(0, 6000)
-}
 function contactName(msgs) {
   const c = {}
   for (const m of msgs) if (m.dir !== "out" && m.name && m.name !== owner()) c[m.name] = (c[m.name] || 0) + 1

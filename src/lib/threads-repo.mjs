@@ -456,6 +456,16 @@ export function audioToSummarize(from, { limit } = {}) {
       AND (summary IS NULL OR summary='') AND ts >= ?
     ORDER BY ts DESC LIMIT ?`).all(from, limit * 3 + 10).filter((r) => !isSecretRow(r)).slice(0, limit)
 }
+// Documentos NUEVOS todavía sin resumen. Espejo de audioToSummarize, y por el mismo motivo: una nota de voz y un
+// contrato son lo mismo desde la app — algo que te mandaron y que no podés ver sin abrirlo.
+// 🔒 mismo gate: resumir un documento es LEERLO, y el texto sale hacia un modelo. Trae thread/channel/account/jid
+// para poder decidir por-mensaje.
+export function docsToSummarize(from, { limit } = {}) {
+  return db().prepare(`SELECT id, media, filename, ts, thread, channel, account, jid FROM messages
+    WHERE mediaType IN ('document','file') AND media IS NOT NULL AND media!='' AND (dir!='out' OR thread='self')
+      AND (summary IS NULL OR summary='') AND ts >= ?
+    ORDER BY ts DESC LIMIT ?`).all(from, limit * 3 + 10).filter((r) => !isSecretRow(r)).slice(0, limit)
+}
 // un mensaje por id (o undefined). (era meetings.reprocessMeeting)
 // 🔒 mismo criterio que getBody: sin 2º PIN, un mensaje de fuente secreta no se entrega por id (reenviarlo, transcribirlo
 // o resumirlo son formas de leerlo). Los llamadores derivados (crons, reuniones) no pasan secretOn a propósito.

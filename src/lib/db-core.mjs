@@ -8,7 +8,7 @@ import Database from "better-sqlite3"
 // (CREATE IF NOT EXISTS + PRAGMA table_info para migraciones). Corre igual sobre archivo o ':memory:'.
 // Versión del esquema de abajo. ⚠️ SI TOCÁS initSchema, SUBÍ ESTE NÚMERO: si no, las bases que ya existen se
 // saltean la migración y quedan viejas en silencio. `test/schema-version.mjs` falla si te olvidás.
-export const SCHEMA_V = 5
+export const SCHEMA_V = 6
 
 export function initSchema(h) {
   // ATAJO: abrir una base YA inicializada no debe tomar WRITE-LOCK. Todo lo de abajo (CREATE IF NOT EXISTS, ALTER,
@@ -93,6 +93,24 @@ export function initSchema(h) {
     END;
     CREATE TRIGGER IF NOT EXISTS email_body_ad AFTER DELETE ON messages BEGIN
       DELETE FROM email_fts WHERE rowid = old.rowid;
+    END;
+    -- FTS sobre el TEXTO DE LOS ADJUNTOS. Misma jugada que email_fts, por el mismo motivo: el monto de una adenda
+    -- vive DENTRO del PDF, y hasta acá el buscador sólo veía el nombre del archivo → contestaba "no hay información"
+    -- teniendo el dato. Se indexa doc_text (clave = ruta del CAS), así el mismo contrato reenviado cinco veces
+    -- ocupa una fila. La columna media va UNINDEXED: se guarda para poder volver al mensaje, no para buscar por ella.
+    CREATE VIRTUAL TABLE IF NOT EXISTS doc_fts USING fts5(texto, media UNINDEXED);
+    CREATE TRIGGER IF NOT EXISTS doc_text_ai AFTER INSERT ON doc_text WHEN new.texto IS NOT NULL AND new.texto != '' BEGIN
+      INSERT INTO doc_fts(rowid, texto, media) VALUES (new.rowid, new.texto, new.media);
+    END;
+    -- doc-text.mjs escribe con ON CONFLICT DO UPDATE, así que el camino normal de un documento ya extraído es este
+    -- trigger, no el de INSERT. Y el DELETE hace falta por la misma razón que en messages: sin él, un rowid reusado
+    -- deja el índice apuntando al documento equivocado EN SILENCIO.
+    CREATE TRIGGER IF NOT EXISTS doc_text_au AFTER UPDATE OF texto ON doc_text BEGIN
+      DELETE FROM doc_fts WHERE rowid = old.rowid;
+      INSERT INTO doc_fts(rowid, texto, media) SELECT new.rowid, new.texto, new.media WHERE new.texto IS NOT NULL AND new.texto != '';
+    END;
+    CREATE TRIGGER IF NOT EXISTS doc_text_ad AFTER DELETE ON doc_text BEGIN
+      DELETE FROM doc_fts WHERE rowid = old.rowid;
     END;
   `)
   // migración: columna body (cuerpo completo del email, HTML) + summary (pitch IA) para DBs existentes

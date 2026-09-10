@@ -239,6 +239,10 @@ function runHomeBrief() {
 // --- AUDIO SUMMARY: transcribe + resume (no literal) las notas de voz recibidas nuevas → resumen bajo el player ---
 let audioSummaryRunning = false
 function runAudioSummary() { if (audioSummaryRunning) return; audioSummaryRunning = true; const p = spawnLogged("audio-summary", NODE, ["src/audio-summarize.mjs"]); p.on("exit", () => { audioSummaryRunning = false }) }
+let docSummaryRunning = false
+// Resumen de DOCUMENTOS recibidos. Cada 5 min y no cada 2 como el audio: extraer un PDF largo (o pasarlo por OCR)
+// cuesta bastante más que un STT, y el batch es de 8 — no hay apuro por vaciar la cola.
+function runDocSummary() { if (docSummaryRunning) return; docSummaryRunning = true; const p = spawnLogged("doc-summary", NODE, ["src/doc-summarize.mjs"]); p.on("exit", () => { docSummaryRunning = false }) }
 
 // --- EXTRACT ACTIONS: to-dos (lo que te pidieron) + promesas (lo que prometiste) de las conversaciones activas → Home ---
 let extractRunning = false
@@ -448,6 +452,8 @@ setTimeout(runEmailSum, 75000) // primer resumen IA de emails a los 75s
 setInterval(runEmailSum, 3 * 60000) // resume emails nuevos cada 3 min
 setTimeout(runAudioSummary, 100000) // primer resumen de notas de voz a los ~1.5 min
 setInterval(runAudioSummary, 2 * 60000) // transcribe+resume notas de voz recibidas nuevas cada 2 min (batch chico)
+setTimeout(runDocSummary, 160000) // primer resumen de documentos a los ~2.5 min
+setInterval(runDocSummary, 10 * 60000) // extrae+resume documentos recibidos nuevos cada 10 min (en CPU cada documento tarda ~2 min; la guarda evita encimarse)
 setTimeout(runExtract, 130000) // primera extracción de tareas/promesas a los ~2 min
 setInterval(runExtract, 10 * 60000) // extrae to-dos + promesas de conversaciones activas cada 10 min
 setTimeout(runWarmCorrect, 20000) // pre-calienta el modelo de corrección al arrancar (a los 20s)

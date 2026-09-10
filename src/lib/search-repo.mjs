@@ -1,6 +1,6 @@
 // search-repo — full-text (asunto vía messages_fts, cuerpo de emails vía email_fts) + superficie RAG.
 // Cuerpos movidos verbatim desde db.mjs; `db` = alias de handle() de db-core.
-import { handle as db } from "./db-core.mjs"
+import { handle as db, withRetry } from "./db-core.mjs"
 import { secretThreadKeys, isSecretRow } from "./secret.mjs"
 
 const STOP = new Set(["que", "con", "por", "para", "los", "las", "una", "del", "como", "hable", "hablé", "sobre", "cual", "cuando", "donde", "quien", "hay", "the", "and", "que", "mas", "muy"])
@@ -50,6 +50,41 @@ export function bodyMatchInThreads(threads = [], terms = [], { limit = 4 } = {})
   return db().prepare(`SELECT thread,name,ts,body,channel,account,jid FROM messages WHERE thread IN (${tph}) AND body IS NOT NULL AND body!='' AND (${clauses}) ORDER BY ts DESC LIMIT ?`)
     .all(...threads, ...uniq.map((t) => "%" + t + "%"), limit * 3 + 10).filter((r) => !isSecretRow(r)).slice(0, limit)
 }
+// (re)construye el índice FTS del texto de los adjuntos. Hace falta para lo YA extraído: doc_text venía llenándose
+// desde antes de que existiera doc_fts, así que sin esto esos documentos seguirían siendo invisibles. Mismo criterio
+// atómico que rebuildEmailFts: morir entre el DELETE y el INSERT dejaría el índice vacío y la búsqueda muda.
+export function rebuildDocFts() {
+  const D = db()
+  // withRetry: esto corre al arrancar el daemon, o sea con diez lectores ingiriendo y el WAL caliente. Sin reintentos
+  // se muere con "database is locked" en el primer pico y el índice queda vacío EN SILENCIO — medido en el deploy.
+  withRetry(() => D.transaction(() => {
+    D.exec("DELETE FROM doc_fts")
+    D.exec("INSERT INTO doc_fts(rowid, texto, media) SELECT rowid, texto, media FROM doc_text WHERE texto IS NOT NULL AND texto != ''")
+  })(), { tries: 8, baseMs: 400 })
+  return D.prepare("SELECT COUNT(*) c FROM doc_fts").get().c
+}
+
+// BUSCA DENTRO DE LOS DOCUMENTOS. Esta es la función que cierra el agujero: hasta acá se podía buscar el NOMBRE de un
+// archivo, no lo que dice adentro, y el asistente contestaba "no hay información" con el monto escrito en el PDF.
+// Devuelve el mensaje que trajo el documento + un fragmento del texto donde matcheó, para poder citarlo.
+export function searchDocs(query, { limit = 8 } = {}) {
+  const words = ((query || "").toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || []).filter((w) => !STOP.has(w))
+  if (!words.length) return []
+  const q = words.map((w) => `"${w}"*`).join(" OR ")
+  try {
+    // 🔒 trae channel/account/jid porque isSecretRow decide por-mensaje: un fragmento de un contrato de una cuenta
+    // secreta va derecho al contexto de la IA, que es exactamente donde ya no se puede distinguir de dónde salió.
+    const filas = db().prepare(`SELECT m.id, m.thread, m.name, m.ts, m.channel, m.account, m.jid, m.media, m.mediaType, m.filename,
+      snippet(doc_fts, 0, '', '', ' … ', 26) AS snip
+      FROM doc_fts f JOIN messages m ON m.media = f.media
+      WHERE doc_fts MATCH ? ORDER BY rank LIMIT ?`).all(q, limit * 4 + 20).filter((r) => !isSecretRow(r))
+    // el mismo contrato reenviado cinco veces es UN documento, no cinco resultados: se queda el mejor rankeado.
+    const porMedia = new Map()
+    for (const r of filas) if (!porMedia.has(r.media)) porMedia.set(r.media, r)
+    return [...porMedia.values()].slice(0, limit)
+  } catch { return [] }
+}
+
 // archivos/media que están en los hilos ruteados O cuyo nombre/texto contiene alguno de los términos (para "docs de globex" en toda la DB).
 export function filesByTerms(terms = [], threads = [], { docs = true, limit = 40 } = {}) {
   const cond = docs ? "filename IS NOT NULL AND filename!=''" : "media IS NOT NULL AND media!=''"
