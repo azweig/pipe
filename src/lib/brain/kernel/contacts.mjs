@@ -11,7 +11,18 @@ export const jf = (f) => (existsSync(`./data/${f}`) ? JSON.parse(readFileSync(`.
 export const idmap = () => jf("identity-map.json") || {}
 export const aliases = () => jf("aliases.json") || { people: {}, companies: {} }
 export const waGroups = () => jf("wa-groups.json") || {}
-export const avatarMap = () => (existsSync("./auth/avatars.json") ? JSON.parse(readFileSync("./auth/avatars.json", "utf8")) : {})
+// Fotos de contacto: nombre → ruta en el CAS. CACHE POR MTIME, igual que contactsMap acá abajo.
+// Sin el cache esto leía y parseaba 182 KB / 4.143 entradas EN CADA LLAMADA, y photoFor() la llama una vez por hilo:
+// abrir la bandeja (600 hilos) eran ~109 MB de JSON parseado y 1.600 ms de los ~1.900 ms que costaba. Medido.
+let _av = null, _avMtime = 0
+export function avatarMap() {
+  const f = "./auth/avatars.json"
+  if (!existsSync(f)) { _av = null; _avMtime = 0; return {} }
+  const m = statSync(f).mtimeMs
+  if (_av && m === _avMtime) return _av
+  try { _av = JSON.parse(readFileSync(f, "utf8")); _avMtime = m } catch { return _av || {} } // JSON a medio escribir: servir lo anterior
+  return _av
+}
 
 // agenda del teléfono: número (solo dígitos) → nombre. Cache por mtime.
 let _contacts = null, _contactsMtime = 0
