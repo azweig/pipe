@@ -72,6 +72,12 @@ export function cifrasInventadas(linea, origen) {
   return null
 }
 
+// El modelo copia la etiqueta [PLATA]/[PLAZO] de las filas que le pasamos y la deja EN LA ACCIÓN:
+// "Responder al correo de [PLATA] sfacturacion@…". El ícono de la tarjeta ya dice el tipo; en el texto es ruido.
+// El paréntesis FINAL también se saca porque lo reponemos nosotros con el canal y los días reales.
+export const limpiarLinea = (s) => String(s).replace(/\[(PLATA|PLAZO|PERSONA|OTRO)\]\s*/gi, "")
+  .replace(/\s*\([^)]*\)\s*$/, "").replace(/\s{2,}/g, " ").trim()
+
 export async function acciones({ limite = 6, usarLLM = true } = {}) {
   const { pendientes: pend, cerrados, n } = pendientes({ limite })
   const base = {
@@ -96,7 +102,7 @@ export async function acciones({ limite = 6, usarLLM = true } = {}) {
         const inventada = cifrasInventadas(p.acciones[i], `${x.asunto} ${x.cuerpo}`)
         // el canal y la demora los ponemos NOSOTROS: el modelo ponía el nombre del contacto donde iba el canal,
         // y le puso "WhatsApp" a un correo.
-        const cuerpo = String(p.acciones[i]).replace(/\s*\([^)]*\)\s*$/, "").trim()
+        const cuerpo = limpiarLinea(p.acciones[i])
         limpias.push(inventada ? lineaRegla(x) : `${cuerpo} (${canalEs(x.canal)}, ${diasEs(x.dias)})`)
       }
       if (limpias.length) return { ...base, acciones: limpias, ya: p.ya, fuente: "ia" }

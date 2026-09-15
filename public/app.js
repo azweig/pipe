@@ -216,6 +216,10 @@ function paintHome(d) {
   // El hub elige con reglas (la deuda y el fisco van primero, siempre) y el modelo sólo redacta. Si el modelo no
   // estuvo disponible, `fuente` dice "reglas" y se muestra igual: la tarjeta nunca queda vacía por culpa de la IA.
   const R = d.resumen || {}
+  // "hoy 04:00" / "ayer 16:00" / "lun 16:00" — el usuario configuró un horario, así que tiene que poder verificarlo.
+  const horaCorta = (ts) => { const f = new Date(ts), hoy = new Date(), dd = Math.round((new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()) - new Date(f.getFullYear(), f.getMonth(), f.getDate())) / 86400000)
+    const hm = String(f.getHours()).padStart(2, "0") + ":" + String(f.getMinutes()).padStart(2, "0")
+    return (dd === 0 ? "hoy" : dd === 1 ? "ayer" : dd === -1 ? "mañana" : f.toLocaleDateString("es", { weekday: "short" })) + " " + hm }
   const TIPO = { PLATA: ["💰", "#d97706"], PLAZO: ["⏳", "#dc2626"], PERSONA: ["👤", "var(--accent)"], OTRO: ["·", "var(--muted)"] }
   const accionesCard = (R.acciones || []).length ? `<div class="card" style="padding:14px 15px;margin:0 0 12px">
       <div class="row" style="justify-content:space-between;align-items:baseline;margin-bottom:9px">
@@ -229,6 +233,7 @@ function paintHome(d) {
         </div>` }).join("")}
       ${R.cerrados?.length ? `<div class="tiny" style="margin-top:10px;padding-top:9px;border-top:1px solid var(--line);color:var(--muted)">✓ Ya contestaste a ${esc(R.cerrados.slice(0, 4).join(", "))}${R.n?.cerrados > 4 ? ` y ${R.n.cerrados - 4} más` : ""}</div>` : ""}
       ${R.fuente === "reglas" ? `<div class="tiny muted" style="margin-top:6px;opacity:.7">Ordenado por reglas — el resumen con IA se está generando.</div>` : ""}
+      ${R.ts ? `<div class="tiny muted" style="margin-top:6px;opacity:.7">Actualizado ${esc(horaCorta(R.ts))}${R.proxima ? ` · próximo ${esc(horaCorta(R.proxima))}` : ""}</div>` : ""}
     </div>` : ""
 
   const briefCard = b.text ? `<div class="hb-brief"><div class="hb-brief-glow"></div>
@@ -1265,12 +1270,15 @@ window.editHubSheet = () => {
     <div class="b small" style="margin:0 0 4px">Tus números de WhatsApp (separados por coma)</div><input class="inp" id="hb-numbers" value="${esc((h.myNumbers || []).join(", "))}" style="${_inp}">
     <div class="b small" style="margin:0 0 4px">Tus correos propios (separados por coma)</div><input class="inp" id="hb-emails" value="${esc((h.myEmails || []).join(", "))}" style="${_inp}">
     <div class="b small" style="margin:0 0 4px">Zona horaria</div><input class="inp" id="hb-tz" value="${esc(h.timezone || "")}" placeholder="America/Lima" style="${_inp}">
+    <div class="b small" style="margin:0 0 4px">⏰ Horas del resumen de la Home</div>
+    <input class="inp" id="hb-horas" value="${esc(((h.homeHoras || [4, 16])).map((x) => String(x).padStart(2, "0") + ":00").join(", "))}" placeholder="04:00, 16:00" style="${_inp}">
+    <div class="tiny muted" style="margin:-6px 0 12px">A qué horas se rearma "Te deben una respuesta": marca lo que ya contestaste y suma lo nuevo. Hora de tu zona.</div>
     <button class="btn" style="width:100%" onclick="saveHub()">Guardar</button>
     <div id="hubErr" style="color:#e0663a;font-size:13px;margin-top:8px"></div>`)
 }
 window.saveHub = async () => {
   const v = (id) => { const el = document.getElementById(id); return el ? el.value : "" }
-  const body = { ownerName: v("hb-name"), ownerFirst: v("hb-first"), company: v("hb-company"), myNumbers: v("hb-numbers"), myEmails: v("hb-emails"), timezone: v("hb-tz") }
+  const body = { ownerName: v("hb-name"), ownerFirst: v("hb-first"), company: v("hb-company"), myNumbers: v("hb-numbers"), myEmails: v("hb-emails"), timezone: v("hb-tz"), homeHoras: v("hb-horas") }
   const err = document.getElementById("hubErr"); err.textContent = "Guardando…"
   const r = await post("/api/hub-config/save", body).catch(() => null)
   if (r && r.ok) { window.__hub = r.config; _lsSet("hub", r.config); closeSheet(); alert("✅ Identidad actualizada. Los números/correos propios se aplican al reiniciar el servicio."); viewSettings() }

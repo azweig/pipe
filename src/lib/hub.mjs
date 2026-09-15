@@ -3,6 +3,7 @@
 // Cada instancia dedicada tiene su propio data/hub-config.json. Editable desde Configuración → "Este hub".
 import { existsSync, readFileSync, writeFileSync, statSync, renameSync } from "fs"
 import { withLock } from "./lock.mjs"
+import { normalizarHoras } from "./home-horario.mjs"
 
 const CFG = process.env.HUB_CONFIG || "./data/hub-config.json" // override para tests/instancias no estándar
 // DEFAULTS genéricos → cada instancia define SU identidad en data/hub-config.json (o desde Configuración → "Este hub").
@@ -15,6 +16,7 @@ const DEFAULTS = {
   myEmails: [],                        // MIS correos → routing self/mine
   timezone: "America/Lima",
   domain: "localhost",
+  homeHoras: [4, 16],                  // a qué horas se rearma el resumen de la Home (hora del hub)
 }
 let _c = null, _m = -1
 function cfg() {
@@ -28,6 +30,8 @@ export const myNumbers = () => cfg().myNumbers || []
 export const myEmails = () => (cfg().myEmails || []).map((s) => s.toLowerCase())
 export const tz = () => cfg().timezone || "America/Lima"
 export const hubDomain = () => cfg().domain
+// Horas a las que se regenera el resumen de la Home. Normalizadas acá para que el daemon, la API y la UI lean lo mismo.
+export const homeHoras = () => normalizarHoras(cfg().homeHoras)
 // offset UTC actual de la tz configurada, formato "-05:00" (para parsear datetimes naive de Outlook/calendario)
 export function tzOffset() {
   const now = new Date()
@@ -41,6 +45,7 @@ export function setHubConfig(input = {}) {
   const next = { ...cfg() }
   for (const k of ["ownerName", "ownerFirst", "company", "timezone", "domain"]) if (input[k] != null && String(input[k]).trim()) next[k] = String(input[k]).trim()
   if (input.myNumbers != null) next.myNumbers = (Array.isArray(input.myNumbers) ? input.myNumbers : String(input.myNumbers).split(",")).map((s) => String(s).replace(/[^\d]/g, "")).filter((s) => s.length >= 8)
+  if (input.homeHoras != null) next.homeHoras = normalizarHoras(input.homeHoras)
   if (input.myEmails != null) next.myEmails = (Array.isArray(input.myEmails) ? input.myEmails : String(input.myEmails).split(",")).map((s) => String(s).trim().toLowerCase()).filter((s) => s.includes("@"))
   withLock(CFG, () => { const tmp = CFG + "." + process.pid + ".tmp"; writeFileSync(tmp, JSON.stringify(next, null, 2)); renameSync(tmp, CFG) })
   _c = null; _m = -1

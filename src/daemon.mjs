@@ -8,6 +8,8 @@ import { loadEnv } from "./lib/env.mjs"
 import { smartChain } from "./lib/llm.mjs"
 import { getMeta } from "./lib/db.mjs"
 import * as maintenance from "./lib/maintenance.mjs"
+import * as hub from "./lib/hub.mjs"
+import { tocaCorrer } from "./lib/home-horario.mjs"
 
 // cargar .env
 loadEnv()
@@ -244,9 +246,18 @@ let docSummaryRunning = false
 // cuesta bastante más que un STT, y el batch es de 8 — no hay apuro por vaciar la cola.
 function runDocSummary() { if (docSummaryRunning) return; docSummaryRunning = true; const p = spawnLogged("doc-summary", NODE, ["src/doc-summarize.mjs"]); p.on("exit", () => { docSummaryRunning = false }) }
 let homeAccRunning = false
-// Resumen de acciones de la Home. Cada 30 min: el contenido cambia despacio y la etapa del modelo puede tardar
-// minutos si hay cola. La Home lee el archivo, así que un retraso acá nunca se siente en la app.
+// Resumen de acciones de la Home. NO es un intervalo: son horas fijas (4am y 4pm por defecto, configurables en
+// Configuración → Este hub). El contenido cambia despacio, y con horario el trato con el usuario es entendible —
+// "entro a la mañana y está lo del día"— en vez de "se actualizó en algún momento de la última media hora".
 function runHomeAcciones() { if (homeAccRunning) return; homeAccRunning = true; const p = spawnLogged("home-acciones", NODE, ["src/home-acciones-cron.mjs"]); p.on("exit", () => { homeAccRunning = false }) }
+// Se chequea cada minuto contra la MARCA del último resultado, no contra un temporizador en memoria. Así los tres
+// casos salen del mismo chequeo: llegó la hora, el daemon estuvo caído y se perdió la corrida, o cambiaron el horario
+// hace un minuto. Un temporizador se habría olvidado de los últimos dos.
+function tickHomeAcciones() {
+  let ts = 0
+  try { ts = JSON.parse(readFileSync("data/home-acciones.json", "utf8")).ts || 0 } catch {}
+  if (tocaCorrer(Date.now(), ts, hub.homeHoras(), hub.tz())) runHomeAcciones()
+}
 
 // --- EXTRACT ACTIONS: to-dos (lo que te pidieron) + promesas (lo que prometiste) de las conversaciones activas → Home ---
 let extractRunning = false
@@ -458,8 +469,8 @@ setTimeout(runAudioSummary, 100000) // primer resumen de notas de voz a los ~1.5
 setInterval(runAudioSummary, 2 * 60000) // transcribe+resume notas de voz recibidas nuevas cada 2 min (batch chico)
 setTimeout(runDocSummary, 160000) // primer resumen de documentos a los ~2.5 min
 setInterval(runDocSummary, 10 * 60000) // extrae+resume documentos recibidos nuevos cada 10 min
-setTimeout(runHomeAcciones, 45000) // primer resumen de la Home a los 45s de arrancar
-setInterval(runHomeAcciones, 30 * 60000) // y cada 30 min (en CPU cada documento tarda ~2 min; la guarda evita encimarse)
+setTimeout(tickHomeAcciones, 45000) // al arrancar: sólo corre si lo guardado quedó antes de la última hora programada
+setInterval(tickHomeAcciones, 60000) // y se fija cada minuto si ya toca (4am/4pm por defecto, configurable)
 setTimeout(runExtract, 130000) // primera extracción de tareas/promesas a los ~2 min
 setInterval(runExtract, 10 * 60000) // extrae to-dos + promesas de conversaciones activas cada 10 min
 setTimeout(runWarmCorrect, 20000) // pre-calienta el modelo de corrección al arrancar (a los 20s)

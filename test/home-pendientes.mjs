@@ -99,3 +99,14 @@ test("una cifra que no está en el correo invalida la línea", async () => {
   assert.equal(cifrasInventadas("Resolvé el tema del 2026", "vencimiento en 2026"), null, "un año no es un monto")
   assert.equal(cifrasInventadas("Pagá $130.92", "Pendiente de pago $130.92 hasta el 12/09"), null)
 })
+
+// El modelo copia la etiqueta de tipo desde las filas del prompt y la deja adentro de la acción. Se vio en producción:
+// "Responder al correo de [PLATA] sfacturacion@bizlinks.la con los datos proporcionados". El ícono ya dice el tipo.
+test("la etiqueta [PLATA] del prompt no puede terminar en el texto de la acción", async () => {
+  const { limpiarLinea } = await import("../src/lib/home-acciones.mjs")
+  assert.equal(limpiarLinea("Responder al correo de [PLATA] sfacturacion@x.com con los datos (correo, 4 días)"),
+    "Responder al correo de sfacturacion@x.com con los datos")
+  assert.equal(limpiarLinea("[PLAZO] Presentá la DDJJ"), "Presentá la DDJJ")
+  assert.equal(limpiarLinea("Pagá a Acme (ref. F-001) la factura (correo, hoy)"), "Pagá a Acme (ref. F-001) la factura",
+    "sólo se saca el paréntesis FINAL, que es el que agregamos nosotros")
+})

@@ -8,6 +8,8 @@ import { getMeta } from "../db.mjs"
 import { secretGate } from "../secret.mjs" // 🔒 el dashboard en vivo no cuenta ni muestra hilos secretos sin 2º PIN
 import { readFileSync } from "node:fs"
 import * as _pend from "../home-pendientes.mjs" // reglas de respaldo si el cron todavía no corrió
+import * as hub from "../hub.mjs"
+import { proximaProgramada } from "../home-horario.mjs"
 
 // filtra la salida de listThreads igual que /api/threads (sin sesión secreta → siempre excluye): saca 100%-secretos + parcha preview
 function _gate(threads) { const g = secretGate(); if (!g.any) return threads; return threads.filter((t) => !g.hide.has(t.key)).map((t) => { const p = g.preview.get(t.key); return p ? { ...t, lastText: (p.text || "").slice(0, 120), ts: p.ts } : t }) }
@@ -36,11 +38,15 @@ export async function homeSnapshot(ws) {
 // Resumen de acciones: se calcula en un cron y se guarda; la Home lo LEE. Nunca se genera en el pedido del usuario
 // —el modelo local llegó a tardar 233s por cola— y si no hay archivo, cae a las reglas, que son instantáneas.
 export function resumenAcciones() {
+  const horas = hub.homeHoras(), tz = hub.tz()
   try {
     const j = JSON.parse(readFileSync("./data/home-acciones.json", "utf8"))
-    if (Date.now() - (j.ts || 0) < 6 * 3600000) return j
+    // El archivo es la FOTO de la última corrida programada, así que vale hasta la próxima aunque falten horas: con
+    // dos corridas al día, un vencimiento fijo de 6h dejaba la mitad del día cayendo a reglas y perdiendo el texto.
+    // El único caso en que se descarta es "el daemon lleva días muerto": ahí es más honesto recalcular con reglas.
+    if (Date.now() - (j.ts || 0) < 3 * 86400000) return { ...j, horas, proxima: proximaProgramada(Date.now(), horas, tz) }
   } catch {}
-  try { return require_reglas() } catch { return null }
+  try { return { ...require_reglas(), horas, proxima: proximaProgramada(Date.now(), horas, tz) } } catch { return null }
 }
 function require_reglas() {
   const { pendientes } = _pend
