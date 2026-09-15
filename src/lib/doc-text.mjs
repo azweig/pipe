@@ -10,6 +10,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { handle as db, withRetry } from "./db-core.mjs"
 import { ocrCas, ocrEnabled } from "./ocr.mjs"
+import { textoMarkitdown, markitdownEnabled, markitdownSirve } from "./markitdown.mjs"
 import { tipoPorContenido } from "./doc-view.mjs" // hay documentos guardados como .bin y sin filename: el tipo sale del contenido
 
 const MAX_CHARS = 20000 // un contrato entero no entra en el prompt; con esto alcanza y sobra para los datos duros
@@ -18,6 +19,13 @@ const extOf = (s) => (String(s || "").match(/\.([a-z0-9]{2,5})$/i)?.[1] || "").t
 const esOfficeZip = (e) => /^(docx|xlsx|pptx)$/.test(e)
 const esOcr = (e) => /^(pdf|jpg|jpeg|png|webp|gif|bmp|tiff?)$/.test(e)
 const esPlano = (e) => /^(txt|csv|md|json|log|xml|html?|vcf|srt|ics)$/.test(e) // se leen directo: ni OCR ni descomprimir
+
+// QUÉ TEXTO GANA cuando hay dos extractores. El rico (MarkItDown) conserva las tablas, y lo que llega acá son facturas
+// y planillas: medido sobre 40 documentos reales del CAS, el extractor barato devolvía SIEMPRE una sola línea —el monto
+// separado de su concepto— y el rico entre 8 y 145 filas de tabla. Por eso se prefiere.
+// Pero no siempre: en un PDF con mucha prosa el modo tabla de pdfplumber devolvió 36% MENOS texto. Para buscar adentro
+// de un documento, perder texto es peor que perder el formato, así que ante una caída grande se vuelve al barato.
+const mejorTexto = (barato, rico) => (rico && rico.length >= String(barato || "").length * 0.7 ? rico : String(barato || ""))
 
 // docx/xlsx/pptx son ZIP con XML adentro: se leen sin OCR y sin dependencias. `ocrCas` los rechaza (solo imagen/pdf),
 // y son 2.282 archivos — los más numerosos después de los PDF.
@@ -98,11 +106,17 @@ export async function docTexto(media, filename = "") {
   let texto = "", err = null
   try {
     if (esPlano(ext)) texto = textoPlano(readFileSync(ruta, "utf8"))
-    else if (esOfficeZip(ext)) texto = textoOffice(ruta)
+    else if (esOfficeZip(ext)) texto = mejorTexto(textoOffice(ruta), textoMarkitdown(ruta, ext, { maxChars: MAX_CHARS }))
+    // Formatos que SÓLO sabe leer MarkItDown (.xls viejo, .msg de Outlook). Sin él caían en "formato no soportado",
+    // así que esto no reemplaza nada: es alcance nuevo, y desaparece solo si el venv no está.
+    else if (markitdownEnabled() && markitdownSirve(ext)) {
+      texto = textoMarkitdown(ruta, ext, { maxChars: MAX_CHARS })
+      if (!texto) err = "formato no soportado: " + (ext || "?")
+    }
     else if (esOcr(ext)) {
       // PDF: primero el camino barato (texto embebido). Sólo si viene vacío o ridículamente corto —o sea, es un
       // escaneado— se paga la GPU. Las imágenes sueltas van derecho al OCR, ahí no hay texto que leer.
-      if (ext === "pdf") texto = textoPdfNativo(ruta)
+      if (ext === "pdf") texto = mejorTexto(textoPdfNativo(ruta), textoMarkitdown(ruta, "pdf", { maxChars: MAX_CHARS }))
       if (texto.length < MIN_NATIVO) {
         if (!ocrEnabled()) err = texto ? null : "OCR apagado"
         else { const porOcr = await ocrCas(media, { timeoutMs: 240000 }); if (porOcr.length > texto.length) texto = porOcr }

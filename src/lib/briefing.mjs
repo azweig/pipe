@@ -120,7 +120,7 @@ export async function dailyPlan() {
 
 Hilá esto natural, como si le hablaras mientras desayuna (4-6 frases fluidas):
 1. Un arranque humano y breve (ya madrugó, dejó a los chicos, ahora el mate/desayuno).
-2. Lo importante de sus mensajes: contale QUÉ le escribió cada persona clave y POR QUÉ importa, con el contexto real. Ej: "German de TD SYNNEX te está esperando por la renovación de NCE hace unos días, ese lo cerraría hoy". Priorizá lo urgente, hablá de las personas como personas.
+2. Lo importante de sus mensajes: contale QUÉ le escribió cada persona clave y POR QUÉ importa, con el contexto real. Ej: "Ramiro de Proveedora Ejemplo te está esperando por la renovación desde hace unos días, ese lo cerraría hoy". Priorizá lo urgente, hablá de las personas como personas.
 3. Cómo encarar el día alrededor de su agenda: cuándo arrancar el trabajo tras el desayuno, un café a media mañana, una pausa para moverse, y qué destrabar primero.
 Que suene a alguien real que lo cuida, con esencia y criterio. Nada de bullet points ni "pendientes clave".
 

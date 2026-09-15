@@ -26,14 +26,14 @@ test("una promo que dice 'factura' o 'plazo' NO es consecuencia", () => {
 test("lo caro entra aunque nunca le hayas escrito a ese remitente", () => {
   resetDb(":memory:")
   seed([
-    msg({ thread: "afp", name: "AFP Habitat", text: "DEUDA APORTES - EMPRESA EJEMPLO SAC", body: "Pendiente de pago $130.92 hasta el 12/09/26. Regulariza tu deuda.", ts: dias(1), dir: "in" }),
+    msg({ thread: "afp", name: "AFP Ejemplo", text: "DEUDA APORTES - EMPRESA EJEMPLO SAC", body: "Pendiente de pago $130.92 hasta el 12/09/26. Regulariza tu deuda.", ts: dias(1), dir: "in" }),
     msg({ thread: "amigo", name: "Fulano", text: "che cómo va?", ts: dias(0.5), dir: "in", channel: "whatsapp" }),
   ])
   const r = pendientes({ limite: 5 })
-  const afp = r.pendientes.find((x) => x.quien === "AFP Habitat")
+  const afp = r.pendientes.find((x) => x.quien === "AFP Ejemplo")
   assert.ok(afp, "la deuda no entró: es justo lo que el experimento mostró que se perdía")
   assert.equal(afp.tipo, "PLATA")
-  assert.equal(r.pendientes[0].quien, "AFP Habitat", "lo caro va primero, no lo más reciente")
+  assert.equal(r.pendientes[0].quien, "AFP Ejemplo", "lo caro va primero, no lo más reciente")
 })
 
 test("en un chat, la última palabra ajena NO es una deuda", () => {
@@ -101,11 +101,11 @@ test("una cifra que no está en el correo invalida la línea", async () => {
 })
 
 // El modelo copia la etiqueta de tipo desde las filas del prompt y la deja adentro de la acción. Se vio en producción:
-// "Responder al correo de [PLATA] sfacturacion@bizlinks.la con los datos proporcionados". El ícono ya dice el tipo.
+// "Responder al correo de [PLATA] facturacion@proveedor.example con los datos proporcionados". El ícono ya lo dice.
 test("la etiqueta [PLATA] del prompt no puede terminar en el texto de la acción", async () => {
   const { limpiarLinea } = await import("../src/lib/home-acciones.mjs")
-  assert.equal(limpiarLinea("Responder al correo de [PLATA] sfacturacion@x.com con los datos (correo, 4 días)"),
-    "Responder al correo de sfacturacion@x.com con los datos")
+  assert.equal(limpiarLinea("Responder al correo de [PLATA] facturacion@proveedor.example con los datos (correo, 4 días)"),
+    "Responder al correo de facturacion@proveedor.example con los datos")
   assert.equal(limpiarLinea("[PLAZO] Presentá la DDJJ"), "Presentá la DDJJ")
   assert.equal(limpiarLinea("Pagá a Acme (ref. F-001) la factura (correo, hoy)"), "Pagá a Acme (ref. F-001) la factura",
     "sólo se saca el paréntesis FINAL, que es el que agregamos nosotros")
