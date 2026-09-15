@@ -212,6 +212,25 @@ function paintHome(d) {
   const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`
   const cap = (s) => s ? s[0].toUpperCase() + s.slice(1) : s
 
+  // ── LO QUE TE DEBE UNA RESPUESTA ─────────────────────────────────────────────────────────────────────────────
+  // El hub elige con reglas (la deuda y el fisco van primero, siempre) y el modelo sólo redacta. Si el modelo no
+  // estuvo disponible, `fuente` dice "reglas" y se muestra igual: la tarjeta nunca queda vacía por culpa de la IA.
+  const R = d.resumen || {}
+  const TIPO = { PLATA: ["💰", "#d97706"], PLAZO: ["⏳", "#dc2626"], PERSONA: ["👤", "var(--accent)"], OTRO: ["·", "var(--muted)"] }
+  const accionesCard = (R.acciones || []).length ? `<div class="card" style="padding:14px 15px;margin:0 0 12px">
+      <div class="row" style="justify-content:space-between;align-items:baseline;margin-bottom:9px">
+        <div class="kick">Te deben una respuesta</div>
+        <div class="tiny muted">${R.n?.pend || 0} pendientes · ${R.n?.cerrados || 0} cerrados</div>
+      </div>
+      ${R.acciones.map((a, i) => { const it = (R.items || [])[i] || {}; const [ic, col] = TIPO[it.tipo] || TIPO.OTRO
+        return `<div class="row${it.thread ? " itemtap" : ""}" style="gap:9px;align-items:flex-start;padding:7px 0;border-top:${i ? "1px solid var(--line)" : "0"}${it.thread ? ";cursor:pointer" : ""}"${it.thread ? ` onclick="go('#conv/'+${escj(enck(it.thread))})"` : ""}>
+          <span style="font-size:15px;line-height:1.35;flex:none">${ic}</span>
+          <div style="font-size:14px;line-height:1.4;color:var(--ink)">${esc(a)}</div>
+        </div>` }).join("")}
+      ${R.cerrados?.length ? `<div class="tiny" style="margin-top:10px;padding-top:9px;border-top:1px solid var(--line);color:var(--muted)">✓ Ya contestaste a ${esc(R.cerrados.slice(0, 4).join(", "))}${R.n?.cerrados > 4 ? ` y ${R.n.cerrados - 4} más` : ""}</div>` : ""}
+      ${R.fuente === "reglas" ? `<div class="tiny muted" style="margin-top:6px;opacity:.7">Ordenado por reglas — el resumen con IA se está generando.</div>` : ""}
+    </div>` : ""
+
   const briefCard = b.text ? `<div class="hb-brief"><div class="hb-brief-glow"></div>
       <div class="hb-eyebrow"><span>✦</span>Tu día en breve</div>
       <div class="hb-brief-txt">${esc(b.text)}</div>
@@ -266,7 +285,7 @@ function paintHome(d) {
   render(`<div class="screen home">
       <div class="hb-head"><div><div class="hb-date">${fecha}</div><h1 class="hb-greet">${saludo},<br>${esc(hubFirst())}</h1></div><div class="hb-avatar" onclick="go('#cuenta')" title="Cuenta y configuración">${esc((hubFirst().trim()[0] || "·").toUpperCase())}</div></div>
       <div id="onboard"></div>
-      ${staleBanner}${pushBanner}${askBar}${stale}${briefCard}${waitCard}${callsCard}${todosCard}${promCard}${agCard}${objCard}${kpisBlock}${newsCard}${coachCard}
+      ${staleBanner}${pushBanner}${askBar}${stale}${accionesCard}${briefCard}${waitCard}${callsCard}${todosCard}${promCard}${agCard}${objCard}${kpisBlock}${newsCard}${coachCard}
     </div>`, "home")
   renderOnboarding()
 }
