@@ -4,8 +4,12 @@
 import { readFileSync, writeFileSync, existsSync, renameSync } from "fs"
 import { randomBytes, scryptSync, timingSafeEqual } from "crypto"
 
-const PIN_FILE = "./data/auth-pin.json"
-const SESS_FILE = "./data/auth-sessions.json"
+// Los dos archivos de estado de auth aceptan override por env, igual que MESSAGES_DB y HUB_CONFIG. No es una
+// función para el usuario: es lo que hace que un test pueda bootear el server REAL sin leer —ni pisar— el PIN y las
+// sesiones de la instancia en la que corre. Sin esto, test/api-smoke decía "DB/data limpia → todavía sin PIN" y
+// resultaba falso en cualquier hub que ya tuviera PIN, porque la ruta era relativa al cwd del proceso.
+const PIN_FILE = process.env.AUTH_PIN_FILE || "./data/auth-pin.json"
+const SESS_FILE = process.env.AUTH_SESSIONS_FILE || "./data/auth-sessions.json"
 const SESSION_TTL = 90 * 86400000 // 90 días: en tus 3 celulares no volvés a tipear el PIN
 
 // El archivo de SESIONES se reescribe en cada login/logout. Sin tmp+rename, un corte a mitad de escritura (disco lleno,

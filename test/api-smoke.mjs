@@ -1,6 +1,7 @@
 // Smoke de la capa HTTP: bootea el server REAL en un puerto efímero contra una DB temporal y valida que
 // responde + que el GATE de auth funciona. El más alto ROI para quien toque server.mjs. Portable (no toca prod):
-// MESSAGES_DB temporal + HUB_CONFIG ficticio. El gate: 127.0.0.1 sin X-Forwarded-For = confiable (túnel SSH,
+// MESSAGES_DB temporal + HUB_CONFIG ficticio + PIN/sesiones en el temp (sin esto leía el PIN REAL del hub
+// donde corriera la suite, y "todavía sin PIN" fallaba en cualquier instalación ya configurada). El gate: 127.0.0.1 sin X-Forwarded-For = confiable (túnel SSH,
 // sin PIN); con X-Forwarded-For = "remoto vía proxy" → exige sesión → 401.
 import { test, before, after } from "node:test"
 import assert from "node:assert/strict"
@@ -25,7 +26,7 @@ before(async () => {
   PORT = await freePort()
   proc = spawn(process.execPath, ["src/server.mjs"], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(PORT), HOST: "127.0.0.1", MESSAGES_DB: join(dir, "messages.db"), HUB_CONFIG: hubCfg, LLM_CHAIN: "ollama" },
+    env: { ...process.env, PORT: String(PORT), HOST: "127.0.0.1", MESSAGES_DB: join(dir, "messages.db"), HUB_CONFIG: hubCfg, AUTH_PIN_FILE: join(dir, "pin.json"), AUTH_SESSIONS_FILE: join(dir, "sess.json"), LLM_CHAIN: "ollama" },
     stdio: ["ignore", "pipe", "pipe"],
   })
   let childOut = ""
