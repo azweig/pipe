@@ -36,6 +36,20 @@ const SOLO_MEDIA = /^(📞|🎤|🖼|📹|🌟|👤|📍)/
 // Avisos que informan algo YA HECHO: no piden nada. Distinto de una deuda, que pide que pagues.
 const YA_HECHO = /te enviamos tu (nuevo )?comprobante|comprobante electr[oó]nico|estado de cuenta|constancia de pago|pago (exitoso|recibido|procesado)|tu pedido (fue|ha sido)|env[ií]o (realizado|confirmado)|gracias por tu (pago|compra)/i   // "llamada perdida" o un audio suelto no son un pedido
 
+// EL "ASUNTO" DE UN MENSAJE QUE NO TIENE ASUNTO.
+// Un correo llega como "Asunto — resumen"; un chat no tiene asunto, así que tomar el texto entero convertía el mensaje
+// completo en "asunto". Como la marca de obligación se exige en el asunto (a propósito: buscarla en el cuerpo metía
+// boletines por una palabra suelta), en un chat esa defensa desaparecía y cualquier reenvío largo podía disparar
+// "deuda" o "aportes" de pasada. Visto en producción: un reenvío de saludo encabezó la lista por encima de deudas
+// reales. En chat el equivalente honesto del asunto es la PRIMERA LÍNEA: lo que la persona abre diciendo.
+const PREFIJO_REENVIO = /^\s*(↷\s*)?(re)?forwarded\s*(message)?\s*:?/i
+export function asuntoDe(m) {
+  const crudo = String(m?.text || "")
+  if (m?.channel === "email") return crudo.split(" — ")[0]
+  const primera = crudo.replace(PREFIJO_REENVIO, "").split("\n").map((l) => l.trim()).find((l) => l.length > 2) || ""
+  return primera.slice(0, 140)
+}
+
 // Clasifica POR QUÉ algo importa. Es lo que después se le muestra al usuario como etiqueta.
 export function tipoDe(texto) {
   const t = String(texto || "")
@@ -43,6 +57,17 @@ export function tipoDe(texto) {
   if (PLATA.test(t) && PLAZO.test(t)) return "PLATA"
   if (PLATA.test(t)) return "PLATA"
   return null
+}
+
+// Clave de "mismo caso": dominio de quien escribe + asunto sin los Re:/Fwd: ni la puntuación. Sólo para correo —
+// en un chat no hay organización detrás de un número, así que ahí cada persona es su propio caso.
+function casoDe(m, asunto) {
+  if (m?.channel !== "email") return null
+  const dom = /@([\w.-]+)/.exec(String(m.jid || m.thread || ""))?.[1]?.toLowerCase()
+  if (!dom) return null
+  const a = String(asunto || "").toLowerCase().replace(/^((re|rv|fw|fwd|reenv)\s*:\s*)+/i, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ").trim().slice(0, 60)
+  return a ? dom + "|" + a : null
 }
 
 // Hilos donde la pelota es TUYA, ordenados por costo de no contestar.
@@ -78,7 +103,7 @@ export function pendientes({ dias = DIAS, limite = 8 } = {}) {
       continue
     }
 
-    const asunto = String(ent.text || "").split(" — ")[0]
+    const asunto = asuntoDe(ent)
     if (SOLO_MEDIA.test(asunto)) continue
     const cuerpo = limpio(ent.body)
     const txt = `${asunto} ${cuerpo}`
@@ -117,6 +142,7 @@ export function pendientes({ dias = DIAS, limite = 8 } = {}) {
     p += dd <= 2 ? 8 : dd <= 5 ? 5 : dd <= 10 ? 0 : -10
 
     cand.push({
+      casoKey: casoDe(ent, asunto),
       thread: h.thread, quien: ent.name || h.thread, canal: ent.channel,
       dias: +dd.toFixed(1), tipo: obligacion ? (PLATA.test(txt) ? "PLATA" : "PLAZO") : "PERSONA", p,
       asunto: asunto.slice(0, 110),
@@ -125,6 +151,19 @@ export function pendientes({ dias = DIAS, limite = 8 } = {}) {
     })
   }
   cand.sort((a, b) => b.p - a.p)
+  // UN EXPEDIENTE, UN RENGLÓN. Dos personas de la misma organización escribiendo por el mismo asunto son el mismo
+  // pendiente: contestarle a una es contestarle a la casa. Sin esto, un estudio con dos personas en copia ocupaba dos
+  // de los seis lugares de la Home y desplazaba pendientes distintos. Se agrupa por (dominio del remitente + asunto
+  // normalizado) y queda el de mayor puntaje; los demás se cuentan en `tambien`.
+  const porCaso = new Map()
+  for (const c of cand) {
+    const k = c.casoKey
+    if (!k) { porCaso.set(Symbol(), c); continue }   // sin dominio (chats) no se agrupa: cada persona es su propio caso
+    const y = porCaso.get(k)
+    if (!y) porCaso.set(k, c)
+    else { y.tambien = (y.tambien || 0) + 1; if (c.quien && y.quien !== c.quien) y.conQuien = [...new Set([...(y.conQuien || [y.quien]), c.quien])] }
+  }
+  const unicos = [...porCaso.values()].sort((a, b) => b.p - a.p)
   cerrados.sort((a, b) => a.dias - b.dias)
-  return { pendientes: cand.slice(0, limite), cerrados: cerrados.slice(0, 12), n: { pend: cand.length, cerrados: cerrados.length } }
+  return { pendientes: unicos.slice(0, limite), cerrados: cerrados.slice(0, 12), n: { pend: unicos.length, cerrados: cerrados.length } }
 }
