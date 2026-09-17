@@ -65,8 +65,12 @@ fi
 rm -f "$TMP/messages.db" "$TMP/mautrix-whatsapp.db" "$TMP/cas.db"
 
 # 4. rotación local: conservar los últimos 7 (con su .sha256). Limpia .partial huérfanos de corridas fallidas.
-rm -f "$OUT"/pipe-*.partial
-ls -1t "$OUT"/pipe-*.tar.zst.enc 2>/dev/null | tail -n +8 | while read -r old; do rm -f "$old" "$old.sha256"; done
+#
+# El patrón NO lleva el nombre del proyecto a propósito. Lo llevaba, y el día que el proyecto se renombró la rotación
+# dejó de ver los respaldos del nombre anterior: quedaron 7 archivos huérfanos ocupando 5,7 GB que ya nadie iba a
+# borrar nunca. Un archivo que la rotación no alcanza es un archivo eterno, y el disco no perdona.
+rm -f "$OUT"/*.partial
+ls -1t "$OUT"/*.tar.zst.enc 2>/dev/null | tail -n +8 | while read -r old; do rm -f "$old" "$old.sha256"; done
 
 # 5. offsite opcional (si hay remote rclone configurado en el entorno)
 if [ -n "${BACKUP_RCLONE_REMOTE:-}" ] && command -v rclone >/dev/null; then
