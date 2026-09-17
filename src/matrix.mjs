@@ -234,48 +234,98 @@ export async function sendMatrixSticker(room, buffer, { mime = "image/webp" } = 
   return { ok: !!(r && (r.event_id || r.eventId)), event: r?.event_id }
 }
 
-// INICIAR un chat de WhatsApp NUEVO por número (contacto histórico sin sala en el bridge). Le pide al bot del bridge que
-// cree el portal (start-chat) y devuelve el mxid de la sala. Resuelve por el número EXACTO → no hay riesgo de mandar a otro.
-// ¿Con CUÁL de tus cuentas abrir el chat? Con varias registradas, el bridge resuelve el número contra su login
-// "preferido" — que puede ser uno DESLOGUEADO, y entonces contesta "Failed to resolve identifier: not logged in"
-// y no crea nada. Visto en producción: una cuenta caída hacía fallar la apertura de chats de las otras dos.
-// Se elige una con SESIÓN VIVA, y entre ésas la que tenga al contacto en su agenda (es la que de verdad puede escribirle).
-async function loginVivoPara(num) {
+// ¿EN QUÉ SALA LE ESCRIBO A ESTA PERSONA?
+//
+// Podés tener varias cuentas de WhatsApp conectadas, y el puente crea UN PORTAL POR CUENTA: la misma persona puede
+// tener dos o tres salas, una por cada número tuyo. Elegir la equivocada no da error — el mensaje sale desde un
+// número que esa persona no conoce, o no sale.
+//
+// La regla que había era "la creada más recientemente", y eso convertía un error en permanente: un intento fallido
+// crea un portal nuevo bajo la cuenta equivocada, ese portal pasa a ser el más nuevo, y a partir de ahí gana siempre.
+// Medido en producción: un contacto con conversación de meses bajo un número propio recibía los mensajes por un
+// portal creado ese mismo día bajo OTRO número.
+//
+// El orden correcto no mira la fecha de creación, mira las pruebas de que esa cuenta es la que habla con esa persona:
+//   1. la sesión tiene que estar viva (si no, el puente acepta el evento y nunca lo entrega),
+//   2. la persona tiene que estar en la agenda de esa cuenta,
+//   3. gana la que tenga más historial con ella,
+//   4. y a igualdad, la sala VIEJA — no la que acaba de crear un intento equivocado.
+export function elegirPortal(cands, { vivos = new Set(), agenda = new Set(), historial = new Map() } = {}) {
+  const puntaje = (c) => {
+    const r = String(c.receiver || "")
+    return [vivos.has(r) ? 1 : 0, agenda.has(r) ? 1 : 0, historial.get(r) || 0, -(c.rowid || 0)]
+  }
+  return [...cands].sort((a, b) => {
+    const pa = puntaje(a), pb = puntaje(b)
+    for (let i = 0; i < pa.length; i++) if (pa[i] !== pb[i]) return pb[i] - pa[i]
+    return 0
+  })[0] || null
+}
+
+// Lee del puente todo lo necesario para decidir. Devuelve null si no hay puente: no es un error, es "no hay nada que elegir".
+async function portalesDe(num) {
+  const mdb = await mautrixDb()
+  if (!mdb) return null
   try {
-    const Database = (await import("better-sqlite3")).default
-    const mdb = new Database(MAUTRIX_WA_DB, { readonly: true })
-    const vivos = mdb.prepare("SELECT jid FROM whatsmeow_device").all().map((r) => String(r.jid).split(/[:@]/)[0])
-    let elegido = null
-    for (const v of vivos) {
-      const tiene = mdb.prepare("SELECT 1 FROM whatsmeow_contacts WHERE our_jid LIKE ? AND their_jid LIKE ? LIMIT 1").get(`${v}%`, `${num}@%`)
-      if (tiene) { elegido = v; break }
-    }
-    mdb.close()
-    return elegido || vivos[0] || null
+    const vivos = new Set(mdb.prepare("SELECT jid FROM whatsmeow_device").all().map((r) => String(r.jid).split(/[:@]/)[0]))
+    const agenda = new Set(mdb.prepare("SELECT our_jid FROM whatsmeow_contacts WHERE their_jid LIKE ?").all(`${num}@%`)
+      .map((r) => String(r.our_jid).split(/[:@]/)[0]))
+    const historial = new Map()
+    try {
+      for (const r of mdb.prepare("SELECT room_receiver r, COUNT(*) n FROM message WHERE room_id LIKE ? GROUP BY room_receiver").all(`${num}@%`))
+        historial.set(String(r.r), r.n)
+    } catch { /* el esquema del puente cambió de nombre: se decide igual, sin este criterio */ }
+    // other_user_id guarda el número PELADO (sin @s.whatsapp.net), pero no en todas las versiones del puente: se
+    // aceptan las dos formas. Lo que NO se acepta es buscar por subcadena (%num%), como estaba antes: un número que
+    // contiene a otro daría un portal ajeno, y ese es el peor error posible acá.
+    const cands = mdb.prepare(`SELECT rowid, mxid, receiver FROM portal
+      WHERE (other_user_id = ? OR other_user_id LIKE ?) AND room_type='dm' AND mxid IS NOT NULL AND mxid!=''`)
+      .all(num, `${num}@%`)
+    return { cands, vivos, agenda, historial }
   } catch { return null }
+}
+
+// INICIAR (o RECUPERAR) el chat de WhatsApp con un número y devolver el mxid de su sala.
+//
+// Primero se busca una sala que YA exista, y recién si no hay se le pide al puente que la cree. Al revés —que era como
+// estaba— cada llamada mandaba start-chat, y un start-chat que resuelve mal deja un portal nuevo que después gana por
+// ser el más reciente. Buscar antes de crear es lo que corta ese círculo.
+// Elegir la sala no alcanza: el hub tiene que ESTAR en ella. Un portal viejo puede existir con el usuario del hub
+// fuera (te fuiste de la sala, o nunca te invitó), y entonces enviar da 403 — y peor, pedirle al puente que abra el
+// chat le hace crear un portal NUEVO bajo otra cuenta en vez de devolver el que ya está. Entrar es idempotente y
+// barato, así que se hace siempre antes de devolver la sala.
+async function asegurarMembresia(token, mxid) {
+  try {
+    const r = await fetch(`${HS}/_matrix/client/v3/join/${encodeURIComponent(mxid)}`,
+      { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}" })
+    return r.ok
+  } catch { return false }
 }
 
 export async function startWhatsAppChat(number) {
   const num = String(number || "").replace(/[^\d]/g, "")
   if (num.length < 8) return null
+  const ya = await portalesDe(num)
+  if (ya && ya.cands.length) {
+    const best = elegirPortal(ya.cands, ya)
+    if (best?.mxid && await asegurarMembresia(await login(), best.mxid)) return best.mxid
+  }
   const token = await login()
   const botR = await botRoom(token, "whatsapp")
-  const desde = await loginVivoPara(num)
-  if (desde) await sendText(token, botR, `set-preferred-login ${desde}`) // sin esto puede intentar con una cuenta caída
+  // ¿Con CUÁL cuenta abrirlo? Con el bridge resolviendo contra su login "preferido", que puede ser uno deslogueado
+  // (contesta "Failed to resolve identifier: not logged in" y no crea nada) o simplemente el que no habla con esta
+  // persona. Se elige una con sesión viva que la tenga en su agenda.
+  const vivos = ya ? [...ya.vivos] : []
+  const desde = vivos.find((v) => ya.agenda.has(v)) || vivos[0] || null
+  if (desde) await sendText(token, botR, `set-preferred-login ${desde}`)
   await sendText(token, botR, `start-chat +${num}`) // comando del bridge (mautrix-whatsapp bridgev2)
-  const Database = (await import("better-sqlite3")).default
   for (let i = 0; i < 8; i++) {
     await new Promise((r) => setTimeout(r, 1500))
-    try {
-      const mdb = new Database(MAUTRIX_WA_DB, { readonly: true })
-      // ROBUSTEZ: puede haber VARIOS portales al mismo contacto (uno por cada número tuyo que lo tenga). Elegí el que sea de un
-      // login con SESIÓN VIVA — si no, el mensaje se rutea por un número deslogueado y el bridge lo descarta silenciosamente.
-      const alive = new Set(mdb.prepare("SELECT jid FROM whatsmeow_device").all().map((r) => String(r.jid).split(/[:@]/)[0]))
-      const cands = mdb.prepare("SELECT mxid, receiver FROM portal WHERE other_user_id LIKE ? AND room_type='dm' AND mxid IS NOT NULL AND mxid!='' ORDER BY rowid DESC").all(`%${num}%`)
-      mdb.close()
-      const best = cands.find((c) => alive.has(String(c.receiver))) || cands[0]
-      if (best?.mxid) return best.mxid
-    } catch {}
+    const p = await portalesDe(num)
+    if (p && p.cands.length) {
+      const best = elegirPortal(p.cands, p)
+      if (best?.mxid && await asegurarMembresia(token, best.mxid)) return best.mxid
+    }
   }
   return null
 }
