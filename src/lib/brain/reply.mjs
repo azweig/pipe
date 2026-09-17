@@ -189,8 +189,14 @@ export async function sendReply(key, text, { channel, target, historiaDe = "" } 
   if (histNum && !MY_NUMBERS.has(histNum)) {
     const mxid = await startWhatsAppChat(histNum)
     if (mxid) { const r = await sendMatrix(mxid, text); return r.ok ? { ok: true, channel: "whatsapp", ...guardarEnviado(key, "whatsapp", text) } : { error: "no se pudo enviar por WhatsApp (bridge)" } }
-    return { error: "Estoy abriendo el chat de WhatsApp con este contacto (es la primera vez desde acá). Probá de nuevo en unos segundos." }
+    // Este mensaje es lo único que el usuario ve, así que tiene que decir QUÉ pasa y QUÉ hacer. El anterior sonaba a
+    // falla genérica y nadie reintentaba: el chat quedaba "roto" para siempre aunque bastara tocar enviar otra vez.
+    return { error: "Esta conversación viene del historial importado: todavía no existe en WhatsApp. La estoy abriendo ahora — tocá enviar de nuevo en unos segundos." }
   }
+  // Un GRUPO importado no se puede abrir: start-chat sólo sirve para 1:1, y tratar el id de un grupo como teléfono
+  // abriría un chat con una persona ajena. Decirlo es mejor que un error genérico que invita a reintentar en vano.
+  if (isContainerJid(String(key).replace(/^whatsapp:/, "")) || (histJid && isContainerJid(histJid)))
+    return { error: "Este grupo viene del historial importado y el puente no lo tiene: sólo se puede leer, no responder." }
   return { error: "No encuentro por qué canal responder (sin sala de WhatsApp ni dirección de email)." }
 }
 

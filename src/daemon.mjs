@@ -259,6 +259,17 @@ function tickHomeAcciones() {
   if (tocaCorrer(Date.now(), ts, hub.homeHoras(), hub.tz())) runHomeAcciones()
 }
 
+// --- BACKUP DE MEDIA: el .tar cifrado diario NO incluye el CAS (son decenas de GB); la media va aparte, por lotes e
+// incremental. Estaba SIN PROGRAMAR: se corrió a mano una vez y quedaron 3.835 archivos (~5 GB) sin respaldar durante
+// tres semanas. Un backup que hay que acordarse de correr no es un backup.
+let backupMediaRunning = false
+function runBackupMedia() {
+  if (backupMediaRunning) return
+  backupMediaRunning = true
+  const p = spawnLogged("backup-media", NODE, ["scripts/backup-media.mjs"])
+  p.on("exit", () => { backupMediaRunning = false })
+}
+
 // --- EXTRACT ACTIONS: to-dos (lo que te pidieron) + promesas (lo que prometiste) de las conversaciones activas → Home ---
 let extractRunning = false
 function runExtract() { if (extractRunning) return; extractRunning = true; const p = spawnLogged("extract-actions", NODE, ["src/extract-actions.mjs"]); p.on("exit", () => { extractRunning = false }) }
@@ -288,6 +299,25 @@ function runBridgePortals() {
   bridgePortalsRunning = true
   const p = spawnLogged("bridge-portals", NODE, ["src/matrix.mjs", "bridge-portals"])
   p.on("exit", () => { bridgePortalsRunning = false })
+}
+
+// FICHAS PARTIDAS: la misma persona en dos hilos.
+//
+// Dos causas distintas, dos arreglos. Un mensaje puede entrar con un LID de WhatsApp sin resolver y quedar archivado
+// DENTRO de la conversación de otro (reparar-lid lo devuelve a su sitio); y un contacto que escribe desde dos números
+// o dos correos puede tener dos fichas que nunca se miran (personas-duplicadas las junta). Ninguna de las dos borra
+// nada: relabelan a qué conversación pertenece cada mensaje, y ambas dejan registro en data/ por si hay que deshacer.
+//
+// Caro de escanear (recorre la tabla entera), así que cada 6h y no cada 20 min como la fusión de grupos.
+let fichasRunning = false
+function runFichas() {
+  if (fichasRunning) return
+  fichasRunning = true
+  const p = spawnLogged("fichas", NODE, ["scripts/reparar-lid.mjs", "--aplicar"])
+  p.on("exit", () => {
+    const q = spawnLogged("fichas", NODE, ["scripts/personas-duplicadas.mjs", "--fusionar"])
+    q.on("exit", () => { fichasRunning = false })
+  })
 }
 
 // --- ingester de grabaciones desde Google Drive (Meet, Cube ACR, etc.) → notetaker ---
@@ -446,6 +476,8 @@ setTimeout(runBridgeSync, 8 * 60000) // sync del bridge (fotos+nombres) a los 8 
 setInterval(runBridgeSync, 6 * 3600000) // fotos de perfil + nombres de grupo cada 6h (mautrix DB)
 setTimeout(runBridgePortals, 90000) // primera fusión de grupos duplicados a los 90s
 setInterval(runBridgePortals, 20 * 60000) // fusiona salas portal → @g.us (dedup grupos) cada 20 min — barato
+setTimeout(runFichas, 6 * 60000)          // fichas partidas: a los 6 min, ya con el puente sincronizado
+setInterval(runFichas, 6 * 3600000)       // y cada 6h — escanea la tabla entera, no puede correr seguido
 setTimeout(runHomeBrief, 150000) // primer brief de la home a los ~2.5 min (tras graphify/coach)
 setInterval(runHomeBrief, 6 * 3600000) // regenera la home (prosa+audio+KPIs+noticias) cada 6h = 4×/día
 setTimeout(runCalendarPrep, 100000) // primeras tarjetas de evento a los ~1.5 min
@@ -469,6 +501,8 @@ setTimeout(runAudioSummary, 100000) // primer resumen de notas de voz a los ~1.5
 setInterval(runAudioSummary, 2 * 60000) // transcribe+resume notas de voz recibidas nuevas cada 2 min (batch chico)
 setTimeout(runDocSummary, 160000) // primer resumen de documentos a los ~2.5 min
 setInterval(runDocSummary, 10 * 60000) // extrae+resume documentos recibidos nuevos cada 10 min
+setTimeout(runBackupMedia, 20 * 60000) // 20 min después de arrancar: primero que se estabilice todo lo demás
+setInterval(runBackupMedia, 6 * 3600000) // y cada 6h. Es incremental: sólo sube los lotes que cambiaron.
 setTimeout(tickHomeAcciones, 45000) // al arrancar: sólo corre si lo guardado quedó antes de la última hora programada
 setInterval(tickHomeAcciones, 60000) // y se fija cada minuto si ya toca (4am/4pm por defecto, configurable)
 setTimeout(runExtract, 130000) // primera extracción de tareas/promesas a los ~2 min

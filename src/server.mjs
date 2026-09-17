@@ -15,10 +15,11 @@ import * as integrations from "./lib/integrations.mjs"
 import * as groups from "./lib/groups.mjs"
 import * as goauth from "./lib/google.mjs"
 import * as tglogin from "./lib/telegram-login.mjs"
-import { loggedOutNumbers } from "./matrix.mjs"
+import { loggedOutNumbers, startWhatsAppChat } from "./matrix.mjs"
 import { llmConfigMasked, setLlmConfig, smartChain, testKey } from "./lib/llm.mjs"
 import * as hub from "./lib/hub.mjs"
 import * as sig from "./lib/signature.mjs"
+import { calentarChat } from "./lib/brain/wa-calentar.mjs"
 import { cuentasQueEnvian } from "./lib/mailer.mjs"
 import * as meetings from "./lib/meetings.mjs"
 import * as auth from "./lib/auth.mjs"
@@ -982,10 +983,23 @@ const server = createServer(async (req, res) => {
       if (path === "/api/contact/category" && req.method === "POST") { const b = await body(req); ws.setContactCategory(b.key, b.category); return json(res, 200, { ok: true }) }
       if (path === "/api/contact/info") return json(res, 200, { category: (ws.contactCategories()[q.key] || "auto"), pinned: ws.pins().includes(q.key), silenced: ws.silenced().includes(q.key) })
       if (path === "/api/contact/suggestions") return json(res, 200, await brain.mergeSuggestions(ws, q.key || ""))
-      if (path === "/api/thread") return json(res, 200, await brain.unifiedThread(q.key || "", ws, { before: +q.before || 0, limit: +q.limit || 100, secretOn }))
+      if (path === "/api/thread") {
+        // Abrir la conversación es el momento de pedirle al puente la sala, no el envío. Un hilo IMPORTADO (del .txt
+        // de "Exportar chat") tiene historial pero ninguna sala: si se espera al envío, el usuario escribe, falla con
+        // "probá de nuevo" y concluye —con razón— que está roto. Pedirla acá le da al bridge los segundos que tarda
+        // mientras el usuario todavía está leyendo o tipeando. Fire-and-forget: no demora la respuesta.
+        try { calentarChat(String(q.key || ""), startWhatsAppChat) } catch {}
+        return json(res, 200, await brain.unifiedThread(q.key || "", ws, { before: +q.before || 0, limit: +q.limit || 100, secretOn }))
+      }
       if (path === "/api/thread/catchup") return json(res, 200, await brain.catchup(q.key || "", ws, +q.since || 0))
       // SYNC edit-aware: solo los mensajes NUEVOS o editados (rev > sinceRev) → el cliente cachea el resto y no lo re-baja
-      if (path === "/api/thread/delta") return json(res, 200, brain.threadDeltaItems(q.key || "", +q.sinceRev || 0))
+      // El calentamiento va ACÁ TAMBIÉN, no sólo en /api/thread: un cliente que ya tiene la conversación en cache
+      // pide el delta, no el hilo entero. Enganchar sólo /api/thread dejaba afuera justo al usuario que ya venía
+      // usando ese chat — o sea, el caso real.
+      if (path === "/api/thread/delta") {
+        try { calentarChat(String(q.key || ""), startWhatsAppChat) } catch {}
+        return json(res, 200, brain.threadDeltaItems(q.key || "", +q.sinceRev || 0))
+      }
       if (path === "/api/thread/sync") return json(res, 200, brain.threadSyncPage(q.key || "", +q.before || 0, { limit: Math.min(1500, +q.limit || 800) })) // backfill de texto completo hacia atrás
       if (path === "/api/thread/suggest-reply") return json(res, 200, await brain.suggestReply(q.key || "", { localOnly: secretoPorNombre(q.key) })) // borrador IA para el input (no envía)
       if (path === "/api/thread/summarize") return json(res, 200, await brain.summarizeChat(q.key || "", q.range || "all", ws)) // resumen guardado como nota IA

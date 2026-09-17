@@ -187,11 +187,15 @@ export function unifyByNumber(contactsMap = {}, manual = {}) {
 }
 
 // fusiona hilos: mueve todos los mensajes de <sources[]> al hilo <target>. Para "es la misma persona".
+// withRetry NO es opcional acá: esto corre en un cron mientras los lectores escriben, así que se cruza con ellos y
+// SQLite devuelve BUSY. Sin reintento, la fusión moría con "database is locked" en el PRIMER hilo y no volvía a
+// intentarlo hasta el siguiente ciclo, donde volvía a morir. Efecto medido: la unificación LID→número llevaba meses
+// sin completarse y los contactos quedaban partidos en dos fichas. La función de arriba ya lo usaba; ésta no.
 export function mergeThreads(target, sources) {
   const upd = db().prepare("UPDATE messages SET thread=? WHERE thread=?")
   let n = 0
   const tx = db().transaction(() => { for (const s of sources) { if (s !== target) n += upd.run(target, s).changes } })
-  tx(); if (n) rebuildStats(); return n
+  withRetry(() => tx()); if (n) rebuildStats(); return n
 }
 
 // re-etiqueta hilos 1:1 según identidades manuales. NUNCA toca grupos (matchea por JID de la conversación, no por sender).

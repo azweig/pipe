@@ -2,6 +2,7 @@
 // Corre en el daemon (throttled). Cascada para emails-imagen: tesseract (OCR local, gratis) → si saca texto lo resume el modelo local; si no, visión Gemini.
 import { emailsToSummarize, setMessageSummary } from "./lib/db.mjs"
 import { llm, visionLLM, smartChain, featureWantsCloud } from "./lib/llm.mjs"
+import { soloLoNuevo } from "./lib/email-quote.mjs" // el hilo citado tapaba el mensaje: ver email-quote.mjs
 import { execFileSync } from "node:child_process"
 import { writeFileSync, unlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -68,7 +69,10 @@ let done = 0
 
 for (const r of rows) {
   const subject = (r.text || "").split(" — ")[0]
-  const content = stripHtml(r.body || "").slice(0, 4000)
+  // SOLO LO NUEVO. Antes se tomaban los primeros 4.000 caracteres del cuerpo, pero en una respuesta lo nuevo va
+  // arriba y abajo cuelga el hilo entero: un mensaje de 605 caracteres llegaba con 3.395 de historial encima y el
+  // modelo resumía el historial. Caso medido: un "tuvo buen final" se resumió como "rechazo por falta de informe".
+  const content = soloLoNuevo(stripHtml(r.body || ""), { asunto: subject }).slice(0, 4000)
   // email SIN texto (pura imagen) → visión: descargamos la(s) imagen(es) y las lee Gemini
   if (content.replace(/\s/g, "").length < 15) {
     // no gastar visión en marketing (se oculta como spam igual)
@@ -81,7 +85,7 @@ for (const r of rows) {
       ocr = ocr.replace(/\s+/g, " ").trim()
       if (ocr.replace(/[^a-záéíóúñ0-9]/gi, "").length > 40) {
         try {
-          let s = cleanPitch(await llm(`Asunto: ${subject}\nDe: ${r.name}\nTexto extraído (OCR) del email:\n${ocr.slice(0, 3000)}\n\nUNA frase corta (máx 18 palabras) en español con lo esencial/accionable. Directo, sin comillas.`, { chain: smartChain({ sensitive: true, feature: "email" }), model: process.env.EMAIL_SUM_MODEL || "qwen2.5:3b", temperature: 0.2, raw: true }))
+          let s = cleanPitch(await llm(`Asunto: ${subject}\nDe: ${r.name}\nTexto extraído (OCR) del email:\n${ocr.slice(0, 3000)}\n\nUNA frase corta (máx 18 palabras) en español con lo esencial/accionable. Directo, sin comillas.`, { chain: smartChain({ sensitive: true, feature: "email" }), model: process.env.EMAIL_SUM_MODEL || "qwen2.5:3b", temperature: 0.2, raw: true, timeoutMs: +process.env.EMAIL_SUM_TIMEOUT_MS || 300000 }))
           if (s) { setMessageSummary(r.id, s); done++; console.log(`[email-sum] 🔤ocr ${subject.slice(0, 24)} → ${s.slice(0, 50)}`); continue }
         } catch { /* cae a visión */ }
       }
@@ -98,7 +102,10 @@ for (const r of rows) {
   }
   const prompt = `Asunto: ${subject}\nDe: ${r.name}\n\nContenido del email:\n${content}\n\nEscribe UNA sola frase corta (máximo 18 palabras), en español, con lo esencial y accionable de este email — como un tweet. Directo, sin "el email dice" ni comillas. Si es una notificación (banco, compra, envío, factura) incluí el dato clave (monto, operación, estado, fecha).`
   try {
-    let s = await llm(prompt, { chain: smartChain({ sensitive: true, feature: "email" }), model: process.env.EMAIL_SUM_MODEL || "qwen2.5:3b", temperature: 0.2, raw: true }) // cuerpos de email = sensible → smartChain (era `|| "ollama,gemini"` = fail-open standalone)
+    // timeoutMs explícito: el default de ollama son 90s y la ESPERA EN COLA sola puede superarlos. Medido en el box:
+    // un resumen trivial tardó 233s, de los cuales 232 fueron cola detrás de un graphify de 29 minutos — el trabajo
+    // real eran 0,9s. Con 90s moría TODO y los correos quedaban sin resumen. Es un cron de fondo: puede esperar.
+    let s = await llm(prompt, { chain: smartChain({ sensitive: true, feature: "email" }), model: process.env.EMAIL_SUM_MODEL || "qwen2.5:3b", temperature: 0.2, raw: true, timeoutMs: +process.env.EMAIL_SUM_TIMEOUT_MS || 300000 }) // cuerpos de email = sensible → smartChain (era `|| "ollama,gemini"` = fail-open standalone)
     s = String(s || "").trim().replace(/^["'“”]+|["'“”]+$/g, "").split("\n")[0].slice(0, 180)
     if (s) { setMessageSummary(r.id, s); done++; console.log(`[email-sum] ${subject.slice(0, 28)} → ${s.slice(0, 60)}`) }
   } catch (e) { console.log(`[email-sum] err ${subject.slice(0, 24)}: ${e.message}`) }

@@ -236,11 +236,32 @@ export async function sendMatrixSticker(room, buffer, { mime = "image/webp" } = 
 
 // INICIAR un chat de WhatsApp NUEVO por número (contacto histórico sin sala en el bridge). Le pide al bot del bridge que
 // cree el portal (start-chat) y devuelve el mxid de la sala. Resuelve por el número EXACTO → no hay riesgo de mandar a otro.
+// ¿Con CUÁL de tus cuentas abrir el chat? Con varias registradas, el bridge resuelve el número contra su login
+// "preferido" — que puede ser uno DESLOGUEADO, y entonces contesta "Failed to resolve identifier: not logged in"
+// y no crea nada. Visto en producción: una cuenta caída hacía fallar la apertura de chats de las otras dos.
+// Se elige una con SESIÓN VIVA, y entre ésas la que tenga al contacto en su agenda (es la que de verdad puede escribirle).
+async function loginVivoPara(num) {
+  try {
+    const Database = (await import("better-sqlite3")).default
+    const mdb = new Database(MAUTRIX_WA_DB, { readonly: true })
+    const vivos = mdb.prepare("SELECT jid FROM whatsmeow_device").all().map((r) => String(r.jid).split(/[:@]/)[0])
+    let elegido = null
+    for (const v of vivos) {
+      const tiene = mdb.prepare("SELECT 1 FROM whatsmeow_contacts WHERE our_jid LIKE ? AND their_jid LIKE ? LIMIT 1").get(`${v}%`, `${num}@%`)
+      if (tiene) { elegido = v; break }
+    }
+    mdb.close()
+    return elegido || vivos[0] || null
+  } catch { return null }
+}
+
 export async function startWhatsAppChat(number) {
   const num = String(number || "").replace(/[^\d]/g, "")
   if (num.length < 8) return null
   const token = await login()
   const botR = await botRoom(token, "whatsapp")
+  const desde = await loginVivoPara(num)
+  if (desde) await sendText(token, botR, `set-preferred-login ${desde}`) // sin esto puede intentar con una cuenta caída
   await sendText(token, botR, `start-chat +${num}`) // comando del bridge (mautrix-whatsapp bridgev2)
   const Database = (await import("better-sqlite3")).default
   for (let i = 0; i < 8; i++) {

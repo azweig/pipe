@@ -6,6 +6,7 @@
 import "./_setup.mjs"
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import { sharedFor } from "../src/lib/brain/people.mjs"
 
 // índice de membresía mínimo, calcado del real: [nombre, clave(número), n]
@@ -41,4 +42,16 @@ test("SÍ reconoce el nombre EXTENDIDO (mismo nombre + apellido de más)", () =>
 test("no se cuenta a sí misma como persona en común", () => {
   const r = sharedFor("Marcos Salinas", new Set(), IDX)
   assert.ok(!r.people.some((p) => /altamira/i.test(p.name)), "la propia persona no va en 'en común'")
+})
+
+// UNA FUSIÓN QUE MUERE POR BLOQUEO DEJA LOS CONTACTOS PARTIDOS PARA SIEMPRE.
+// mergeThreads corre en un cron mientras los lectores escriben, así que se cruza con ellos y SQLite devuelve BUSY.
+// Sin reintento moría en el PRIMER hilo y no volvía hasta el ciclo siguiente, donde volvía a morir: medido, la
+// unificación LID→número llevó MESES sin completarse y la misma persona quedaba en dos fichas.
+test("mergeThreads reintenta ante un bloqueo en vez de abandonar", () => {
+  const src = readFileSync("src/lib/identity-repo.mjs", "utf8")
+  const i = src.indexOf("export function mergeThreads(")
+  assert.ok(i > 0, "no encontré mergeThreads")
+  const cuerpo = src.slice(i, src.indexOf("\n}", i))
+  assert.match(cuerpo, /withRetry\(/, "sin withRetry, un BUSY deja los contactos duplicados hasta que alguien lo note")
 })
