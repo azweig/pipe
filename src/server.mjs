@@ -532,7 +532,11 @@ const server = createServer(async (req, res) => {
         const cajon = { prioritarios: mails.filter(prioritario), todos: mails.filter((t) => t.bucket !== "spam"), spam: mails.filter((t) => t.bucket === "spam") }
         // `count` = cuántos mensajes tiene la cadena. Sin él, un intercambio de 40 correos y uno suelto se ven igual,
         // y no hay forma de saber si lo que se lee es el principio de algo o el final de una conversación larga.
+        // `nuevo` ≠ `unread`. Un hilo con mensajes sin abrir donde el ÚLTIMO lo escribiste VOS no está esperándote:
+        // ya contestaste. Marcarlo igual que a lo que sí requiere atención hace que TODA la lista quede resaltada, y
+        // un resaltado que aplica a todo no distingue nada. Se decide en el server para que las tres apps coincidan.
         const fila = (t) => ({ key: t.key, name: t.name, email: t.email, account: t.account, ts: t.ts, unread: t.unread,
+          nuevo: !!t.unread && t.lastDir !== "out",
           count: t.count, lastText: String(t.lastText || "").slice(0, 240), lastDir: t.lastDir,
           importante: !!t.importante, razon: t.importanteRazon || null,
           transaccional: esTransaccional(t.lastText || ""), spam: t.bucket === "spam", initials: t.initials, photo: t.photo })
@@ -705,6 +709,23 @@ const server = createServer(async (req, res) => {
         const modo = ["responder", "todos", "reenviar"].includes(String(q.modo || "")) ? String(q.modo) : "responder"
         const r = brain.prepararRespuesta(String(q.key || ""), { modo, id: q.id ? String(q.id) : "", secretOn })
         return json(res, r?.error ? 404 : 200, r)
+      }
+      // MARCAR TODO LEÍDO. Sin esto, el resaltado de "nuevo" es inútil por acumulación: da igual lo bien que se
+      // decida qué es nuevo si hay 380 hilos viejos sin abrir. Es la salida que tiene cualquier cliente de correo
+      // para volver a cero. Se confirma en la UI: se pierde el estado de no-leído y no se puede deshacer.
+      if (path === "/api/mail/seen-all" && req.method === "POST") {
+        const b = await body(req)
+        const tab = ["prioritarios", "todos", "spam"].includes(String(b.tab || "")) ? String(b.tab) : "todos"
+        const todos = brain.listThreads({ limit: 800, soloEmail: true })
+        const esCorreo = (t) => String(t.key || "").startsWith("email:") || t.lastChannel === "email"
+        const delCajon = todos.filter(esCorreo).filter((t) =>
+          tab === "spam" ? t.bucket === "spam" : tab === "prioritarios"
+            ? t.bucket !== "spam" && (t.importante || esTransaccional(t.lastText || "") || t.lastDir === "out" || t.pinned)
+            : t.bucket !== "spam")
+        let n = 0
+        for (const t of delCajon) { if (!t.unread) continue; try { ws.markSeen(t.key, Date.now()); n++ } catch {} }
+        brain.invalidateThreads()
+        return json(res, 200, { ok: true, marcados: n })
       }
       if (path === "/api/mail/accounts") return json(res, 200, { cuentas: cuentasQueEnvian(), firmas: sig.listSignatures(), fallback: sig.defaultSignature() })
       if (path === "/api/mail/send" && req.method === "POST") {

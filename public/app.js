@@ -3947,7 +3947,7 @@ function mailRow(m) {
   // "Vos:" cuando el último mensaje es TUYO — sin eso, un correo que escribiste vos se lee como si te lo hubieran
   // mandado. Y `count` porque un ida y vuelta de 40 correos y uno suelto se veían idénticos.
   // El clic abre el correo COMO correo (asunto, De/Para/CC, HTML, adjuntos), no la vista de chat.
-  return `<div class="mail-row tap${m.unread ? " unread" : ""}" onclick="abrirCorreo(${escj(m.key)})">
+  return `<div class="mail-row tap${m.nuevo ? " unread" : ""}" onclick="abrirCorreo(${escj(m.key)})">
     <div class="mail-main">
       <div class="mail-de">${marca}${esc(de)}${m.account ? `<span class="mail-cta">${esc(m.account)}</span>` : ""}${(m.count || 0) > 1 ? `<span class="mail-n" title="${m.count} mensajes en esta conversación">${m.count}</span>` : ""}</div>
       <div class="mail-txt">${m.lastDir === "out" ? `<span class="mail-vos">Vos:</span>` : ""}${esc(String(m.lastText || "").replace(/\s+/g, " ").slice(0, 140))}</div>
@@ -3971,7 +3971,18 @@ window.abrirCorreo = async (key) => {
   crHilo = null; crRedactor = null; crRemotas = {}
   if (!crCuentas.length) { const a = await api("/api/mail/accounts").catch(() => null); crCuentas = (a && a.cuentas) || [] }
   crHilo = await api(`/api/mail/message?key=${encodeURIComponent(key)}`).catch(() => null)
+  // Abrirlo es haberlo visto. Sin esto nada deja de ser "nuevo" nunca y el resaltado se vuelve inútil.
+  post("/api/thread/seen", { key, ts: Date.now() }).then(() => loadCorreo(mailTab, true)).catch(() => {})
   paintCorreo()
+}
+// Destructivo y sin deshacer: se pierde qué estaba sin leer. Confirmación explícita, como el resto de la app.
+window.mailTodoLeido = async () => {
+  const sinLeer = ((mailData && mailData.items) || []).filter((x) => x.nuevo).length
+  if (!sinLeer) return toast("Ya está todo leído.")
+  if (!confirm(`¿Marcar como leídos los ${sinLeer} correos sin leer de esta pestaña? No se puede deshacer.`)) return
+  const r = await post("/api/mail/seen-all", { tab: mailTab }).catch(() => null)
+  toast(r && r.ok ? `✓ ${r.marcados} marcados como leídos` : "No se pudo")
+  loadCorreo(mailTab, true)
 }
 window.cerrarCorreo = () => { crHilo = null; crRedactor = null; paintCorreo() }
 window.crToggle = (id) => { crRemotas["_open"] = crRemotas["_open"] === id ? "" : id; paintCorreo() }
@@ -4093,6 +4104,7 @@ function paintCorreo() {
     <div class="row" style="align-items:center;gap:10px">
       <h1 class="title" style="flex:1">Correo</h1>
       <button class="cr-refrescar" onclick="loadCorreo(mailTab, true)" title="Actualizar">↻</button>
+      <button class="cr-refrescar" onclick="mailTodoLeido()" title="Marcar todo como leído">✓✓</button>
       <button class="cr-nuevo" onclick="crNuevo()">✉️ Correo nuevo</button>
     </div>
     <div class="nt-quick" style="margin-bottom:10px">${tabs}</div>
