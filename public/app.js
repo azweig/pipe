@@ -185,7 +185,7 @@ function a11yUpgrade(root) {
     if (!el.getAttribute("role")) el.setAttribute("role", "button")
   })
 }
-function render(html, tab) { document.getElementById("schedChip")?.remove(); clearInterval(window._convPoll); ST.tab = tab || ST.tab; app.innerHTML = html + nav(); a11yUpgrade(app) }
+function render(html, tab) { document.getElementById("schedChip")?.remove(); clearInterval(window._convPoll); autoRefrescoCorreo((tab || ST.tab) === "correo"); ST.tab = tab || ST.tab; app.innerHTML = html + nav(); a11yUpgrade(app) }
 // gesto de swipe HORIZONTAL (para cambiar de tab/fecha). Ignora el scroll vertical (exige dx dominante).
 function onSwipe(el, onLeft, onRight) {
   if (!el) return
@@ -3912,11 +3912,27 @@ async function viewCorreo() {
   render(skel(6), "correo")
   await loadCorreo(mailTab)
 }
-window.loadCorreo = async (tab) => {
+window.loadCorreo = async (tab, silencioso) => {
   mailTab = tab || mailTab
   const r = await api(`/api/mail?tab=${encodeURIComponent(mailTab)}`).catch(() => null)
   mailData = r || { items: [], counts: {} }
+  // En el refresco silencioso se conserva la posición de scroll: si no, cada minuto te tira al principio de la lista.
+  const y = silencioso ? window.scrollY : 0
   paintCorreo()
+  if (silencioso) window.scrollTo(0, y)
+}
+
+// SE ACTUALIZA SOLO. Antes la lista se quedaba con lo que había al entrar y un correo nuevo no aparecía nunca.
+// Sólo con la pestaña VISIBLE: pedir cada minuto contra un hub que nadie está mirando es trabajo tirado.
+// Y no mientras estás leyendo un correo o escribiendo uno: no se le mueve la lista de abajo al usuario.
+let _mailTimer = null
+function autoRefrescoCorreo(on) {
+  clearInterval(_mailTimer); _mailTimer = null
+  if (!on) return
+  _mailTimer = setInterval(() => {
+    if (document.visibilityState !== "visible" || crHilo || crRedactor) return
+    loadCorreo(mailTab, true)
+  }, 60000)
 }
 function mailRow(m) {
   const s = "event.stopPropagation();"
@@ -4076,6 +4092,7 @@ function paintCorreo() {
   render(`<div class="screen">
     <div class="row" style="align-items:center;gap:10px">
       <h1 class="title" style="flex:1">Correo</h1>
+      <button class="cr-refrescar" onclick="loadCorreo(mailTab, true)" title="Actualizar">↻</button>
       <button class="cr-nuevo" onclick="crNuevo()">✉️ Correo nuevo</button>
     </div>
     <div class="nt-quick" style="margin-bottom:10px">${tabs}</div>
