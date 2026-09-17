@@ -3928,15 +3928,142 @@ function mailRow(m) {
   const marca = m.importante ? `<span class="mail-badge imp" title="${esc(m.razon || "Necesita tu atención")}">★</span>`
     : m.transaccional ? `<span class="mail-badge tx" title="Aviso que requiere acción (factura, vencimiento, servicio, agenda)">🧾</span>` : ""
   const de = m.name || m.email || "(sin remitente)"
-  return `<div class="mail-row tap${m.unread ? " unread" : ""}" onclick="location.hash='#conv/'+encodeURIComponent(${escj(m.key)})">
+  // "Vos:" cuando el último mensaje es TUYO — sin eso, un correo que escribiste vos se lee como si te lo hubieran
+  // mandado. Y `count` porque un ida y vuelta de 40 correos y uno suelto se veían idénticos.
+  // El clic abre el correo COMO correo (asunto, De/Para/CC, HTML, adjuntos), no la vista de chat.
+  return `<div class="mail-row tap${m.unread ? " unread" : ""}" onclick="abrirCorreo(${escj(m.key)})">
     <div class="mail-main">
-      <div class="mail-de">${marca}${esc(de)}${m.account ? `<span class="mail-cta">${esc(m.account)}</span>` : ""}</div>
-      <div class="mail-txt">${esc(String(m.lastText || "").replace(/\s+/g, " ").slice(0, 140))}</div>
+      <div class="mail-de">${marca}${esc(de)}${m.account ? `<span class="mail-cta">${esc(m.account)}</span>` : ""}${(m.count || 0) > 1 ? `<span class="mail-n" title="${m.count} mensajes en esta conversación">${m.count}</span>` : ""}</div>
+      <div class="mail-txt">${m.lastDir === "out" ? `<span class="mail-vos">Vos:</span>` : ""}${esc(String(m.lastText || "").replace(/\s+/g, " ").slice(0, 140))}</div>
     </div>
     <div class="mail-side"><span class="mail-time">${ago(m.ts)}</span>${acc}</div>
   </div>`
 }
+
+// ── CORREO COMO CORREO: lector + redactor (paridad con el escritorio) ──────────────────────────────────────────
+// El cuerpo va en un iframe SANDBOXEADO con CSP que bloquea todo recurso remoto: sin eso, abrir un correo le avisa
+// al remitente por píxel de rastreo y le entrega tu IP. Las imágenes remotas se cargan sólo si el usuario las pide.
+let crHilo = null, crRedactor = null, crCuentas = [], crRemotas = {}
+const crFecha = (ts) => new Date(ts).toLocaleString("es", { dateStyle: "long", timeStyle: "short" })
+const crTam = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round((n || 0) / 1024)) + " KB")
+function crDoc(html, remotasOk) {
+  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: cid:${remotasOk ? " https:" : ""}; style-src 'unsafe-inline'; font-src data:">`
+    + '<meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank">'
+    + '<style>body{margin:0;padding:14px;font-family:system-ui;color:#111;line-height:1.55;word-break:break-word}img{max-width:100%!important;height:auto}table{max-width:100%!important}</style>' + html
+}
+window.abrirCorreo = async (key) => {
+  crHilo = null; crRedactor = null; crRemotas = {}
+  if (!crCuentas.length) { const a = await api("/api/mail/accounts").catch(() => null); crCuentas = (a && a.cuentas) || [] }
+  crHilo = await api(`/api/mail/message?key=${encodeURIComponent(key)}`).catch(() => null)
+  paintCorreo()
+}
+window.cerrarCorreo = () => { crHilo = null; crRedactor = null; paintCorreo() }
+window.crToggle = (id) => { crRemotas["_open"] = crRemotas["_open"] === id ? "" : id; paintCorreo() }
+window.crRemotasOn = (id) => { crRemotas[id] = 1; paintCorreo() }
+window.crPreparar = async (modo) => {
+  const p = await api(`/api/mail/prepare?key=${encodeURIComponent(crHilo.key)}&modo=${modo}`).catch(() => null)
+  if (!p || p.error) return toast((p && p.error) || "No pude preparar la respuesta.")
+  crRedactor = { ...p, adjuntos: [] }; paintCorreo()
+}
+window.crNuevo = async () => {
+  if (!crCuentas.length) { const a = await api("/api/mail/accounts").catch(() => null); crCuentas = (a && a.cuentas) || [] }
+  crRedactor = { to: [], cc: [], asunto: "", cita: "", citaTxt: "", inReplyTo: "", adjuntos: [] }; paintCorreo()
+}
+window.crCerrarRed = () => { crRedactor = null; paintCorreo() }
+window.crAdjuntar = async (input) => {
+  for (const f of Array.from(input.files || [])) {
+    const b64 = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(String(fr.result || "")); fr.readAsDataURL(f) })
+    crRedactor.adjuntos.push({ nombre: f.name, mime: f.type || "application/octet-stream", b64, tam: f.size })
+  }
+  input.value = ""; paintCorreo()
+}
+window.crQuitarAdj = (i) => { crRedactor.adjuntos.splice(i, 1); paintCorreo() }
+window.crFmt = (cmd) => { const e = document.getElementById("crEditor"); if (e) { e.focus(); document.execCommand(cmd, false, null) } }
+window.crLink = () => { const u = prompt("Dirección del enlace:"); if (!u) return; const e = document.getElementById("crEditor"); if (e) { e.focus(); document.execCommand("createLink", false, /^https?:/i.test(u) ? u : "https://" + u) } }
+window.crEnviar = async (btn) => {
+  const v = (id) => { const el = document.getElementById(id); return el ? el.value : "" }
+  const to = v("crTo")
+  if (!to.trim()) return toast("Falta el destinatario.")
+  const asunto = v("crAsunto")
+  if (!asunto.trim() && !confirm("El correo no tiene asunto. ¿Mandarlo igual?")) return
+  btn.disabled = true; btn.textContent = "Enviando…"
+  const r = await post("/api/mail/send", {
+    msgId: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    cuenta: v("crCuenta"), to, cc: v("crCc"), bcc: v("crBcc"), asunto,
+    html: (document.getElementById("crEditor") || {}).innerHTML || "",
+    cita: crRedactor.cita || "", citaTxt: crRedactor.citaTxt || "", inReplyTo: crRedactor.inReplyTo || "",
+    adjuntos: crRedactor.adjuntos,
+  }).catch(() => ({ error: "No se pudo conectar con el hub." }))
+  btn.disabled = false; btn.textContent = "Enviar"
+  if (r && r.error) return toast(r.error)
+  toast("✓ Correo enviado")
+  crRedactor = null
+  if (crHilo) await abrirCorreo(crHilo.key); else paintCorreo()
+}
+function crVistaRedactor() {
+  if (!crRedactor) return ""
+  const R = crRedactor
+  const titulo = R.inReplyTo ? "Responder" : R.cita ? "Reenviar" : "Correo nuevo"
+  const op = crCuentas.map((c) => `<option value="${esc(c.label)}"${c.label === R.cuenta ? " selected" : ""}>${esc(c.user)}</option>`).join("")
+  const adj = (R.adjuntos || []).map((a, i) => `<span class="cr-chip">📎 ${esc(a.nombre)} · ${crTam(a.tam)} <button onclick="crQuitarAdj(${i})">✕</button></span>`).join("")
+  return `<div class="cr-red">
+    <div class="cr-red-head"><b>${titulo}</b><button class="cr-x" onclick="crCerrarRed()">✕</button></div>
+    <label class="cr-campo"><span>De</span><select id="crCuenta">${op}</select></label>
+    <label class="cr-campo"><span>Para</span><input id="crTo" value="${esc((R.to || []).join(", "))}" placeholder="nombre@dominio.com"></label>
+    <label class="cr-campo"><span>CC</span><input id="crCc" value="${esc((R.cc || []).join(", "))}"></label>
+    <label class="cr-campo"><span>CCO</span><input id="crBcc" value=""></label>
+    <label class="cr-campo"><span>Asunto</span><input id="crAsunto" value="${esc(R.asunto || "")}"></label>
+    <div class="cr-tools">
+      <button onclick="crFmt('bold')" style="font-weight:800">B</button>
+      <button onclick="crFmt('italic')" style="font-style:italic">I</button>
+      <button onclick="crFmt('underline')" style="text-decoration:underline">U</button>
+      <button onclick="crLink()">🔗</button>
+      <button onclick="crFmt('insertUnorderedList')">•—</button>
+      <button onclick="document.getElementById('crFile').click()">📎</button>
+      <input id="crFile" type="file" multiple hidden onchange="crAdjuntar(this)">
+    </div>
+    ${adj ? `<div class="cr-adj-red">${adj}</div>` : ""}
+    <div id="crEditor" class="cr-editor" contenteditable></div>
+    <div class="cr-firma-nota">Tu firma se agrega automáticamente al enviar${R.cita ? ", arriba del mensaje citado" : ""}.</div>
+    <div class="cr-red-pie"><button class="cr-enviar" onclick="crEnviar(this)">Enviar</button></div>
+  </div>`
+}
+function crVistaHilo() {
+  const H = crHilo
+  const abierto = crRemotas["_open"] || (H.mensajes[0] && H.mensajes[0].id)
+  const puedeTodos = H.mensajes[0] && !H.mensajes[0].sinDestinatarios
+  const msgs = H.mensajes.map((m) => {
+    const hayRemotas = /<img[^>]+src=["']https?:/i.test(m.html || "")
+    const ok = !!crRemotas[m.id]
+    const cuerpo = abierto !== m.id ? "" : `
+      ${hayRemotas && !ok ? `<button class="cr-remotas" onclick="crRemotasOn(${escj(m.id)})">🖼 Mostrar imágenes remotas<span>Bloqueadas para que el remitente no sepa que lo abriste</span></button>` : ""}
+      ${(m.adjuntos || []).length ? `<div class="cr-adj">${m.adjuntos.map((a) => `<span class="cr-chip">📎 ${esc(a.nombre)} · ${crTam(a.tam)}</span>`).join("")}</div>` : ""}
+      <iframe class="cr-body" sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="${esc(crDoc(m.html || "<p style='color:#888'>(sin cuerpo)</p>", ok))}"></iframe>`
+    return `<div class="cr-msg">
+      <div class="cr-msg-head" onclick="crToggle(${escj(m.id)})">
+        <div style="min-width:0">
+          <div class="cr-de">${m.dir === "out" ? "Vos" : esc(m.deNombre || m.de || "(sin remitente)")}</div>
+          <div class="cr-meta">${(m.para || []).length ? "Para: " + esc(m.para.join(", ")) : (m.sinDestinatarios ? "Para: —" : "")}${(m.cc || []).length ? " · CC: " + esc(m.cc.join(", ")) : ""}</div>
+        </div>
+        <div class="cr-fecha">${esc(crFecha(m.ts))}</div>
+      </div>${cuerpo}</div>`
+  }).join("")
+  return `<div class="screen">
+    <div class="row" style="align-items:center;gap:10px;margin-bottom:8px">
+      <button class="cr-volver" onclick="cerrarCorreo()">‹ Volver</button>
+    </div>
+    <div class="cr-asunto">${esc(H.asunto || "(sin asunto)")}</div>
+    <div class="cr-acciones">
+      <button onclick="crPreparar('responder')">↩ Responder</button>
+      <button onclick="crPreparar('todos')"${puedeTodos ? "" : " disabled title='Este correo es anterior a que el hub guardara los destinatarios'"}>↩↩ A todos</button>
+      <button onclick="crPreparar('reenviar')">➡ Reenviar</button>
+      <span class="cr-n">${H.n} ${H.n === 1 ? "mensaje" : "mensajes"}</span>
+    </div>
+    ${crVistaRedactor()}${msgs}
+  </div>`
+}
 function paintCorreo() {
+  if (crHilo && !crHilo.error) return render(crVistaHilo(), "correo")
   const c = (mailData && mailData.counts) || {}
   const tabs = MAIL_TABS.map(([id, lbl]) =>
     `<button class="chip${mailTab === id ? " on" : ""}" onclick="loadCorreo(${escj(id)})">${esc(lbl)}${c[id] != null ? `<span class="n">${c[id]}</span>` : ""}</button>`).join("")
@@ -3947,8 +4074,12 @@ function paintCorreo() {
     : mailTab === "prioritarios"
       ? `<div class="tiny muted" style="margin:0 0 10px">Correo que no es masivo: marcado importante, avisos que piden acción (★ 🧾) o gente con la que ya venís hablando.</div>` : ""
   render(`<div class="screen">
-    <h1 class="title">Correo</h1>
+    <div class="row" style="align-items:center;gap:10px">
+      <h1 class="title" style="flex:1">Correo</h1>
+      <button class="cr-nuevo" onclick="crNuevo()">✉️ Correo nuevo</button>
+    </div>
     <div class="nt-quick" style="margin-bottom:10px">${tabs}</div>
+    ${crVistaRedactor()}
     ${nota}
     <div class="mail-list">${items.length ? items.map(mailRow).join("") : `<div class="nt-none">${esc(vacio)}</div>`}</div>
   </div>`, "correo")

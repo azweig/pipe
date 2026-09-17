@@ -7,8 +7,8 @@ import { casTrash, casRestore } from "./cas.mjs"
 
 // ── ingest ──
 const insertStmt = () => db().prepare(`INSERT OR IGNORE INTO messages
-  (id, channel, account, thread, jid, sender, name, text, ts, dir, grp, media, mediaType, filename, unread, body, attachments, tag)
-  VALUES (@id, @channel, @account, @thread, @jid, @sender, @name, @text, @ts, @dir, @grp, @media, @mediaType, @filename, @unread, @body, @attachments, @tag)`)
+  (id, channel, account, thread, jid, sender, name, text, ts, dir, grp, media, mediaType, filename, unread, body, attachments, tag, dests)
+  VALUES (@id, @channel, @account, @thread, @jid, @sender, @name, @text, @ts, @dir, @grp, @media, @mediaType, @filename, @unread, @body, @attachments, @tag, @dests)`)
 
 const getStat = () => db().prepare("SELECT channels FROM thread_stats WHERE thread=?")
 const upsertStat = () => db().prepare(`INSERT INTO thread_stats(thread,last_ts,count,unread,channels) VALUES(@thread,@ts,1,@unread,@channels)
@@ -75,6 +75,7 @@ function normalizeRec(r) {
     body: r.body || null, // cuerpo completo del email (HTML) para el visor
     attachments: r.attachments || null, // JSON [{name,cas,mime,size}] de adjuntos de email
     tag: r.tag || null, // clase del mensaje cuando no es una conversación normal (hoy: "historia")
+    dests: r.dests || null, // JSON {to:[],cc:[]} de un email — lo que permite "responder a todos" sin adivinar
   }
 }
 

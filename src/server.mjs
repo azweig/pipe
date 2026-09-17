@@ -19,6 +19,7 @@ import { loggedOutNumbers } from "./matrix.mjs"
 import { llmConfigMasked, setLlmConfig, smartChain, testKey } from "./lib/llm.mjs"
 import * as hub from "./lib/hub.mjs"
 import * as sig from "./lib/signature.mjs"
+import { cuentasQueEnvian } from "./lib/mailer.mjs"
 import * as meetings from "./lib/meetings.mjs"
 import * as auth from "./lib/auth.mjs"
 import * as secret from "./lib/secret.mjs"
@@ -529,8 +530,11 @@ const server = createServer(async (req, res) => {
         const mails = todos.filter(esCorreo)
         const prioritario = (t) => t.bucket !== "spam" && (t.importante || esTransaccional(t.lastText || "") || t.lastDir === "out" || t.pinned)
         const cajon = { prioritarios: mails.filter(prioritario), todos: mails.filter((t) => t.bucket !== "spam"), spam: mails.filter((t) => t.bucket === "spam") }
+        // `count` = cuántos mensajes tiene la cadena. Sin él, un intercambio de 40 correos y uno suelto se ven igual,
+        // y no hay forma de saber si lo que se lee es el principio de algo o el final de una conversación larga.
         const fila = (t) => ({ key: t.key, name: t.name, email: t.email, account: t.account, ts: t.ts, unread: t.unread,
-          lastText: String(t.lastText || "").slice(0, 240), lastDir: t.lastDir, importante: !!t.importante, razon: t.importanteRazon || null,
+          count: t.count, lastText: String(t.lastText || "").slice(0, 240), lastDir: t.lastDir,
+          importante: !!t.importante, razon: t.importanteRazon || null,
           transaccional: esTransaccional(t.lastText || ""), spam: t.bucket === "spam", initials: t.initials, photo: t.photo })
         return json(res, 200, {
           tab,
@@ -690,6 +694,38 @@ const server = createServer(async (req, res) => {
       if (path === "/api/integrations/signal" && req.method === "POST") { const r = integrations.setSignal(await body(req)); if (r.ok) { try { spawn("pkill", ["-f", "src/signal.mjs"]) } catch {} } return json(res, r && r.error ? 400 : 200, r) }
       if (path === "/api/integrations/signal/remove" && req.method === "POST") { const r = integrations.removeSignal(); try { spawn("pkill", ["-f", "src/signal.mjs"]) } catch {} return json(res, 200, r) }
       // BACKFILL de archivados: trae correos viejos (fuera del INBOX) por término. Corre en background; la UI polea el status.
+      // ── CORREO COMO CORREO: leer uno completo, redactar, responder, responder a todos, reenviar ──
+      // Un chat se lee con "quién dijo qué"; un correo necesita asunto, De/Para/CC, cuerpo HTML y adjuntos. Esto es
+      // lo que permite que la sección Correo no tenga que mandarte a la vista de mensajes.
+      if (path === "/api/mail/message") {
+        const r = brain.correoCompleto(String(q.key || ""), { secretOn, id: q.id ? String(q.id) : "" })
+        return json(res, r?.error ? 404 : 200, r || { error: "no encontrado" })
+      }
+      if (path === "/api/mail/prepare") {
+        const modo = ["responder", "todos", "reenviar"].includes(String(q.modo || "")) ? String(q.modo) : "responder"
+        const r = brain.prepararRespuesta(String(q.key || ""), { modo, id: q.id ? String(q.id) : "", secretOn })
+        return json(res, r?.error ? 404 : 200, r)
+      }
+      if (path === "/api/mail/accounts") return json(res, 200, { cuentas: cuentasQueEnvian(), firmas: sig.listSignatures(), fallback: sig.defaultSignature() })
+      if (path === "/api/mail/send" && req.method === "POST") {
+        const b = await body(req)
+        // Mismo candado de reintento que /api/send: si el 502 pasó DESPUÉS de que el correo salió, el reintento
+        // devuelve el resultado viejo en vez de mandarlo dos veces. En correo eso importa más: no se puede deshacer.
+        const reserva = claimSend(b.msgId)
+        if (reserva.estado === "hecho") return json(res, 200, { ...(reserva.resultado || {}), dedup: true })
+        if (reserva.estado === "en-curso") return json(res, 202, { pending: true })
+        let r
+        try { r = await brain.enviarCorreoCompuesto(b) } catch (e) { releaseSend(b.msgId); throw e }
+        if (r && r.error) { releaseSend(b.msgId); return json(res, 400, r) }
+        finishSend(b.msgId, r)
+        brain.invalidateThreads()
+        return json(res, 200, r)
+      }
+      // BORRADORES: se guardan solos mientras escribís. Un correo largo que se pierde por cerrar una ventana es
+      // de las peores cosas que puede hacer un cliente de correo.
+      if (path === "/api/mail/drafts") return json(res, 200, { items: brain.listarBorradores() })
+      if (path === "/api/mail/draft" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.guardarBorrador(b)) }
+      if (path === "/api/mail/draft/delete" && req.method === "POST") { const b = await body(req); return json(res, 200, brain.borrarBorrador(b.id)) }
       if (path === "/api/mail/backfill" && req.method === "POST") { const b = await body(req); const q = (b.q || "").trim(); if (!q) return json(res, 400, { error: "Escribí un nombre, dominio o palabra." }); try { spawn(process.execPath, ["src/mail-backfill.mjs"], { env: { ...process.env, BACKFILL_QUERY: q, LLM_TASK: "backfill" }, detached: true, stdio: "ignore" }).unref() } catch (e) { return json(res, 500, { error: e.message }) } return json(res, 200, { ok: true, started: true, q }) }
       if (path === "/api/mail/backfill/status") { const v = getMeta("backfill_status"); return json(res, 200, v ? JSON.parse(v) : { state: "idle" }) }
       // RESINCRONIZACIÓN: reconstruir bandeja / búsqueda / identidades / re-conectar readers.

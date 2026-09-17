@@ -7,6 +7,7 @@ export * from "./brain/ask.mjs"
 export * from "./brain/social.mjs"
 export * from "./brain/coach.mjs"
 export * from "./brain/espacios.mjs"
+export * from "./brain/correo.mjs" // leer/redactar correo COMO correo (asunto, CC, HTML, adjuntos, borradores)
 export * from "./brain/schedule.mjs"
 export * from "./brain/meetings.mjs"
 export * from "./brain/people.mjs"

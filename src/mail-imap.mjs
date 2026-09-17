@@ -67,12 +67,17 @@ async function parseBody(source) {
   } catch { return { preview: "", body: null, attachments: null } }
 }
 
-function store(label, party, subject, preview, ts, unread, dir = "in", body = null, msgId = "", attachments = null) {
+// Direcciones del sobre tal como vinieron. mailparser entrega objetos {name,address}; acá se guarda sólo la dirección.
+const dirsDe = (e) => ({ to: (e?.to || []).map((x) => x.address).filter(Boolean), cc: (e?.cc || []).map((x) => x.address).filter(Boolean) })
+
+function store(label, party, subject, preview, ts, unread, dir = "in", body = null, msgId = "", attachments = null, dests = null) {
   // id = Message-ID del correo (estable y único). Sin esto, el fallback sintético colisiona por (canal,ts,name) y descarta emails legítimos del mismo remitente/segundo.
   const id = msgId ? `email:${msgId}` : ""
   if (id && seenIds.has(id)) return // ya lo appendeamos antes (re-fetch del backfill al reconectar) → NO duplicar en el jsonl
   const rec = { ...(id ? { id } : {}), channel: "email", account: label, jid: party.address || "", name: party.name || party.address || "?", text: `${subject} — ${preview}`.slice(0, 260), ts, unread, dir, body }
   if (attachments) rec.attachments = attachments
+  // Para/CC del correo: es lo que después permite "responder a todos" sin adivinar ni dejarte a vos en la copia.
+  if (dests && ((dests.to || []).length || (dests.cc || []).length)) rec.dests = JSON.stringify(dests)
   appendMessage(rec)
   if (id) { seenIds.add(id); if (++_seenDirty >= 10) { _seenDirty = 0; saveSeen() } }
   console.log(`${dir === "out" ? "➡️ " : "📧"} [${label}${dir === "out" ? "→" : ""}] ${party.name || party.address}: ${subject}${attachments ? " 📎" : ""}`)
@@ -109,7 +114,7 @@ async function runSent(acc) {
       if (total >= from) for await (const msg of client.fetch(`${from}:${total}`, { envelope: true, source: true })) {
         const e = msg.envelope || {}
         const { preview, body, attachments } = await parseBody(msg.source)
-        store(acc.label, e.to?.[0] || {}, e.subject || "(sin asunto)", preview, +new Date(e.date || Date.now()), false, "out", body, e.messageId, attachments)
+        store(acc.label, e.to?.[0] || {}, e.subject || "(sin asunto)", preview, +new Date(e.date || Date.now()), false, "out", body, e.messageId, attachments, dirsDe(e))
       }
       lastSeq = total
     } finally { lock.release() }
@@ -141,7 +146,7 @@ async function run(acc) {
       for await (const msg of client.fetch(`${from}:${total}`, { envelope: true, flags: true, source: true })) {
         const e = msg.envelope
         const { preview, body, attachments } = await parseBody(msg.source)
-        store(acc.label, e.from?.[0] || {}, e.subject || "(sin asunto)", preview, +new Date(e.date || Date.now()), !msg.flags?.has("\\Seen"), "in", body, e.messageId, attachments)
+        store(acc.label, e.from?.[0] || {}, e.subject || "(sin asunto)", preview, +new Date(e.date || Date.now()), !msg.flags?.has("\\Seen"), "in", body, e.messageId, attachments, dirsDe(e))
       }
     }
   } finally { lock.release() }
@@ -154,7 +159,7 @@ async function run(acc) {
       for await (const msg of client.fetch(`${lastSeq + 1}:${data.count}`, { envelope: true, flags: true, source: true })) {
         const e = msg.envelope
         const { preview, body, attachments } = await parseBody(msg.source)
-        store(acc.label, e.from?.[0] || {}, e.subject || "(sin asunto)", preview, +new Date(e.date || Date.now()), !msg.flags?.has("\\Seen"), "in", body, e.messageId, attachments)
+        store(acc.label, e.from?.[0] || {}, e.subject || "(sin asunto)", preview, +new Date(e.date || Date.now()), !msg.flags?.has("\\Seen"), "in", body, e.messageId, attachments, dirsDe(e))
       }
       lastSeq = data.count
     } finally { l2.release() }

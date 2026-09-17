@@ -8,7 +8,7 @@ import Database from "better-sqlite3"
 // (CREATE IF NOT EXISTS + PRAGMA table_info para migraciones). Corre igual sobre archivo o ':memory:'.
 // Versión del esquema de abajo. ⚠️ SI TOCÁS initSchema, SUBÍ ESTE NÚMERO: si no, las bases que ya existen se
 // saltean la migración y quedan viejas en silencio. `test/schema-version.mjs` falla si te olvidás.
-export const SCHEMA_V = 6
+export const SCHEMA_V = 7
 
 export function initSchema(h) {
   // ATAJO: abrir una base YA inicializada no debe tomar WRITE-LOCK. Todo lo de abajo (CREATE IF NOT EXISTS, ALTER,
@@ -118,6 +118,10 @@ export function initSchema(h) {
   if (!mcols.includes("body")) h.exec("ALTER TABLE messages ADD COLUMN body TEXT")
   if (!mcols.includes("summary")) h.exec("ALTER TABLE messages ADD COLUMN summary TEXT")
   if (!mcols.includes("attachments")) h.exec("ALTER TABLE messages ADD COLUMN attachments TEXT") // JSON [{name,cas,mime,size}] — adjuntos de email (multi)
+  // JSON {to:[],cc:[]} — SÓLO email. Sin esto "responder a todos" es adivinar: guardábamos únicamente `jid` (la
+  // contraparte), así que no había forma de saber quién más estaba en copia. Se llena desde la ingesta hacia adelante;
+  // el correo viejo no lo tiene y la UI cae a "responder" a secas en vez de inventar destinatarios.
+  if (!mcols.includes("dests")) h.exec("ALTER TABLE messages ADD COLUMN dests TEXT")
   // SYNC EDIT-AWARE: `rev` = revisión monotónica global por fila. Se estampa por TRIGGER en cada INSERT y cada UPDATE (cualquier
   // columna), así el cliente pide solo `rev > lastSeenRev` y recibe mensajes NUEVOS *y* editados (media backfilleada, resumen, etc.)
   // sin re-bajar todo. Contador en meta('msg_rev'). Los triggers se crean acá (post-ALTER) para que `rev` exista en DBs viejas.
@@ -237,7 +241,7 @@ export function resetDb(path = ":memory:") {
 // ── seed de fixtures para tests ──────────────────────────────────────────────
 // Inserta filas de `messages` (dispara el trigger de FTS por esquema). NO mantiene thread_stats:
 // eso lo hace insertMany/rebuildStats del ingest-repo (Wave 1). Suficiente para caracterizar lecturas.
-const SEED_COLS = ["id", "channel", "account", "thread", "jid", "sender", "name", "text", "ts", "dir", "grp", "media", "mediaType", "filename", "unread", "body", "summary", "attachments", "rev", "tag"]
+const SEED_COLS = ["id", "channel", "account", "thread", "jid", "sender", "name", "text", "ts", "dir", "grp", "media", "mediaType", "filename", "unread", "body", "summary", "attachments", "rev", "tag", "dests"]
 function normSeed(r) {
   const ts = r.ts ?? 0
   return {
@@ -245,7 +249,7 @@ function normSeed(r) {
     channel: r.channel || "", account: r.account || "", thread: r.thread || "", jid: r.jid || "",
     sender: r.sender || "", name: r.name || "", text: r.text || "", ts, dir: r.dir || "in",
     grp: r.grp ?? null, media: r.media ?? null, mediaType: r.mediaType ?? null, filename: r.filename ?? null,
-    unread: r.unread ? 1 : 0, body: r.body ?? null, summary: r.summary ?? null, attachments: r.attachments ?? null, tag: r.tag ?? null,
+    unread: r.unread ? 1 : 0, body: r.body ?? null, summary: r.summary ?? null, attachments: r.attachments ?? null, tag: r.tag ?? null, dests: r.dests ?? null,
     rev: r.rev ?? 0, // el trigger de sync-rev la re-stampa en el INSERT; el seed provee un valor para el guard de cobertura de columnas
   }
 }

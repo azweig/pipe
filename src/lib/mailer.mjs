@@ -36,6 +36,17 @@ function sendableAccount(label) {
 }
 
 // Envío TRANSACCIONAL genérico (no-reply): notificaciones del sistema (ej. suscripción Ko-fi). fromName = display, replyTo opcional.
+// Cuentas desde las que se PUEDE enviar (tienen SMTP configurado). Es lo que llena el selector "De:".
+export function cuentasQueEnvian() {
+  try {
+    // imapAccounts() ya es la fuente que usa sendableAccount: se filtra con el MISMO criterio (tiene clave u OAuth),
+    // así el selector nunca ofrece una cuenta desde la que después no se puede enviar.
+    return imapAccounts()
+      .filter((a) => a.oauth === "google" || a.pass)
+      .map((a) => ({ label: a.label, user: a.user, nombre: a.name || "" }))
+  } catch { return [] }
+}
+
 export async function sendEmail({ to, subject, text, html, fromName = "pipe", replyTo } = {}) {
   const dst = String(to || "").replace(/^email:/, "").trim()
   if (!/^[^@\s]+@[^@\s]+$/.test(dst)) return { error: "email inválido" }
@@ -48,6 +59,28 @@ export async function sendEmail({ to, subject, text, html, fromName = "pipe", re
 // Un correo NO es un mensaje de texto: va con FIRMA, con parte HTML (para que la firma se vea) y con las cabeceras
 // de hilo (In-Reply-To/References) para que el cliente del otro lo enganche a la conversación en vez de abrir una nueva.
 // `inReplyTo` es el Message-ID del correo que estás respondiendo (nuestro id de mensaje es "email:<Message-ID>").
+// ENVÍO DE CORREO COMPLETO — el que usa la vista de Correo. A diferencia de sendEmailReply (que responde un hilo con
+// texto), acá el usuario compone: elige cuenta, destinatarios, CC/CCO, asunto y cuerpo HTML ya armado y saneado.
+// El cuerpo llega LISTO desde correo.mjs (firma + cita incluidas): este módulo sólo sabe de transporte.
+export async function enviarCorreo({ cuenta, to, cc = [], bcc = [], subject, html, text, inReplyTo, references, fromName, adjuntos = [] } = {}) {
+  const dst = (Array.isArray(to) ? to : [to]).filter(Boolean)
+  if (!dst.length) return { error: "falta el destinatario" }
+  const acc = sendableAccount(cuenta); if (!acc) return { error: "sin cuenta configurada para enviar" }
+  const { t, from, error } = await transportFor(acc); if (error) return { error }
+  const ref = normalizeMsgId(inReplyTo)
+  // El Message-ID de lo que mandamos se devuelve para poder encadenar la PRÓXIMA respuesta del hilo sin releer IMAP.
+  try {
+    const info = await t.sendMail({
+      from: fromName ? `"${fromName}" <${from}>` : from,
+      to: dst, ...(cc.length ? { cc } : {}), ...(bcc.length ? { bcc } : {}),
+      subject: subject || "(sin asunto)", text, html,
+      ...(ref ? { inReplyTo: ref, references: [...(references || []), ref] } : {}),
+      ...(adjuntos.length ? { attachments: adjuntos.map((a) => ({ filename: a.filename, content: a.content, contentType: a.mime })) } : {}),
+    })
+    return { ok: true, from, messageId: info?.messageId || null, to: dst, cc, bcc }
+  } catch (e) { return { error: `SMTP: ${e.message}` } }
+}
+
 export async function sendEmailReply(toRaw, text, { account, subject, inReplyTo, fromName } = {}) {
   const to = String(toRaw).replace(/^email:/, "").trim()
   if (!/^[^@\s]+@[^@\s]+$/.test(to)) return { error: "dirección de email inválida" }
