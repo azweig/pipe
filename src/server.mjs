@@ -718,6 +718,9 @@ const server = createServer(async (req, res) => {
         try { r = await brain.enviarCorreoCompuesto(b) } catch (e) { releaseSend(b.msgId); throw e }
         if (r && r.error) { releaseSend(b.msgId); return json(res, 400, r) }
         finishSend(b.msgId, r)
+        // Escribirle a alguien es la señal más fuerte de que NO es spam — igual que en /api/send. Acá se derivan de
+        // los destinatarios en vez de pedir la clave del hilo: así también vale para un correo nuevo, donde no hay hilo.
+        try { for (const d of (r.to || [])) setNotSpam("email:" + d) } catch {}
         brain.invalidateThreads()
         return json(res, 200, r)
       }
