@@ -804,7 +804,7 @@ const server = createServer(async (req, res) => {
       if (path === "/api/email/body") return json(res, 200, { body: brain.emailBody(q.id || "", { secretOn }) }) // 🔒 el id saltea el filtro por hilo
       if (path === "/api/thread/media") return json(res, 200, brain.threadMedia(q.key || ""))
       if (path === "/api/contact/profile") return json(res, 200, brain.contactProfile(q.key || ""))
-      if (path === "/api/thread/targets") return json(res, 200, brain.threadTargets(q.key || ""))
+      if (path === "/api/thread/targets") return json(res, 200, await brain.threadOrigen(q.key || "")) // A DÓNDE va + DESDE cuál de tus números sale (WhatsApp es por número)
       // EMPEZAR UNA CONVERSACIÓN NUEVA: resuelve lo que el usuario escribió (teléfono / correo / usuario) a la clave de
       // hilo de siempre. NO manda nada ni crea nada: la app abre esa conversación y el envío sigue el camino habitual.
       // qué canales se pueden estrenar desde la app. La rama de canal explícito de resolverDestino existía pero era código
@@ -846,7 +846,7 @@ const server = createServer(async (req, res) => {
         let text = b.text
         if (b.covert) { try { text = brain.encodeCovertFor(b.key, b.text) } catch (e) { releaseSend(b.msgId); return json(res, 400, { error: e.message }) } }
         let r
-        try { r = await brain.sendReply(b.key, text, { channel: b.channel, target: b.target, historiaDe: b.historiaDe || "" }) }
+        try { r = await brain.sendReply(b.key, text, { channel: b.channel, target: b.target, historiaDe: b.historiaDe || "", desde: b.desde || "" }) }
         catch (e) { releaseSend(b.msgId); throw e } // falló de verdad → soltamos la reserva o el reintento esperaría eternamente
         if (r && r.error) { releaseSend(b.msgId); return json(res, 400, r) }
         finishSend(b.msgId, r)

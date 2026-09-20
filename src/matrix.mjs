@@ -302,32 +302,88 @@ async function asegurarMembresia(token, mxid) {
   } catch { return false }
 }
 
-export async function startWhatsAppChat(number) {
+export async function startWhatsAppChat(number, { desde: forzado = "" } = {}) {
   const num = String(number || "").replace(/[^\d]/g, "")
   if (num.length < 8) return null
+  // CUENTA FORZADA: el usuario eligió desde qué número suyo escribe. Su elección manda sobre cualquier heurística —
+  // sabe cosas que el puente no, como con cuál de sus números lo conoce la otra persona.
+  const soloDe = String(forzado || "").replace(/\D/g, "")
   const ya = await portalesDe(num)
   if (ya && ya.cands.length) {
-    const best = elegirPortal(ya.cands, ya)
+    const cands = soloDe ? ya.cands.filter((c) => String(c.receiver) === soloDe) : ya.cands
+    const best = elegirPortal(cands, ya)
     if (best?.mxid && await asegurarMembresia(await login(), best.mxid)) return best.mxid
   }
   const token = await login()
   const botR = await botRoom(token, "whatsapp")
-  // ¿Con CUÁL cuenta abrirlo? Con el bridge resolviendo contra su login "preferido", que puede ser uno deslogueado
-  // (contesta "Failed to resolve identifier: not logged in" y no crea nada) o simplemente el que no habla con esta
-  // persona. Se elige una con sesión viva que la tenga en su agenda.
+  // ¿Con CUÁL cuenta abrirlo? La cuenta va como ARGUMENTO del comando: `start-chat [login ID] <identificador>`.
+  //
+  // Antes esto mandaba `set-preferred-login <cuenta>` y después `start-chat +<num>`, y no funcionaba por dos razones
+  // que el puente sí decía y nadie leía: `set-preferred-login` SÓLO corre dentro de una sala de chat (en la sala de
+  // comandos contesta "That command can only be ran in portal rooms" y se descarta), y `start-chat` sin cuenta
+  // devuelve el portal que YA existe — "You already have a direct chat with…" — sin mirar qué línea querías usar.
+  // Resultado: elegir el número de origen no tenía ningún efecto, en silencio.
   const vivos = ya ? [...ya.vivos] : []
-  const desde = vivos.find((v) => ya.agenda.has(v)) || vivos[0] || null
-  if (desde) await sendText(token, botR, `set-preferred-login ${desde}`)
-  await sendText(token, botR, `start-chat +${num}`) // comando del bridge (mautrix-whatsapp bridgev2)
+  const desde = soloDe || vivos.find((v) => ya.agenda.has(v)) || vivos[0] || null
+  await sendText(token, botR, desde ? `start-chat ${desde} +${num}` : `start-chat +${num}`)
   for (let i = 0; i < 8; i++) {
     await new Promise((r) => setTimeout(r, 1500))
     const p = await portalesDe(num)
-    if (p && p.cands.length) {
-      const best = elegirPortal(p.cands, p)
+    const cands = p ? (soloDe ? p.cands.filter((c) => String(c.receiver) === soloDe) : p.cands) : []
+    if (cands.length) {
+      const best = elegirPortal(cands, p)
       if (best?.mxid && await asegurarMembresia(token, best.mxid)) return best.mxid
     }
   }
   return null
+}
+
+// TUS CUENTAS DE WHATSAPP, para elegir DESDE CUÁL escribís.
+//
+// Hace falta enseñarlo porque la conversación de WhatsApp es POR NÚMERO: si le escribís a alguien desde otro de tus
+// números, a esa persona le llega de un desconocido y te contesta ahí, y el hilo se muda solo. Sin verlo, la única
+// señal es que "no contesta". `usada` marca la que el hub elegiría por su cuenta.
+export async function cuentasWhatsApp(paraNumero = "") {
+  const mdb = await mautrixDb()
+  if (!mdb) return []
+  try {
+    const num = String(paraNumero || "").replace(/\D/g, "")
+    const vivas = new Set(mdb.prepare("SELECT jid FROM whatsmeow_device").all().map((r) => String(r.jid).split(/[:@]/)[0]))
+    const agenda = num
+      ? new Set(mdb.prepare("SELECT our_jid FROM whatsmeow_contacts WHERE their_jid LIKE ?").all(`${num}@%`)
+          .map((r) => String(r.our_jid).split(/[:@]/)[0]))
+      : new Set()
+    const out = mdb.prepare("SELECT id, remote_name FROM user_login").all().map((r) => {
+      const id = String(r.id).replace(/\D/g, "")
+      return { id, label: r.remote_name || `+${id}`, viva: vivas.has(id), agenda: agenda.has(id) }
+    }).filter((c) => c.id)
+    return out.sort((a, b) => (b.viva - a.viva) || (b.agenda - a.agenda) || a.id.localeCompare(b.id))
+  } catch { return [] }
+}
+
+// ¿DESDE QUÉ CUENTA saldría hoy un mensaje a este número? Sólo lee: no crea portales ni habla con el puente.
+// Existe para poder MOSTRARLO antes de enviar — decirle al usuario "sale del +1…" es lo único que le permite corregirlo.
+export async function cuentaQueUsaria(numero) {
+  const num = String(numero || "").replace(/\D/g, "")
+  if (num.length < 8) return null
+  const p = await portalesDe(num)
+  if (!p) return null
+  const best = p.cands.length ? elegirPortal(p.cands, p) : null
+  if (best?.receiver) return String(best.receiver)
+  // sin portal todavía: sería la que el puente va a elegir al crearlo (viva y con el contacto en su agenda)
+  const vivos = [...p.vivos]
+  return vivos.find((v) => p.agenda.has(v)) || vivos[0] || null
+}
+
+// ¿A qué número de WhatsApp corresponde esta sala portal? (para saber a quién le estás escribiendo desde otra cuenta)
+export async function numeroDeSala(mxid) {
+  const mdb = await mautrixDb()
+  if (!mdb || !mxid) return null
+  try {
+    const p = mdb.prepare("SELECT other_user_id FROM portal WHERE mxid=? LIMIT 1").get(mxid)
+    const n = String(p?.other_user_id || "").replace(/\D/g, "")
+    return n.length >= 8 ? n : null
+  } catch { return null }
 }
 // estado del login (número) DUEÑO de una sala portal: { receiver, alive }. Sirve para decir "revinculá X" cuando el envío
 // falla porque ese número está deslogueado (el bridge acepta el evento en Matrix pero no lo entrega a WhatsApp).

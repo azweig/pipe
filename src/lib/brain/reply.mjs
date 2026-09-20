@@ -8,8 +8,9 @@ import { join } from "path"
 import { getSlackToken, getSignal } from "../integrations.mjs" // config Slack/Signal conectada desde la Consola (cifrada) — para que los senders la vean, no solo el .env
 import { isSimpleSender, sendableDirectChannels, channelLabel } from "../channels.mjs" // registro de canales: qué canales tienen envío SIMPLE (target+texto) → dispatch genérico
 import { phoneOf, MY_NUMBERS, MY_EMAILS, computeThread, isContainerJid } from "../thread.mjs"
-import { sendMatrix, sendMatrixAudio, sendMatrixMedia, sendMatrixSticker, startWhatsAppChat, roomLogin } from "../../matrix.mjs"
+import { sendMatrix, sendMatrixAudio, sendMatrixMedia, sendMatrixSticker, startWhatsAppChat, roomLogin, cuentasWhatsApp, numeroDeSala, cuentaQueUsaria } from "../../matrix.mjs"
 import { unipileConfigured, unipileSend } from "../unipile-api.mjs"
+import { cuentasParaElegir, origenGuardado, guardarOrigen } from "../origen-envio.mjs" // qué cuentas ofrecer, cuál está en uso y cuál eligió el usuario (regla única para las 3 apps)
 import { teamsSend } from "../teams-send.mjs" // Graph: responder en un chat de Teams (permiso de envío aparte del lector)
 import { sendEmailReply } from "../mailer.mjs"
 import { casPutBuffer } from "../cas.mjs"
@@ -85,6 +86,50 @@ export function threadTargets(key) {
   return { targets, default: def }
 }
 
+// DESDE CUÁL DE TUS NÚMEROS SALE EL MENSAJE.
+//
+// threadTargets dice A DÓNDE va. Esto dice DE DÓNDE sale, que en WhatsApp no es un detalle: la conversación es por
+// número. Si le escribís desde otro de tus números, a esa persona le llega de un desconocido, te contesta ahí, y el
+// hilo se muda solo a esa otra línea — sin ningún error, y la única señal es que "no te contesta".
+//
+// Caso medido: dos contactos con años de conversación desde un número propio empezaron a recibir los mensajes desde
+// otro, uno de ellos respondió en el chat nuevo, y la conversación se mudó sin que nadie lo decidiera.
+//
+// Por eso el origen se MUESTRA y se puede CAMBIAR: el hub puede adivinar bien casi siempre, pero quién conoce a esa
+// persona por cuál número lo sabe el usuario, no el puente.
+export async function threadOrigen(key) {
+  const tg = threadTargets(key)
+  const wa = (tg.targets || []).filter((t) => t.channel === "whatsapp")
+  // El número de la otra persona. Se busca TAMBIÉN cuando no hay ningún destino, que es justo el caso que importa:
+  // un hilo sin sala del puente es el que no puede elegir origen, y salir temprano ahí dejaba a ciegas al compositor
+  // exactamente en los chats donde el mensaje se estaba yendo por la línea equivocada.
+  let numero = null
+  for (const t of wa) {
+    numero = (/^!/.test(String(t.target)) ? await numeroDeSala(t.target) : phoneOf(t.target)) || numero
+    if (numero) break
+  }
+  if (!numero) {
+    const h = lastHistoricJid(key)?.jid
+    numero = (h && !isContainerJid(h) ? phoneOf(h) : null)
+      || (/^whatsapp:/.test(String(key)) && !isContainerJid(String(key).replace(/^whatsapp:/, "")) ? phoneOf(String(key).replace(/^whatsapp:/, "")) : null)
+  }
+  if (!numero || MY_NUMBERS.has(numero)) return { ...tg, cuentas: [] } // no es un chat 1:1 de WhatsApp: no hay origen que elegir
+  const cuentas = await cuentasWhatsApp(numero || "")
+  // ¿desde qué cuenta sale HOY cada destino? (el dueño de esa sala del puente)
+  for (const t of wa) {
+    if (!/^!/.test(String(t.target))) continue
+    try { const l = await roomLogin(t.target); if (l?.receiver) { t.from = String(l.receiver); t.fromViva = !!l.alive } } catch {}
+  }
+  // La cuenta marcada tiene que ser LA QUE DE VERDAD SE USARÍA, no la primera de la lista: el sentido de mostrarlo
+  // es que el usuario detecte que sale por la línea equivocada, y una marca decorativa no detecta nada.
+  // Lo que el usuario eligió para ESTA conversación manda sobre lo que el hub deduciría: sabe con cuál de sus números
+  // lo conoce la otra persona, y el puente no.
+  const usada = origenGuardado(key) || (await cuentaQueUsaria(numero)) || wa.find((t) => t.isDefault)?.from || wa[0]?.from || null
+  // El filtrado y el orden los decide el módulo, no cada app: tres interfaces con reglas propias son tres formas de
+  // mostrar algo distinto de lo que va a pasar.
+  return { ...tg, numero, ...cuentasParaElegir(cuentas, usada) }
+}
+
 // COMPOSITOR: responde al hilo. Con {channel,target} manda a ese destino puntual; sin él, auto (última sala / email del key).
 // ¿A qué chat le mando la respuesta a una historia? Primero su hilo propio (si ya le hablaste), y si no, el número
 // que sale de su identidad en el bridge — el mismo camino que hace contactable a quien solo aparece en grupos.
@@ -106,9 +151,25 @@ async function resolverHiloDe(nombre) {
   return num ? { key: "whatsapp:" + num + "@s.whatsapp.net", channel: "whatsapp" } : null
 }
 
-export async function sendReply(key, text, { channel, target, historiaDe = "" } = {}) {
+export async function sendReply(key, text, { channel, target, historiaDe = "", desde = "" } = {}) {
   text = String(text || "").trim()
   if (!text) return { error: "mensaje vacío" }
+  // ORIGEN ELEGIDO POR EL USUARIO. En WhatsApp la conversación es por número: mandar desde otra línea le llega a la
+  // otra persona como un desconocido. Si eligió una, se resuelve LA SALA DE ESA CUENTA (creándola si hace falta) y se
+  // ignora el destino que venía calculado, que apunta a la sala de la cuenta anterior.
+  const origen = String(desde || "").replace(/\D/g, "") || (key ? origenGuardado(key) || "" : "")
+  if (desde) { try { guardarOrigen(key, origen) } catch {} } // elegir una vez alcanza: el próximo mensaje sale por la misma
+  if (origen && (channel === "whatsapp" || !channel)) {
+    const num = (/^!/.test(String(target || "")) ? await numeroDeSala(target) : null)
+      || phoneOf(String(target || "")) || phoneOf(lastHistoricJid(key)?.jid || "")
+      || (/^whatsapp:/.test(String(key)) && !isContainerJid(String(key).replace(/^whatsapp:/, "")) ? phoneOf(String(key).replace(/^whatsapp:/, "")) : null)
+    if (!num) return { error: "No sé a qué número mandarlo: este chat no tiene un teléfono de WhatsApp." }
+    if (MY_NUMBERS.has(num)) return { error: "Ese es un número tuyo." }
+    const sala = await startWhatsAppChat(num, { desde: origen })
+    if (!sala) return { error: `No pude abrir el chat con ese contacto desde +${origen}. ¿Esa línea sigue conectada?` }
+    const r = await sendMatrix(sala, text)
+    return r.ok ? { ok: true, channel: "whatsapp", desde: origen, ...guardarEnviado(key, "whatsapp", text) } : await waSendError(sala)
+  }
   // "Mis Notas": escribir en el hilo propio GUARDA una nota, no manda nada. Salvo que el caller nombre una sala
   // EXPLÍCITA: ahí sí hay que enviar de verdad. Es el caso del asistente, que contesta dentro de tu chat de WhatsApp
   // — sin esta excepción sus respuestas se guardaban como notas y nunca llegaban al teléfono.

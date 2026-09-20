@@ -1978,6 +1978,11 @@ function renderConv() {
   // el toggle 🕊️ (modo encubierto) ahora vive en el HEADER (como en la app), solo si este contacto ya tiene la config en su perfil
   const tg = d.target || {}
   const multi = (d.targets || []).length > 1
+  // El servidor ya filtró las líneas caídas, marcó cuál se usa y dijo si hay algo para elegir (src/lib/origen-envio.mjs):
+  // acá sólo se dibuja. `elegible` es false con una sola cuenta — ahí la barra sería ruido permanente.
+  const cuentas = d.cuentas || []
+  const origenActual = d.elegible ? (cuentas.find((c) => c.id === d.desde) || cuentas.find((c) => c.usada) || null) : null
+  const origenCambiado = !!(origenActual && d.desde && !origenActual.usada)
   const chanIcon = tg.channel === "email" ? "✉️" : "📱"
   const chanBtn = `<button id="chanBtn" ${multi ? 'onclick="pickTarget()"' : "disabled"} title="${esc(tg.label || "")}" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:${multi ? "var(--bg2)" : "#fff"};font-size:17px;cursor:${multi ? "pointer" : "default"};position:relative;flex-shrink:0">${chanIcon}${multi ? '<span style="position:absolute;bottom:-2px;right:-2px;background:var(--accent);color:#fff;border-radius:50%;width:17px;height:17px;font-size:11px;line-height:17px;text-align:center">▾</span>' : ""}</button>`
   const fwdBar = `<div id="composer" style="position:fixed;bottom:82px;left:50%;transform:translateX(-50%);width:100%;max-width:480px;padding:10px 12px;background:var(--bg);border-top:1px solid var(--line);display:flex;gap:8px;z-index:26;box-sizing:border-box;align-items:center">
@@ -1997,7 +2002,14 @@ function renderConv() {
     <button id="correctBtn" onclick="toggleCorrect()" title="${window._correctOn ? "Corregir con IA al enviar (tocá para enviar tal cual)" : "Enviar TAL CUAL, sin corregir (tocá para corregir)"}" style="min-width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:${window._correctOn ? "var(--accent)" : "var(--bg2)"};color:${window._correctOn ? "#fff" : "var(--muted)"};font-size:16px;cursor:pointer;flex-shrink:0">✨</button>
     ${tg.channel !== "email" ? `<input type="file" id="mediaInput" accept="image/*,video/*" multiple style="display:none" onchange="onMediaPick(this)"><input type="file" id="camInput" accept="image/*,video/*" capture="environment" style="display:none" onchange="onMediaPick(this)"><input type="file" id="stickerInput" accept="image/*" style="display:none" onchange="onStickerPick(this)">${accionesComposer()}` : ""}
     <button id="sendBtn" onclick="sendMsg()" aria-label="Enviar mensaje" style="min-width:38px;height:38px;border-radius:50%;border:0;background:var(--accent);color:#fff;font-size:17px;cursor:pointer;flex-shrink:0">➤</button></div>`
-  const composer = fwdSel ? fwdBar : (canSend ? `<div id="composer" style="position:fixed;bottom:82px;left:50%;transform:translateX(-50%);width:100%;max-width:480px;padding:8px 8px;background:var(--bg);border-top:1px solid var(--line);display:flex;flex-direction:column;align-items:stretch;z-index:26;box-sizing:border-box">${replyBar}${inputRow}</div>` : "")
+  // BARRA DE ORIGEN: "desde +51 9…". En WhatsApp la conversación es POR NÚMERO — si sale de otra línea tuya, a la otra
+  // persona le llega de un desconocido y te contesta ahí. No daba ningún error: la única señal era que no contestaban.
+  // Por eso se muestra SIEMPRE que haya más de una cuenta, y se puede cambiar de un toque.
+  const origenBar = origenActual ? `<div style="display:flex;align-items:center;gap:6px;width:100%;padding:0 4px 6px;box-sizing:border-box">
+    <span class="tiny muted" style="flex-shrink:0">desde</span>
+    <button onclick="pickOrigen()" class="tiny" style="display:flex;align-items:center;gap:5px;border:1px solid ${origenCambiado ? "var(--accent)" : "var(--line)"};background:${origenCambiado ? "var(--accent)" : "var(--bg2)"};color:${origenCambiado ? "#fff" : "var(--muted)"};border-radius:12px;padding:3px 9px;cursor:pointer;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📤 ${esc(origenActual.label)} <span style="opacity:.7">▾</span></button>
+  </div>` : ""
+  const composer = fwdSel ? fwdBar : (canSend ? `<div id="composer" style="position:fixed;bottom:82px;left:50%;transform:translateX(-50%);width:100%;max-width:480px;padding:8px 8px;background:var(--bg);border-top:1px solid var(--line);display:flex;flex-direction:column;align-items:stretch;z-index:26;box-sizing:border-box">${replyBar}${origenBar}${inputRow}</div>` : "")
   render(`<div class="screen" style="padding-top:6px;padding-bottom:${canSend || fwdSel ? "150px" : "20px"}">
     <div id="floatDate" style="position:fixed;top:76px;left:50%;transform:translateX(-50%);z-index:30;background:rgba(30,30,42,.82);color:#fff;padding:4px 14px;border-radius:12px;font-size:12px;font-weight:600;opacity:0;transition:opacity .3s;pointer-events:none;text-transform:capitalize;backdrop-filter:blur(4px)"></div>
     <div id="convHeader" style="position:sticky;top:0;z-index:24;background:var(--bg);margin:0 -16px 10px;padding:6px 16px 10px;border-bottom:1px solid var(--line)">
@@ -2161,6 +2173,20 @@ window.pickTarget = () => {
   const opt = (t, i) => `<button class="btn ${t === convState.target ? "" : "ghost"}" style="text-align:left;margin-bottom:8px;display:flex;align-items:center;gap:8px" onclick="setTarget(${i})">${t.channel === "email" ? "✉️" : "📱"} <span style="flex:1">${esc(t.label)}</span>${t.isDefault ? '<span class="tiny muted">último</span>' : ""}</button>`
   openSheet(`<h2>Responder por…</h2><div class="sub" style="margin:6px 0 12px">Elegí a dónde mandar el mensaje.</div>${(convState.targets || []).map(opt).join("")}`)
 }
+// ELEGIR DESDE QUÉ NÚMERO TUYO SALE. Se avisa cuál es la que el hub usaría y cuál tiene a esa persona en su agenda:
+// escribirle desde una línea que no te tiene agendado es lo que hace que el mensaje llegue "de un desconocido".
+window.pickOrigen = () => {
+  const cs = convState?.cuentas || []
+  if (cs.length < 2) return
+  const fila = (c) => {
+    const sel = c.id === (convState.desde || (cs.find((x) => x.usada) || {}).id)
+    return `<button class="btn ${sel ? "" : "ghost"}" style="text-align:left;margin-bottom:8px;display:flex;align-items:center;gap:8px;width:100%" onclick="setOrigen('${esc(c.id)}')">
+      <span style="flex-shrink:0">📤</span><span style="flex:1;min-width:0">${esc(c.label)}${c.agenda ? "" : '<div class="tiny" style="opacity:.75">no te tiene agendado: le llega de un desconocido</div>'}</span>
+      ${c.usada ? '<span class="tiny muted" style="flex-shrink:0">actual</span>' : ""}</button>`
+  }
+  openSheet(`<h2>Enviar desde…</h2><div class="sub" style="margin:6px 0 12px">WhatsApp separa las conversaciones por número: si cambiás de línea, a esa persona le llega un chat nuevo.</div>${cs.map(fila).join("")}`)
+}
+window.setOrigen = (id) => { if (convState) convState.desde = String(id || ""); closeSheet(); renderConv(); document.getElementById("msgInput")?.focus() }
 window.setTarget = (i) => { convState.target = (convState.targets || [])[i]; closeSheet(); renderConv(); document.getElementById("msgInput")?.focus() }
 // envío REAL (bubble optimista + POST). Lo llama pickSend con el texto elegido.
 // ══════════ COLA DE ENVÍO (outbox) ══════════
@@ -2196,7 +2222,7 @@ async function flushOutbox() {
     for (const it of [..._outbox]) {
       if (it.nextAt && Date.now() < it.nextAt) continue
       const r = await apiFull("/api/send", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: it.key, text: it.text, channel: it.channel, target: it.target, covert: it.covert, msgId: it.msgId }) })
+        body: JSON.stringify({ key: it.key, text: it.text, channel: it.channel, target: it.target, desde: it.desde || "", covert: it.covert, msgId: it.msgId }) })
       const reintentar = (motivo) => {
         it.intentos = (it.intentos || 0) + 1
         it.nextAt = Date.now() + esperaReintento(it.intentos)
@@ -2240,7 +2266,7 @@ window.doSend = async (text) => {
   renderConv(); document.getElementById("msgInput")?.focus(); window.scrollTo(0, document.body.scrollHeight)
   // A la cola. La burbuja se queda con 🕐 hasta que salga de verdad: nada de ✓✓ sobre un mensaje que no salió,
   // y nada de perder el texto porque el hub estaba reiniciando.
-  _outbox.push({ msgId, key: convState.key, text, channel: t.channel, target: t.target, covert, ts: Date.now(), intentos: 0, nextAt: 0 })
+  _outbox.push({ msgId, key: convState.key, text, channel: t.channel, target: t.target, desde: convState.desde || "", covert, ts: Date.now(), intentos: 0, nextAt: 0 })
   saveOutbox()
   flushOutbox()
 }
@@ -2805,19 +2831,20 @@ async function viewConv(key) {
   ])
   if (location.hash !== startHash) return // navegaste a otra pantalla mientras cargaba → no pisar
   const targets = tg.targets || [], target = targets[tg.default || 0] || null
+  const cuentas = tg.cuentas || [], elegible = !!tg.elegible // tus números de WhatsApp: desde cuál sale (el server ya filtró y marcó)
   if (haveLocal) {
     // DELTA: upsert por id sobre lo local + reuso la metadata del hilo cacheada (nombre/foto no cambian seguido)
     const byId = new Map(local.items.map((i) => [i.id, i])); for (const it of (d.items || [])) byId.set(it.id, it)
     const items = [...byId.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0))
     const maxRev = d.maxRev != null ? d.maxRev : (lm.maxRev || 0)
-    convState = { key, items, name: lm.name, photo: lm.photo, email: lm.email, account: lm.account, channels: lm.channels || [], total: lm.total, hasMore: lm.hasMore, oldestTs: lm.oldestTs, targets, target, maxRev, covert: lm.covert || null }
+    convState = { key, items, name: lm.name, photo: lm.photo, email: lm.email, account: lm.account, channels: lm.channels || [], total: lm.total, hasMore: lm.hasMore, oldestTs: lm.oldestTs, targets, target, cuentas, elegible, maxRev, covert: lm.covert || null }
     idbSave(key, d.items || [], { maxRev, targets })
   } else {
     // FULL (primer open): guardo items + metadata del hilo para las próximas veces
     // conversación recién estrenada: no hay mensajes de los que sacar el nombre, así que se usa el que resolvió el
     // server al abrirla. Sin esto la cabecera mostraba la clave cruda ("whatsapp:51999…@s.whatsapp.net").
     const nom = (d.name && d.name !== key) ? d.name : ((window._nombreNuevo && window._nombreNuevo.key === key) ? window._nombreNuevo.name : d.name)
-    convState = { key, items: d.items || [], name: nom, photo: d.photo, email: d.email, account: d.account, channels: d.channels || [], total: d.total || (d.items || []).length, hasMore: d.hasMore, oldestTs: d.oldestTs, targets, target, unread: d.unread || 0, lastSeen: d.lastSeen || 0, maxRev: d.maxRev || 0, covert: d.covert || null }
+    convState = { key, items: d.items || [], name: nom, photo: d.photo, email: d.email, account: d.account, channels: d.channels || [], total: d.total || (d.items || []).length, hasMore: d.hasMore, oldestTs: d.oldestTs, targets, target, cuentas, elegible, unread: d.unread || 0, lastSeen: d.lastSeen || 0, maxRev: d.maxRev || 0, covert: d.covert || null }
     idbSave(key, d.items || [], { maxRev: d.maxRev || 0, name: d.name, photo: d.photo, email: d.email, account: d.account, channels: d.channels || [], total: d.total, hasMore: d.hasMore, oldestTs: d.oldestTs, targets, covert: d.covert || null })
   }
   renderConv()
