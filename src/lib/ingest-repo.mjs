@@ -96,7 +96,7 @@ export function updateMessageContent(id, { text, body, summary } = {}) {
 export function linkMediaBatch(pairs = []) {
   const D = db(); const upd = D.prepare("UPDATE messages SET media=? WHERE id=? AND media IS NULL")
   let n = 0; const tx = D.transaction(() => { for (const [id, url] of pairs) n += upd.run(url, id).changes })
-  tx(); return n
+  withRetry(() => tx()); return n
 }
 // inserta el digest de un feed social (mensaje entrante + upsert de thread_stats) ATÓMICO. (era brain.ingestSocial)
 export function insertSocialDigest({ id, network, thread, name, digest, ts }) {
@@ -107,7 +107,11 @@ export function insertSocialDigest({ id, network, thread, name, digest, ts }) {
     D.prepare("INSERT INTO thread_stats(thread,last_ts,count,unread,channels) VALUES(?,?,1,1,?) ON CONFLICT(thread) DO UPDATE SET count=count+1, last_ts=excluded.last_ts, unread=unread+1")
       .run(thread, ts, network)
   })
-  tx()
+  // withRetry como todo el resto de los writers. Sin esto, el lector de redes chocaba contra un SQLITE_BUSY y el hub
+  // le contestaba 400 "database is locked": el resumen del feed —ya pagado en capturas y en una pasada de visión— se
+  // tiraba a la basura. Su reintento propio no alcanzaba porque el bloqueo lo sostiene un writer pesado, y lo que
+  // hace falta es el backoff bloqueante de db-core, no cuatro esperas cortas.
+  withRetry(() => tx())
 }
 
 // LIBERAR ESPACIO: borra la media PESADA (no audio) ya guardada de un chat (threadKey), o de TODA la cuenta (threadKey=null).
@@ -118,7 +122,9 @@ export function freeThreadMedia(threadKey = null) {
   if (!rows.length) return { count: 0, trashed: 0 }
   const upd = db().prepare("UPDATE messages SET media=NULL, text=CASE WHEN (text LIKE '🖼%' OR text LIKE '📹%' OR text LIKE '📄%') AND text NOT LIKE '%(borrada)%' THEN text || ' · (borrada)' ELSE text END WHERE id=?")
   const byPath = new Map() // ruta → mensajes que la usaban, para poder DESHACER (re-vincular media)
-  db().transaction(() => { for (const r of rows) { upd.run(r.id); if (!byPath.has(r.media)) byPath.set(r.media, []); byPath.get(r.media).push({ id: r.id, path: r.media }) } })()
+  // Si esta transacción muriera por SQLITE_BUSY, el llamador vería "no se pudo" sobre una media que sigue ocupando
+  // disco. Con reintento el borrado es el que el usuario pidió, y no una lotería según qué más estaba escribiendo.
+  withRetry(() => db().transaction(() => { for (const r of rows) { upd.run(r.id); if (!byPath.has(r.media)) byPath.set(r.media, []); byPath.get(r.media).push({ id: r.id, path: r.media }) } })())
   let trashed = 0
   const stillRef = db().prepare("SELECT 1 FROM messages WHERE media = ? LIMIT 1")
   for (const [p, msgs] of byPath) { if (!stillRef.get(p)) { casTrash(p, msgs); trashed++ } } // → PAPELERA (30 días para deshacer), NO borrado inmediato
@@ -129,7 +135,9 @@ export function restoreMedia(pub) {
   const { msgs } = casRestore(pub)
   if (!msgs.length) return { restored: 0 }
   const upd = db().prepare("UPDATE messages SET media=@path, text=REPLACE(text, ' · (borrada)', '') WHERE id=@id")
-  db().transaction(() => { for (const m of msgs) upd.run({ id: m.id, path: m.path }) })()
+  // Acá el reintento NO es opcional: casRestore YA sacó el blob de la papelera. Un BUSY sin reintento deja el archivo
+  // restaurado y los mensajes sin re-vincular — media viva que nadie referencia, o sea invisible para el usuario.
+  withRetry(() => db().transaction(() => { for (const m of msgs) upd.run({ id: m.id, path: m.path }) })())
   return { restored: msgs.length }
 }
 // rutas /cas/ referenciadas por algún mensaje vivo → para que el GC sepa qué blobs son huérfanos.
